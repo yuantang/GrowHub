@@ -35,6 +35,7 @@ from .routers.growhub_keywords import router as growhub_keywords_router
 from .routers.growhub_content import router as growhub_content_router, rules_router as growhub_rules_router
 from .routers.growhub_notifications import router as growhub_notifications_router
 from .routers.growhub_websocket import router as growhub_websocket_router
+from .routers.growhub_ai_creator import router as growhub_ai_creator_router
 
 app = FastAPI(
     title="MediaCrawler WebUI API",
@@ -73,6 +74,7 @@ app.include_router(growhub_content_router, prefix="/api")
 app.include_router(growhub_rules_router, prefix="/api")
 app.include_router(growhub_notifications_router, prefix="/api")
 app.include_router(growhub_websocket_router, prefix="/api")
+app.include_router(growhub_ai_creator_router, prefix="/api")
 
 
 

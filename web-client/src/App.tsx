@@ -10,6 +10,7 @@ import ContentMonitorPage from '@/pages/ContentMonitorPage'
 import NotificationPage from '@/pages/NotificationPage'
 import RulesPage from '@/pages/RulesPage'
 import HotspotsPage from '@/pages/HotspotsPage'
+import SmartCreatorPage from '@/pages/SmartCreatorPage'
 
 function App() {
   return (
@@ -25,6 +26,7 @@ function App() {
           <Route path="keywords" element={<KeywordsPage />} />
           <Route path="monitor" element={<ContentMonitorPage />} />
           <Route path="hotspots" element={<HotspotsPage />} />
+          <Route path="ai-creator" element={<SmartCreatorPage />} />
           <Route path="notifications" element={<NotificationPage />} />
           <Route path="rules" element={<RulesPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />

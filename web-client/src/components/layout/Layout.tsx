@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
-import { LayoutDashboard, Database, Activity, Users, History, Github, Rocket, Hash, Bell, Settings, Filter, Flame } from 'lucide-react';
+import { LayoutDashboard, Database, Activity, Users, History, Github, Rocket, Hash, Bell, Settings, Filter, Flame, Sparkles } from 'lucide-react';
 import { cn } from '@/utils/cn';
 
 const Layout: React.FC = () => {
@@ -16,6 +16,7 @@ const Layout: React.FC = () => {
         { to: '/keywords', icon: Hash, label: '关键词管理', isNew: true },
         { to: '/monitor', icon: Bell, label: '内容监控', isNew: true },
         { to: '/hotspots', icon: Flame, label: '热点排行', isNew: true },
+        { to: '/ai-creator', icon: Sparkles, label: 'AI 创作', isNew: true },
         { to: '/rules', icon: Filter, label: '分发规则', isNew: true },
         { to: '/notifications', icon: Settings, label: '通知配置', isNew: true },
     ];

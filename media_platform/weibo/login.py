@@ -90,7 +90,8 @@ class WeiboLogin(AbstractLogin):
         qrcode_img_selector = "xpath=//img[@class='w-full h-full']"
         base64_qrcode_img = await utils.find_login_qrcode(
             self.context_page,
-            selector=qrcode_img_selector
+            selector=qrcode_img_selector,
+            timeout=60 * 1000
         )
         if not base64_qrcode_img:
             utils.logger.info("[WeiboLogin.login_by_qrcode] login failed , have not found qrcode please check ....")

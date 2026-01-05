@@ -450,3 +450,15 @@ class ZhihuCreator(Base):
     get_voteup_count = Column(Integer, default=0)
     add_ts = Column(BigInteger)
     last_modify_ts = Column(BigInteger)
+
+
+# ==================== GrowHub Models ====================
+# Import GrowHub models to ensure they are registered with Base.metadata
+from database.growhub_models import (
+    GrowHubKeyword,
+    GrowHubContent,
+    GrowHubDistributionRule,
+    GrowHubNotification,
+    GrowHubNotificationChannel,
+    GrowHubNotificationGroup,
+)

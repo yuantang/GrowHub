@@ -21,10 +21,12 @@
 # @Author  : relakkes@gmail.com
 # @Time    : 2024/1/14 17:34
 # @Desc    :
-from typing import List
+from typing import List, Optional
+import re
 
 import config
 from var import source_keyword_var
+from tools import utils
 
 from .xhs_store_media import *
 from ._store_impl import *
@@ -60,19 +62,47 @@ def get_video_url_arr(note_item: Dict) -> List:
     if note_item.get('type') != 'video':
         return []
 
-    videoArr = []
-    originVideoKey = note_item.get('video').get('consumer').get('origin_video_key')
-    if originVideoKey == '':
-        originVideoKey = note_item.get('video').get('consumer').get('originVideoKey')
-    # Fallback with watermark
-    if originVideoKey == '':
-        videos = note_item.get('video').get('media').get('stream').get('h264')
-        if type(videos).__name__ == 'list':
-            videoArr = [v.get('master_url') for v in videos]
-    else:
-        videoArr = [f"http://sns-video-bd.xhscdn.com/{originVideoKey}"]
+    video = note_item.get('video') or {}
+    consumer = video.get('consumer') or {}
+    
+    originVideoKey = consumer.get('origin_video_key') or consumer.get('originVideoKey')
 
-    return videoArr
+    if not originVideoKey:
+        # Fallback to media stream
+        media = video.get('media') or {}
+        stream = media.get('stream') or {}
+        videos = stream.get('h264')
+        if isinstance(videos, list):
+            return [v.get('master_url') for v in videos if v.get('master_url')]
+        return []
+    
+    return [f"http://sns-video-bd.xhscdn.com/{originVideoKey}"]
+
+
+def extract_contact_info(content: str) -> str:
+    if not content:
+        return ""
+    
+    contacts = []
+    
+    # Extract Mobile
+    phones = re.findall(r'(?:^|[^0-9])(1[3-9]\d{9})(?:$|[^0-9])', content)
+    if phones:
+        contacts.append(f"Phone: {', '.join(set(phones))}")
+        
+    # Extract WeChat (conservative pattern to avoid false positives)
+    wechats = re.findall(r'(?:vx|wechat|微信号?|v)[\s:：-]*([a-zA-Z0-9_\-]{6,20})', content, re.IGNORECASE)
+    if wechats:
+        valid_wechats = [w for w in wechats if not w.isdigit()] # Filter out pure numbers which might be phones or dates
+        if valid_wechats:
+            contacts.append(f"WeChat: {', '.join(set(valid_wechats))}")
+            
+    # Extract Email
+    emails = re.findall(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', content)
+    if emails:
+        contacts.append(f"Email: {', '.join(set(emails))}")
+        
+    return " | ".join(contacts)
 
 
 async def update_xhs_note(note_item: Dict):
@@ -95,24 +125,32 @@ async def update_xhs_note(note_item: Dict):
             img.update({'url': img.get('url_default')})
 
     video_url = ','.join(get_video_url_arr(note_item))
+    
+    desc = note_item.get("desc", "")
+    contact_info = extract_contact_info(desc)
+    # Contact info is now stored in a separate field, no longer appended to desc
+    # if contact_info:
+    #     desc += f"\n\n[Contact Info]: {contact_info}"
 
     local_db_item = {
         "note_id": note_item.get("note_id"),  # Note ID
         "type": note_item.get("type"),  # Note type
         "title": note_item.get("title") or note_item.get("desc", "")[:255],  # Note title
-        "desc": note_item.get("desc", ""),  # Note description
+        "desc": desc,  # Note description
         "video_url": video_url,  # Note video url
         "time": note_item.get("time"),  # Note publish time
         "last_update_time": note_item.get("last_update_time", 0),  # Note last update time
         "user_id": user_info.get("user_id"),  # User ID
         "nickname": user_info.get("nickname"),  # User nickname
         "avatar": user_info.get("avatar"),  # User avatar
-        "liked_count": interact_info.get("liked_count"),  # Like count
-        "collected_count": interact_info.get("collected_count"),  # Collection count
-        "comment_count": interact_info.get("comment_count"),  # Comment count
-        "share_count": interact_info.get("share_count"),  # Share count
+        "liked_count": utils.convert_str_number_to_int(interact_info.get("liked_count", "0")),  # Like count
+        "collected_count": utils.convert_str_number_to_int(interact_info.get("collected_count", "0")),  # Collection count
+        "comment_count": utils.convert_str_number_to_int(interact_info.get("comment_count", "0")),  # Comment count
+        "share_count": utils.convert_str_number_to_int(interact_info.get("share_count", "0")),  # Share count
         "ip_location": note_item.get("ip_location", ""),  # IP location
         "image_list": ','.join([img.get('url', '') for img in image_list]),  # Image URLs
+        "contact_info": contact_info,  # Contact info extracted from description
+        "comments": note_item.get("comments", []),  # Nested comments
         "tag_list": ','.join([tag.get('name', '') for tag in tag_list if tag.get('type') == 'topic']),  # Tags
         "last_modify_ts": utils.get_current_timestamp(),  # Last modification timestamp (Generated by MediaCrawler, mainly used to record the latest update time of a record in DB storage)
         "note_url": f"https://www.xiaohongshu.com/explore/{note_id}?xsec_token={note_item.get('xsec_token')}&xsec_source=pc_search",  # Note URL

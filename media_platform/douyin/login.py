@@ -126,7 +126,8 @@ class DouYinLogin(AbstractLogin):
         qrcode_img_selector = "xpath=//div[@id='animate_qrcode_container']//img"
         base64_qrcode_img = await utils.find_login_qrcode(
             self.context_page,
-            selector=qrcode_img_selector
+            selector=qrcode_img_selector,
+            timeout=60 * 1000
         )
         if not base64_qrcode_img:
             utils.logger.info("[DouYinLogin.login_by_qrcode] login qrcode not found please confirm ...")

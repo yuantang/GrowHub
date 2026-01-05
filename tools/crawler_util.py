@@ -39,11 +39,12 @@ from playwright.async_api import Cookie, Page
 from . import utils
 
 
-async def find_login_qrcode(page: Page, selector: str) -> str:
+async def find_login_qrcode(page: Page, selector: str, timeout: int = 30000) -> str:
     """find login qrcode image from target selector"""
     try:
         elements = await page.wait_for_selector(
             selector=selector,
+            timeout=timeout,
         )
         login_qrcode_img = str(await elements.get_property("src"))  # type: ignore
         if "http://" in login_qrcode_img or "https://" in login_qrcode_img:
@@ -62,7 +63,7 @@ async def find_login_qrcode(page: Page, selector: str) -> str:
         return ""
 
 
-async def find_qrcode_img_from_canvas(page: Page, canvas_selector: str) -> str:
+async def find_qrcode_img_from_canvas(page: Page, canvas_selector: str, timeout: int = 30000) -> str:
     """
     find qrcode image from canvas element
     Args:
@@ -74,7 +75,7 @@ async def find_qrcode_img_from_canvas(page: Page, canvas_selector: str) -> str:
     """
 
     # Wait for Canvas element to load
-    canvas = await page.wait_for_selector(canvas_selector)
+    canvas = await page.wait_for_selector(canvas_selector, timeout=timeout)
 
     # Take screenshot of Canvas element
     screenshot = await canvas.screenshot()
@@ -212,3 +213,48 @@ def extract_url_params_to_dict(url: str) -> Dict:
     parsed_url = urllib.parse.urlparse(url)
     url_params_dict = dict(urllib.parse.parse_qsl(parsed_url.query))
     return url_params_dict
+
+
+def convert_str_number_to_int(number_str: str) -> int:
+    """
+    Convert string number to int, handle units like 'w', 'k', '万'
+    """
+    if not number_str:
+        return 0
+    
+    # Ensure input is string
+    if isinstance(number_str, (int, float)):
+        return int(number_str)
+
+    number_str = str(number_str).strip().lower()
+    
+    # Check for empty string again after strip
+    if not number_str:
+        return 0
+        
+    try:
+        # Simple integer string
+        return int(number_str)
+    except ValueError:
+        pass
+        
+    # Handle multipliers
+    multiplier = 1
+    if "w" in number_str or "万" in number_str:
+        multiplier = 10000
+        number_str = number_str.replace("w", "").replace("万", "")
+    elif "k" in number_str:
+        multiplier = 1000
+        number_str = number_str.replace("k", "")
+        
+    # Extract number part
+    match = re.search(r'[\d\.]+', number_str)
+    if match:
+        try:
+            val = float(match.group())
+            return int(val * multiplier)
+        except ValueError:
+            return 0
+            
+    return 0
+

@@ -194,6 +194,31 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
         headers["Referer"] = urllib.parse.quote(referer_url, safe=':/')
         return await self.get("/aweme/v1/web/general/search/single/", query_params, headers=headers)
 
+    async def get_homefeed(self, cursor: int = 0, count: int = 10, refresh_type: int = 1) -> Dict:
+        """
+        Get Douyin home feed (recommended videos)
+        
+        :param cursor: Pagination cursor (offset)
+        :param count: Number of items per page
+        :param refresh_type: 1 for initial load, 4 for load more
+        :return: Home feed response with aweme_list
+        """
+        uri = "/aweme/v1/web/tab/feed/"
+        params = {
+            "count": count,
+            "cursor": cursor,
+            "refresh_type": refresh_type,
+            "type_id": "",
+            "max_cursor": cursor,
+            "min_cursor": 0,
+            "aweme_pc_rec_raw_data": "{}",
+            "pull_type": 1 if cursor == 0 else 2,
+            "is_from_gallery": "false",
+        }
+        headers = copy.copy(self.headers)
+        headers["Referer"] = "https://www.douyin.com/"
+        return await self.get(uri, params, headers)
+
     async def get_video_by_id(self, aweme_id: str) -> Any:
         """
         DouYin Video Detail API

@@ -229,6 +229,22 @@ class CrawlerManager:
 
         cmd.extend(["--headless", "true" if config.headless else "false"])
 
+        # Limits and Filters
+        if config.crawl_limit_count > 0:
+            cmd.extend(["--crawl_limit_count", str(config.crawl_limit_count)])
+        
+        if config.min_likes > 0:
+            cmd.extend(["--min_likes", str(config.min_likes)])
+            
+        if config.min_shares > 0:
+            cmd.extend(["--min_shares", str(config.min_shares)])
+            
+        if config.min_comments > 0:
+            cmd.extend(["--min_comments", str(config.min_comments)])
+            
+        if config.min_favorites > 0:
+            cmd.extend(["--min_favorites", str(config.min_favorites)])
+
         return cmd
 
     async def _read_output(self):

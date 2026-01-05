@@ -101,10 +101,26 @@ async def main() -> None:
     global crawler
 
     args = await cmd_arg.parse_cmd()
+    
+    # Force update config from args to ensure main.py uses the correct values
+    config.PLATFORM = args.platform
+    config.LOGIN_TYPE = args.lt
+    config.CRAWLER_TYPE = args.type
+    config.KEYWORDS = args.keywords
+    config.START_PAGE = args.start
+    config.ENABLE_GET_COMMENTS = args.get_comment
+    config.ENABLE_GET_SUB_COMMENTS = args.get_sub_comment
+    config.HEADLESS = args.headless
+    config.SAVE_DATA_OPTION = args.save_data_option
+    config.COOKIES = args.cookies
+
     if args.init_db:
         await db.init_db(args.init_db)
         print(f"Database {args.init_db} initialized successfully.")
         return
+
+    if config.SAVE_DATA_OPTION in ["sqlite", "db", "mysql"]:
+        await db.init_db(config.SAVE_DATA_OPTION)
 
     crawler = CrawlerFactory.create_crawler(platform=config.PLATFORM)
     await crawler.start()

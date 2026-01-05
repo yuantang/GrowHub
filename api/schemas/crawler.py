@@ -44,6 +44,8 @@ class CrawlerTypeEnum(str, Enum):
     SEARCH = "search"
     DETAIL = "detail"
     CREATOR = "creator"
+    HOMEFEED = "homefeed"
+    LOGIN = "login"
 
 
 class SaveDataOptionEnum(str, Enum):
@@ -70,6 +72,14 @@ class CrawlerStartRequest(BaseModel):
     save_option: SaveDataOptionEnum = SaveDataOptionEnum.JSON
     cookies: str = ""
     headless: bool = False
+    use_multi_account: bool = False
+
+    # Crawl Control and Filters
+    crawl_limit_count: int = 0  # 0 means no limit (or default max)
+    min_likes: int = 0
+    min_shares: int = 0
+    min_comments: int = 0
+    min_favorites: int = 0
 
 
 class CrawlerStatusResponse(BaseModel):

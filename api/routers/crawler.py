@@ -27,6 +27,38 @@ router = APIRouter(prefix="/crawler", tags=["crawler"])
 @router.post("/start")
 async def start_crawler(request: CrawlerStartRequest):
     """Start crawler task"""
+    # Integrate Multi-Account Rotation
+    if request.use_multi_account and request.login_type.value == "cookie":
+        try:
+            from accounts import get_account_manager
+            manager = get_account_manager()
+            platform_key = request.platform.value
+            all_accounts = manager.get_all_accounts(platform=platform_key)
+            platform_accounts = all_accounts.get(platform_key, [])
+            
+            # Filter active accounts
+            active_accounts = [a for a in platform_accounts if a.status == 'active']
+            
+            if active_accounts:
+                import random
+                selected_account = random.choice(active_accounts)
+                request.cookies = selected_account.cookies
+                
+                # Update stats
+                selected_account.update_last_used()
+                selected_account.increment_request()
+                manager.save_accounts()
+                
+                print(f"INFO: [MultiAccount] Switched to account: {selected_account.name}")
+            else:
+                print(f"WARNING: [MultiAccount] Enabled but no active accounts found for {platform_key}")
+                # If no accounts found, we continue. It might use the manually provided cookies if any, 
+                # or fail inside the crawler.
+        except ImportError:
+            print("ERROR: Could not import account manager. Multi-account disabled.")
+        except Exception as e:
+            print(f"ERROR: Multi-account selection failed: {e}")
+
     success = await crawler_manager.start(request)
     if not success:
         # Handle concurrent/duplicate requests: if process is already running, return 400 instead of 500

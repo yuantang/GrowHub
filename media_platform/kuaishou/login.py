@@ -86,7 +86,8 @@ class KuaishouLogin(AbstractLogin):
         qrcode_img_selector = "//div[@class='qrcode-img']//img"
         base64_qrcode_img = await utils.find_login_qrcode(
             self.context_page,
-            selector=qrcode_img_selector
+            selector=qrcode_img_selector,
+            timeout=60 * 1000
         )
         if not base64_qrcode_img:
             utils.logger.info("[KuaishouLogin.login_by_qrcode] login failed , have not found qrcode please check ....")

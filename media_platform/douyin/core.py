@@ -101,6 +101,24 @@ class DouYinCrawler(AbstractCrawler):
                 )
                 await login_obj.begin()
                 await self.dy_client.update_cookies(browser_context=self.browser_context)
+            
+            # Login Only Mode: Save cookies and exit
+            if config.CRAWLER_TYPE == "login":
+                utils.logger.info("[DouYinCrawler] Login Mode: Saving cookies to AccountManager...")
+                cookies = await self.browser_context.cookies()
+                cookie_str, _ = utils.convert_cookies(cookies)
+                
+                try:
+                    from accounts.manager import get_account_manager
+                    manager = get_account_manager()
+                    from datetime import datetime
+                    name = f"DY_Scan_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                    manager.add_account("dy", name, cookie_str, notes="Created via Scan Login")
+                    utils.logger.info(f"[DouYinCrawler] Account {name} saved successfully. Exiting...")
+                except Exception as e:
+                     utils.logger.error(f"[DouYinCrawler] Failed to save account: {e}")
+                return
+
             crawler_type_var.set(config.CRAWLER_TYPE)
             if config.CRAWLER_TYPE == "search":
                 # Search for notes and retrieve their comment information.
@@ -111,6 +129,9 @@ class DouYinCrawler(AbstractCrawler):
             elif config.CRAWLER_TYPE == "creator":
                 # Get the information and comments of the specified creator
                 await self.get_creators_and_videos()
+            elif config.CRAWLER_TYPE == "homefeed":
+                # Get home feed recommendations
+                await self.get_homefeed()
 
             utils.logger.info("[DouYinCrawler.start] Douyin Crawler finished ...")
 
@@ -169,6 +190,69 @@ class DouYinCrawler(AbstractCrawler):
                 await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
                 utils.logger.info(f"[DouYinCrawler.search] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after page {page-1}")
             utils.logger.info(f"[DouYinCrawler.search] keyword:{keyword}, aweme_list:{aweme_list}")
+
+    async def get_homefeed(self) -> None:
+        """
+        Get Douyin home feed recommendations
+        """
+        utils.logger.info("[DouYinCrawler.get_homefeed] Begin get home feed recommendations")
+        
+        max_pages = config.HOMEFEED_MAX_PAGES
+        aweme_list: List[str] = []
+        cursor = 0
+        
+        for page in range(max_pages):
+            utils.logger.info(f"[DouYinCrawler.get_homefeed] Fetching page {page + 1}/{max_pages}")
+            
+            try:
+                refresh_type = 1 if page == 0 else 4
+                feed_res = await self.dy_client.get_homefeed(
+                    cursor=cursor,
+                    count=10,
+                    refresh_type=refresh_type
+                )
+                
+                if not feed_res or "aweme_list" not in feed_res:
+                    utils.logger.info("[DouYinCrawler.get_homefeed] No more data, stopping")
+                    break
+                
+                aweme_items = feed_res.get("aweme_list", [])
+                if not aweme_items:
+                    utils.logger.info("[DouYinCrawler.get_homefeed] Empty aweme_list, stopping")
+                    break
+                
+                page_aweme_list = []
+                for aweme_item in aweme_items:
+                    aweme_id = aweme_item.get("aweme_id", "")
+                    if not aweme_id:
+                        continue
+                    
+                    aweme_list.append(aweme_id)
+                    page_aweme_list.append(aweme_id)
+                    await douyin_store.update_douyin_aweme(aweme_item=aweme_item)
+                    await self.get_aweme_media(aweme_item=aweme_item)
+                
+                utils.logger.info(f"[DouYinCrawler.get_homefeed] Page {page + 1}: Got {len(page_aweme_list)} videos")
+                
+                # Batch get note comments for the current page
+                await self.batch_get_note_comments(page_aweme_list)
+                
+                # Update cursor for next page
+                cursor = feed_res.get("max_cursor", cursor + 10)
+                has_more = feed_res.get("has_more", 0)
+                
+                if not has_more:
+                    utils.logger.info("[DouYinCrawler.get_homefeed] No more pages available")
+                    break
+                
+                # Sleep between pages
+                await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
+                
+            except DataFetchError as e:
+                utils.logger.error(f"[DouYinCrawler.get_homefeed] Error fetching home feed: {e}")
+                break
+        
+        utils.logger.info(f"[DouYinCrawler.get_homefeed] Finished. Total videos: {len(aweme_list)}")
 
     async def get_specified_awemes(self):
         """Get the information and comments of the specified post from URLs or IDs"""

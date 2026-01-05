@@ -85,7 +85,8 @@ class ZhiHuLogin(AbstractLogin):
         # find login qrcode
         base64_qrcode_img = await utils.find_qrcode_img_from_canvas(
             self.context_page,
-            canvas_selector=qrcode_img_selector
+            canvas_selector=qrcode_img_selector,
+            timeout=60 * 1000
         )
         if not base64_qrcode_img:
             utils.logger.info("[ZhiHu.login_by_qrcode] login failed , have not found qrcode please check ....")

@@ -86,3 +86,26 @@ async def get_session() -> AsyncSession:
         raise e
     finally:
         await session.close()
+
+
+async def get_async_session() -> AsyncSession:
+    """FastAPI dependency for database session injection"""
+    engine = get_async_engine(config.SAVE_DATA_OPTION)
+    if not engine:
+        # Try to use sqlite as default for API
+        engine = get_async_engine("sqlite")
+    
+    if not engine:
+        raise RuntimeError("No database engine available")
+    
+    AsyncSessionFactory = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    session = AsyncSessionFactory()
+    try:
+        yield session
+        await session.commit()
+    except Exception as e:
+        await session.rollback()
+        raise e
+    finally:
+        await session.close()
+

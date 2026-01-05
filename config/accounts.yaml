@@ -1,0 +1,14 @@
+accounts:
+  bili: []
+  dy: []
+  ks: []
+  wb: []
+  xhs:
+  - cookies: abRequestId=bd0c701f-d7e7-5293-a2a9-b93428d1780f;xsecappid=xhs-pc-web;a1=19b885fc3b9dacfpco4s7gw9dlosqjpbrq1w3894n30000183724;webId=2ee733e0565b6ef7980310cb47f76c02;gid=yjDYY2idDfF0yjDYY2iSqAYjDjf0SiUSl4MWy4IkEjf1lEq8MAVUDq888yYqWJ48SW2J4JY2;web_session=040069b30294e6d476fd47686e3b4bddd121b6;id_token=VjEAAKo4U0CIvayZHZB5YCu71iC33Zhwg0JoZENa7sEGj5+URr9ntCLTMBB5z+yFVKlqq0m+AX0uBr2+dSayr272KGicKUUEIS6XWm5sNl6xZ4HYHU/Lf4I2QQXIB8EbRODt16gK;NID=527=IqnrzYEiGdB8B27qafgg5pYE_XmHa0--8nvoMxclk-excWtxuD7NitQddOT_onei1ewf4ZNUiuZ7wFNNZaJ0U9RaPf0_PAfGIiZ5wXecsK4PgNw6TkO0inOdbi5PIzV7bNPxBA47u2v3faQPiyQSLaHOSohDMvZ-pvCeBxKSkteFORaDBEiNMRuwsM93ciL2wiDSLQe0uHMZprfanFrv;acw_tc=0a00d18c17675940532441102e4874f94e021218d45205339138f1d8109e1e;webBuild=5.6.1;loadts=1767594055545;acw_tc=0a50854117675940577938979e40b99ca97645dea7c109e0a726bf0dda865a;unread={%22ub%22:%22695a5ecd0000000022023554%22%2C%22ue%22:%2269538a69000000001e02c6ab%22%2C%22uc%22:17};websectiga=2845367ec3848418062e761c09db7caf0e8b79d132ccdd1a4f8e64a11d0cac0d;sec_poison_id=ca986ccc-5cb9-46f5-90fc-de06bfeb0eb5
+    error_count: 0
+    id: 16ab32f2
+    name: XHS_Scan_20260105_142102
+    notes: Created via Scan Login
+    request_count: 0
+    status: active
+    success_count: 0

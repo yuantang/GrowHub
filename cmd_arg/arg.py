@@ -62,6 +62,8 @@ class CrawlerTypeEnum(str, Enum):
     SEARCH = "search"
     DETAIL = "detail"
     CREATOR = "creator"
+    HOMEFEED = "homefeed"  # 首页推荐信息流
+    LOGIN = "login"
 
 
 class SaveDataOptionEnum(str, Enum):
@@ -159,7 +161,7 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
             CrawlerTypeEnum,
             typer.Option(
                 "--type",
-                help="Crawler type (search=Search | detail=Detail | creator=Creator)",
+                help="Crawler type (search=Search | detail=Detail | creator=Creator | homefeed=Homefeed | login=Login)",
                 rich_help_panel="Basic Configuration",
             ),
         ] = _coerce_enum(CrawlerTypeEnum, config.CRAWLER_TYPE, CrawlerTypeEnum.SEARCH),
@@ -248,6 +250,46 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
                 rich_help_panel="Basic Configuration",
             ),
         ] = "",
+        crawl_limit_count: Annotated[
+            int,
+            typer.Option(
+                "--crawl_limit_count",
+                help="Maximum items to crawl (0 for no limit)",
+                rich_help_panel="Filter Configuration",
+            ),
+        ] = config.CRAWLER_MAX_NOTES_COUNT,
+        min_likes: Annotated[
+            int,
+            typer.Option(
+                "--min_likes",
+                help="Minimum number of likes",
+                rich_help_panel="Filter Configuration",
+            ),
+        ] = config.MIN_LIKES_COUNT,
+        min_shares: Annotated[
+            int,
+            typer.Option(
+                "--min_shares",
+                help="Minimum number of shares",
+                rich_help_panel="Filter Configuration",
+            ),
+        ] = config.MIN_SHARES_COUNT,
+        min_comments: Annotated[
+            int,
+            typer.Option(
+                "--min_comments",
+                help="Minimum number of comments",
+                rich_help_panel="Filter Configuration",
+            ),
+        ] = config.MIN_COMMENTS_COUNT,
+        min_favorites: Annotated[
+            int,
+            typer.Option(
+                "--min_favorites",
+                help="Minimum number of favorites",
+                rich_help_panel="Filter Configuration",
+            ),
+        ] = config.MIN_FAVORITES_COUNT,
     ) -> SimpleNamespace:
         """MediaCrawler 命令行入口"""
 
@@ -271,7 +313,14 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
         config.HEADLESS = enable_headless
         config.CDP_HEADLESS = enable_headless
         config.SAVE_DATA_OPTION = save_data_option.value
+        config.SAVE_DATA_OPTION = save_data_option.value
         config.COOKIES = cookies
+        config.CRAWLER_MAX_NOTES_COUNT = crawl_limit_count  # Sync with CRAWLER_MAX_NOTES_COUNT
+        config.CRAWL_LIMIT_COUNT = crawl_limit_count
+        config.MIN_LIKES_COUNT = min_likes
+        config.MIN_SHARES_COUNT = min_shares
+        config.MIN_COMMENTS_COUNT = min_comments
+        config.MIN_FAVORITES_COUNT = min_favorites
 
         # Set platform-specific ID lists for detail/creator mode
         if specified_id_list:

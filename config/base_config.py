@@ -34,6 +34,14 @@ IP_PROXY_POOL_COUNT = 2
 # 代理IP提供商名称
 IP_PROXY_PROVIDER_NAME = "kuaidaili"  # kuaidaili | wandouhttp
 
+# ==================== 签名服务配置 ====================
+# 是否启用独立签名服务（用于去除Playwright依赖）
+# 启用后，爬虫将通过HTTP调用签名服务获取签名，而非本地Playwright
+ENABLE_SIGN_SERVICE = False
+
+# 签名服务地址
+SIGN_SERVICE_URL = "http://localhost:8081"
+
 # 设置为True不会打开浏览器（无头浏览器）
 # 设置False会打开一个浏览器
 # 小红书如果一直扫码登录不通过，打开浏览器手动过一下滑动验证码
@@ -71,7 +79,7 @@ BROWSER_LAUNCH_TIMEOUT = 60
 AUTO_CLOSE_BROWSER = True
 
 # 数据保存类型选项配置,支持五种类型：csv、db、json、sqlite、excel, 最好保存到DB，有排重的功能。
-SAVE_DATA_OPTION = "json"  # csv or db or json or sqlite or excel
+SAVE_DATA_OPTION = "sqlite"  # csv or db or json or sqlite or excel
 
 # 用户浏览器缓存的浏览器文件配置
 USER_DATA_DIR = "%s_user_data_dir"  # %s will be replaced by platform name
@@ -81,6 +89,13 @@ START_PAGE = 1
 
 # 爬取视频/帖子的数量控制
 CRAWLER_MAX_NOTES_COUNT = 15
+
+# ==================== 互动筛选配置 ====================
+# 互动量筛选阈值 (0 表示不限制)
+MIN_LIKES_COUNT = 0       # 最小点赞数
+MIN_SHARES_COUNT = 0      # 最小分享数
+MIN_COMMENTS_COUNT = 0    # 最小评论数
+MIN_FAVORITES_COUNT = 0   # 最小收藏数
 
 # 并发爬虫数量控制
 MAX_CONCURRENCY_NUM = 1
@@ -116,6 +131,14 @@ FONT_PATH = "./docs/STZHONGS.TTF"
 
 # 爬取间隔时间
 CRAWLER_MAX_SLEEP_SEC = 2
+
+# ==================== HomeFeed 首页推荐配置 ====================
+# 首页推荐最大爬取页数
+HOMEFEED_MAX_PAGES = 10
+
+# 首页推荐分类 (小红书)
+# 可选值: homefeed_recommend, homefeed.fashion_v3, homefeed.food_v3 等
+HOMEFEED_CATEGORY = "homefeed_recommend"
 
 from .bilibili_config import *
 from .xhs_config import *

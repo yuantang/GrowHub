@@ -107,6 +107,24 @@ class BilibiliCrawler(AbstractCrawler):
                 await login_obj.begin()
                 await self.bili_client.update_cookies(browser_context=self.browser_context)
 
+            
+            # Login Only Mode: Save cookies and exit
+            if config.CRAWLER_TYPE == "login":
+                utils.logger.info("[BilibiliCrawler] Login Mode: Saving cookies to AccountManager...")
+                cookies = await self.browser_context.cookies()
+                cookie_str, _ = utils.convert_cookies(cookies)
+                
+                try:
+                    from accounts.manager import get_account_manager
+                    manager = get_account_manager()
+                    from datetime import datetime
+                    name = f"Bili_Scan_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                    manager.add_account("bili", name, cookie_str, notes="Created via Scan Login")
+                    utils.logger.info(f"[BilibiliCrawler] Account {name} saved successfully. Exiting...")
+                except Exception as e:
+                     utils.logger.error(f"[BilibiliCrawler] Failed to save account: {e}")
+                return
+
             crawler_type_var.set(config.CRAWLER_TYPE)
             if config.CRAWLER_TYPE == "search":
                 await self.search()
@@ -125,9 +143,81 @@ class BilibiliCrawler(AbstractCrawler):
                             continue
                 else:
                     await self.get_all_creator_details(config.BILI_CREATOR_ID_LIST)
+            elif config.CRAWLER_TYPE == "homefeed":
+                # Get home feed recommendations
+                await self.get_homefeed()
             else:
                 pass
             utils.logger.info("[BilibiliCrawler.start] Bilibili Crawler finished ...")
+
+    async def get_homefeed(self) -> None:
+        """
+        Get Bilibili home feed recommendations
+        """
+        utils.logger.info("[BilibiliCrawler.get_homefeed] Begin get home feed recommendations")
+        
+        max_pages = config.HOMEFEED_MAX_PAGES
+        video_id_list: List[str] = []
+        
+        for page in range(max_pages):
+            utils.logger.info(f"[BilibiliCrawler.get_homefeed] Fetching page {page + 1}/{max_pages}")
+            
+            try:
+                feed_res = await self.bili_client.get_homefeed(
+                    fresh_idx=page + 1,
+                    ps=30
+                )
+                
+                if not feed_res or "item" not in feed_res:
+                    utils.logger.info("[BilibiliCrawler.get_homefeed] No more data, stopping")
+                    break
+                
+                video_items = feed_res.get("item", [])
+                if not video_items:
+                    utils.logger.info("[BilibiliCrawler.get_homefeed] Empty item list, stopping")
+                    break
+                
+                page_video_ids = []
+                semaphore = asyncio.Semaphore(config.MAX_CONCURRENCY_NUM)
+                
+                for item in video_items:
+                    # Skip ads and non-video content
+                    if item.get("card_goto") != "av":
+                        continue
+                    
+                    bvid = item.get("bvid")
+                    if not bvid:
+                        continue
+                    
+                    # Get full video info
+                    try:
+                        video_detail = await self.get_video_info_task(aid=0, bvid=bvid, semaphore=semaphore)
+                        if video_detail:
+                            video_item_view = video_detail.get("View", {})
+                            video_aid = str(video_item_view.get("aid", ""))
+                            if video_aid:
+                                video_id_list.append(video_aid)
+                                page_video_ids.append(video_aid)
+                            await bilibili_store.update_bilibili_video(video_detail)
+                            await bilibili_store.update_up_info(video_detail)
+                            await self.get_bilibili_video(video_detail, semaphore)
+                    except Exception as e:
+                        utils.logger.warning(f"[BilibiliCrawler.get_homefeed] Error processing video {bvid}: {e}")
+                        continue
+                
+                utils.logger.info(f"[BilibiliCrawler.get_homefeed] Page {page + 1}: Got {len(page_video_ids)} videos")
+                
+                # Batch get comments
+                await self.batch_get_video_comments(page_video_ids)
+                
+                # Sleep between pages
+                await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
+                
+            except DataFetchError as e:
+                utils.logger.error(f"[BilibiliCrawler.get_homefeed] Error fetching home feed: {e}")
+                break
+        
+        utils.logger.info(f"[BilibiliCrawler.get_homefeed] Finished. Total videos: {len(video_id_list)}")
 
     async def search(self):
         """

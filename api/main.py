@@ -30,7 +30,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
-from .routers import crawler_router, data_router, websocket_router
+from .routers import crawler_router, data_router, websocket_router, checkpoint_router, accounts_router, ai_router
+from .routers.growhub_keywords import router as growhub_keywords_router
+from .routers.growhub_content import router as growhub_content_router, rules_router as growhub_rules_router
+from .routers.growhub_notifications import router as growhub_notifications_router
+from .routers.growhub_websocket import router as growhub_websocket_router
 
 app = FastAPI(
     title="MediaCrawler WebUI API",
@@ -59,6 +63,17 @@ app.add_middleware(
 app.include_router(crawler_router, prefix="/api")
 app.include_router(data_router, prefix="/api")
 app.include_router(websocket_router, prefix="/api")
+app.include_router(checkpoint_router, prefix="/api")
+app.include_router(accounts_router, prefix="/api")
+app.include_router(ai_router, prefix="/api")
+
+# GrowHub routers
+app.include_router(growhub_keywords_router, prefix="/api")
+app.include_router(growhub_content_router, prefix="/api")
+app.include_router(growhub_rules_router, prefix="/api")
+app.include_router(growhub_notifications_router, prefix="/api")
+app.include_router(growhub_websocket_router, prefix="/api")
+
 
 
 @app.get("/")
@@ -154,9 +169,10 @@ async def get_config_options():
             {"value": "cookie", "label": "Cookie Login"},
         ],
         "crawler_types": [
-            {"value": "search", "label": "Search Mode"},
-            {"value": "detail", "label": "Detail Mode"},
-            {"value": "creator", "label": "Creator Mode"},
+            {"value": "search", "label": "关键词搜索"},
+            {"value": "detail", "label": "指定帖子"},
+            {"value": "creator", "label": "创作者主页"},
+            {"value": "homefeed", "label": "首页推荐"},
         ],
         "save_options": [
             {"value": "json", "label": "JSON File"},

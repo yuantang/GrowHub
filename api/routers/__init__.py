@@ -19,5 +19,9 @@
 from .crawler import router as crawler_router
 from .data import router as data_router
 from .websocket import router as websocket_router
+from .checkpoint import router as checkpoint_router
+from .accounts import router as accounts_router
+from .ai import router as ai_router
 
-__all__ = ["crawler_router", "data_router", "websocket_router"]
+__all__ = ["crawler_router", "data_router", "websocket_router", "checkpoint_router", "accounts_router", "ai_router"]
+

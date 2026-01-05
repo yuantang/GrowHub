@@ -273,6 +273,43 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
         }
         return await self.post(uri, data)
 
+    async def get_homefeed(
+        self,
+        cursor: str = "",
+        num: int = 20,
+        category: str = "homefeed_recommend",
+        refresh_type: int = None,
+    ) -> Dict:
+        """
+        Get homepage feed recommendations
+        Args:
+            cursor: Pagination cursor from previous response
+            num: Number of notes to fetch per page
+            category: Feed category (homefeed_recommend, homefeed.fashion_v3, etc.)
+            refresh_type: 1 for refresh, 3 for load more (auto-determined if None)
+
+        Returns:
+            Dict containing items and cursor for next page
+        """
+        uri = "/api/sns/web/v1/homefeed"
+        
+        # Auto-determine refresh type based on cursor
+        if refresh_type is None:
+            refresh_type = 3 if cursor else 1
+        
+        data = {
+            "cursor_score": cursor,
+            "num": num,
+            "refresh_type": refresh_type,
+            "note_index": 0,
+            "unread_begin_note_id": "",
+            "unread_end_note_id": "",
+            "unread_note_count": 0,
+            "category": category,
+            "image_scenes": ["FD_PRV_WEBP", "FD_WM_WEBP"]
+        }
+        return await self.post(uri, data)
+
     async def get_note_by_id(
         self,
         note_id: str,

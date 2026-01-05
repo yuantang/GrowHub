@@ -180,6 +180,32 @@ class BilibiliClient(AbstractApiClient, ProxyRefreshMixin):
         }
         return await self.get(uri, post_data)
 
+    async def get_homefeed(self, fresh_idx: int = 1, ps: int = 30, feed_version: str = "V8") -> Dict:
+        """
+        Get Bilibili home feed (recommended videos)
+        
+        :param fresh_idx: Refresh index (increments with each request)
+        :param ps: Number of items per page
+        :param feed_version: Feed version (V8 is current)
+        :return: Home feed response with item list
+        """
+        uri = "/x/web-interface/wbi/index/top/feed/rcmd"
+        params = {
+            "fresh_idx": fresh_idx,
+            "fresh_idx_1h": fresh_idx,
+            "ps": ps,
+            "feed_version": feed_version,
+            "home_page_ver": 1,
+            "fetch_row": 4,
+            "brush": fresh_idx,
+            "screen": "2560-1440",
+            "seo_info": "",
+            "last_y_num": 6,
+            "y_num": 5,
+            "uniq_id": f"bili_{fresh_idx}",
+        }
+        return await self.get(uri, params)
+
     async def get_video_info(self, aid: Union[int, None] = None, bvid: Union[str, None] = None) -> Dict:
         """
         Bilibli web video detail api, choose one parameter between aid and bvid

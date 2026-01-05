@@ -125,6 +125,23 @@ class TieBaCrawler(AbstractCrawler):
                 await login_obj.begin()
                 await self.tieba_client.update_cookies(browser_context=self.browser_context)
 
+            # Login Only Mode: Save cookies and exit
+            if config.CRAWLER_TYPE == "login":
+                utils.logger.info("[TieBaCrawler] Login Mode: Saving cookies to AccountManager...")
+                cookies = await self.browser_context.cookies()
+                cookie_str, _ = utils.convert_cookies(cookies)
+                
+                try:
+                    from accounts.manager import get_account_manager
+                    manager = get_account_manager()
+                    from datetime import datetime
+                    name = f"Tieba_Scan_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                    manager.add_account("tieba", name, cookie_str, notes="Created via Scan Login")
+                    utils.logger.info(f"[TieBaCrawler] Account {name} saved successfully. Exiting...")
+                except Exception as e:
+                     utils.logger.error(f"[TieBaCrawler] Failed to save account: {e}")
+                return
+
             crawler_type_var.set(config.CRAWLER_TYPE)
             if config.CRAWLER_TYPE == "search":
                 # Search for notes and retrieve their comment information.

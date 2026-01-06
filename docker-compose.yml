@@ -1,0 +1,81 @@
+# GrowHub Docker Compose 配置
+# 一键启动所有服务
+
+version: '3.8'
+
+services:
+  # ==================== 后端 API 服务 ====================
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: growhub-api
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - SAVE_DATA_OPTION=sqlite
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+    volumes:
+      - ./database:/app/database
+      - ./data:/app/data
+      - ./config:/app/config
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8080/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - growhub-network
+
+  # ==================== 前端服务 ====================
+  web:
+    build:
+      context: ./web-client
+      dockerfile: Dockerfile
+    container_name: growhub-web
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      - api
+    networks:
+      - growhub-network
+
+  # ==================== Redis 缓存 (可选) ====================
+  redis:
+    image: redis:7-alpine
+    container_name: growhub-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    networks:
+      - growhub-network
+  # ==================== MySQL 数据库 (生产环境推荐) ====================
+  # 如需使用 MySQL，取消下面的注释
+  # mysql:
+  #   image: mysql:8.0
+  #   container_name: growhub-mysql
+  #   restart: unless-stopped
+  #   ports:
+  #     - "3306:3306"
+  #   environment:
+  #     - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:-growhub123}
+  #     - MYSQL_DATABASE=growhub
+  #     - MYSQL_USER=growhub
+  #     - MYSQL_PASSWORD=${MYSQL_PASSWORD:-growhub123}
+  #   volumes:
+  #     - mysql-data:/var/lib/mysql
+  #   networks:
+  #     - growhub-network
+
+networks:
+  growhub-network:
+    driver: bridge
+
+volumes:
+  redis-data: # mysql-data:

@@ -11,6 +11,8 @@ import NotificationPage from '@/pages/NotificationPage'
 import RulesPage from '@/pages/RulesPage'
 import HotspotsPage from '@/pages/HotspotsPage'
 import SmartCreatorPage from '@/pages/SmartCreatorPage'
+import SchedulerPage from '@/pages/SchedulerPage'
+import AccountPoolPage from '@/pages/AccountPoolPage'
 
 function App() {
   return (
@@ -27,6 +29,8 @@ function App() {
           <Route path="monitor" element={<ContentMonitorPage />} />
           <Route path="hotspots" element={<HotspotsPage />} />
           <Route path="ai-creator" element={<SmartCreatorPage />} />
+          <Route path="scheduler" element={<SchedulerPage />} />
+          <Route path="account-pool" element={<AccountPoolPage />} />
           <Route path="notifications" element={<NotificationPage />} />
           <Route path="rules" element={<RulesPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />

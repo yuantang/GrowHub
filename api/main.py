@@ -36,11 +36,13 @@ from .routers.growhub_content import router as growhub_content_router, rules_rou
 from .routers.growhub_notifications import router as growhub_notifications_router
 from .routers.growhub_websocket import router as growhub_websocket_router
 from .routers.growhub_ai_creator import router as growhub_ai_creator_router
+from .routers.growhub_scheduler import router as growhub_scheduler_router
+from .routers.growhub_account_pool import router as growhub_account_pool_router
 
 app = FastAPI(
-    title="MediaCrawler WebUI API",
-    description="API for controlling MediaCrawler from WebUI",
-    version="1.0.0"
+    title="GrowHub API",
+    description="智能增长自动化平台 API",
+    version="2.0.0"
 )
 
 # Get webui static files directory
@@ -51,9 +53,10 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:5173",  # Vite dev server
-        "http://localhost:3000",  # Backup port
+        "http://localhost:3000",  # Production / Docker
         "http://127.0.0.1:5173",
         "http://127.0.0.1:3000",
+        "*",  # Allow all for Docker deployment
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -75,6 +78,8 @@ app.include_router(growhub_rules_router, prefix="/api")
 app.include_router(growhub_notifications_router, prefix="/api")
 app.include_router(growhub_websocket_router, prefix="/api")
 app.include_router(growhub_ai_creator_router, prefix="/api")
+app.include_router(growhub_scheduler_router, prefix="/api")
+app.include_router(growhub_account_pool_router, prefix="/api")
 
 
 

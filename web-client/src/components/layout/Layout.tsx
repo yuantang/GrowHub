@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
-import { LayoutDashboard, Database, Activity, Users, History, Github, Rocket, Hash, Bell, Settings, Filter, Flame, Sparkles } from 'lucide-react';
+import { LayoutDashboard, Database, Activity, Github, Rocket, Hash, Bell, Settings, Filter, Flame, Sparkles, Calendar, Shield } from 'lucide-react';
 import { cn } from '@/utils/cn';
 
 const Layout: React.FC = () => {
@@ -10,15 +10,17 @@ const Layout: React.FC = () => {
         { to: '/', icon: LayoutDashboard, label: '控制台' },
         { to: '/data', icon: Database, label: '数据管理' },
         { to: '/analysis', icon: Activity, label: '数据分析' },
-        { to: '/accounts', icon: Users, label: '账号管理' },
-        { to: '/checkpoints', icon: History, label: '断点续爬' },
-        // GrowHub
+        // GrowHub Core
         { to: '/keywords', icon: Hash, label: '关键词管理', isNew: true },
         { to: '/monitor', icon: Bell, label: '内容监控', isNew: true },
         { to: '/hotspots', icon: Flame, label: '热点排行', isNew: true },
         { to: '/ai-creator', icon: Sparkles, label: 'AI 创作', isNew: true },
-        { to: '/rules', icon: Filter, label: '分发规则', isNew: true },
-        { to: '/notifications', icon: Settings, label: '通知配置', isNew: true },
+        // Automation
+        { to: '/scheduler', icon: Calendar, label: '任务调度', isNew: true },
+        { to: '/account-pool', icon: Shield, label: '账号池', isNew: true },
+        // Settings
+        { to: '/rules', icon: Filter, label: '分发规则' },
+        { to: '/notifications', icon: Settings, label: '通知配置' },
     ];
 
     return (

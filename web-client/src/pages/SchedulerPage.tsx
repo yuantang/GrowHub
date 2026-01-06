@@ -291,8 +291,8 @@ const SchedulerPage: React.FC = () => {
                 <button
                     onClick={() => setActiveTab('tasks')}
                     className={`flex items-center gap-2 px-4 py-2 rounded-t-lg transition-colors ${activeTab === 'tasks'
-                            ? 'bg-primary/10 text-primary border-b-2 border-primary'
-                            : 'text-muted-foreground hover:text-foreground'
+                        ? 'bg-primary/10 text-primary border-b-2 border-primary'
+                        : 'text-muted-foreground hover:text-foreground'
                         }`}
                 >
                     <Settings className="w-4 h-4" />
@@ -301,8 +301,8 @@ const SchedulerPage: React.FC = () => {
                 <button
                     onClick={() => setActiveTab('logs')}
                     className={`flex items-center gap-2 px-4 py-2 rounded-t-lg transition-colors ${activeTab === 'logs'
-                            ? 'bg-primary/10 text-primary border-b-2 border-primary'
-                            : 'text-muted-foreground hover:text-foreground'
+                        ? 'bg-primary/10 text-primary border-b-2 border-primary'
+                        : 'text-muted-foreground hover:text-foreground'
                         }`}
                 >
                     <History className="w-4 h-4" />
@@ -475,20 +475,71 @@ const SchedulerPage: React.FC = () => {
 
                             {/* Task-specific params */}
                             {newTask.task_type === 'crawler' && (
-                                <div>
-                                    <label className="text-sm text-muted-foreground mb-1 block">爬取平台</label>
-                                    <select
-                                        value={newTask.params.platform || 'xhs'}
-                                        onChange={(e) => setNewTask({
-                                            ...newTask,
-                                            params: { ...newTask.params, platform: e.target.value }
-                                        })}
-                                        className="w-full px-3 py-2 bg-background border border-border rounded-lg"
-                                    >
-                                        {PLATFORM_OPTIONS.map(p => (
-                                            <option key={p.value} value={p.value}>{p.label}</option>
-                                        ))}
-                                    </select>
+                                <div className="space-y-4 border-l-2 border-primary/20 pl-4 my-4">
+                                    <div>
+                                        <label className="text-sm text-muted-foreground mb-1 block">爬取平台</label>
+                                        <select
+                                            value={newTask.params.platform || 'xhs'}
+                                            onChange={(e) => setNewTask({
+                                                ...newTask,
+                                                params: { ...newTask.params, platform: e.target.value }
+                                            })}
+                                            className="w-full px-3 py-2 bg-background border border-border rounded-lg"
+                                        >
+                                            {PLATFORM_OPTIONS.map(p => (
+                                                <option key={p.value} value={p.value}>{p.label}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+
+                                    <div>
+                                        <label className="text-sm text-muted-foreground mb-1 block">任务模式</label>
+                                        <select
+                                            value={newTask.params.crawler_type || 'search'}
+                                            onChange={(e) => setNewTask({
+                                                ...newTask,
+                                                params: { ...newTask.params, crawler_type: e.target.value }
+                                            })}
+                                            className="w-full px-3 py-2 bg-background border border-border rounded-lg"
+                                        >
+                                            <option value="search">关键词搜索</option>
+                                            <option value="detail">指定笔记详情</option>
+                                            <option value="creator">指定博主主页</option>
+                                        </select>
+                                    </div>
+
+                                    <div>
+                                        <label className="text-sm text-muted-foreground mb-1 block">
+                                            {(newTask.params.crawler_type === 'detail' || newTask.params.crawler_type === 'creator')
+                                                ? 'ID 列表 (用空格分隔)'
+                                                : '关键词 (用空格分隔)'} *
+                                        </label>
+                                        <input
+                                            type="text"
+                                            value={newTask.params.keywords || ''}
+                                            onChange={(e) => setNewTask({
+                                                ...newTask,
+                                                params: { ...newTask.params, keywords: e.target.value }
+                                            })}
+                                            placeholder={(newTask.params.crawler_type === 'detail' || newTask.params.crawler_type === 'creator')
+                                                ? "输入 ID..."
+                                                : "输入关键词，如: 咖啡 探店"}
+                                            className="w-full px-3 py-2 bg-background border border-border rounded-lg"
+                                        />
+                                    </div>
+
+                                    <div>
+                                        <label className="text-sm text-muted-foreground mb-1 block">抓取数量限制</label>
+                                        <input
+                                            type="number"
+                                            value={newTask.params.limit_count || 20}
+                                            onChange={(e) => setNewTask({
+                                                ...newTask,
+                                                params: { ...newTask.params, limit_count: parseInt(e.target.value) }
+                                            })}
+                                            className="w-full px-3 py-2 bg-background border border-border rounded-lg"
+                                        />
+                                    </div>
                                 </div>
                             )}
 

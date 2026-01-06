@@ -13,6 +13,7 @@ import HotspotsPage from '@/pages/HotspotsPage'
 import SmartCreatorPage from '@/pages/SmartCreatorPage'
 import SchedulerPage from '@/pages/SchedulerPage'
 import AccountPoolPage from '@/pages/AccountPoolPage'
+import ProjectsPage from '@/pages/ProjectsPage'
 
 function App() {
   return (
@@ -25,6 +26,7 @@ function App() {
           <Route path="accounts" element={<AccountsPage />} />
           <Route path="checkpoints" element={<CheckpointsPage />} />
           {/* GrowHub Routes */}
+          <Route path="projects" element={<ProjectsPage />} />
           <Route path="keywords" element={<KeywordsPage />} />
           <Route path="monitor" element={<ContentMonitorPage />} />
           <Route path="hotspots" element={<HotspotsPage />} />

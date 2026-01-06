@@ -218,3 +218,51 @@ class GrowHubNotificationGroup(Base):
     # 时间戳
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class GrowHubProject(Base):
+    """GrowHub 监控项目表 - 统一管理关键词、调度和通知"""
+    __tablename__ = 'growhub_projects'
+    
+    id = Column(Integer, primary_key=True)
+    name = Column(String(255), nullable=False)
+    description = Column(Text)
+    
+    # 关键词配置
+    keywords = Column(JSON)  # ["品牌A", "竞品B", ...]
+    
+    # 平台配置
+    platforms = Column(JSON)  # ["xhs", "douyin", ...]
+    
+    # 爬虫配置
+    crawler_type = Column(String(50), default='search')  # search/detail/creator
+    crawl_limit = Column(Integer, default=20)  # 每次抓取数量限制
+    enable_comments = Column(Boolean, default=True)  # 是否抓取评论
+    
+    # 调度配置
+    schedule_type = Column(String(20), default='interval')  # interval / cron
+    schedule_value = Column(String(100))  # 间隔秒数 或 cron表达式
+    is_active = Column(Boolean, default=False)  # 是否启用自动调度
+    
+    # 通知配置
+    alert_on_negative = Column(Boolean, default=True)  # 负面内容预警
+    alert_on_hotspot = Column(Boolean, default=False)  # 热点内容推送
+    alert_channels = Column(JSON)  # ["wechat_work", "email"]
+    
+    # 运行状态
+    last_run_at = Column(DateTime, nullable=True)
+    next_run_at = Column(DateTime, nullable=True)
+    run_count = Column(Integer, default=0)
+    
+    # 统计数据
+    total_crawled = Column(Integer, default=0)  # 累计抓取
+    total_alerts = Column(Integer, default=0)   # 累计预警
+    today_crawled = Column(Integer, default=0)  # 今日抓取
+    today_alerts = Column(Integer, default=0)   # 今日预警
+    
+    # 内部任务ID（关联调度器）
+    scheduler_task_id = Column(String(50), nullable=True)
+    
+    # 时间戳
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())

@@ -81,6 +81,10 @@ app.include_router(growhub_ai_creator_router, prefix="/api")
 app.include_router(growhub_scheduler_router, prefix="/api")
 app.include_router(growhub_account_pool_router, prefix="/api")
 
+# Phase 2: 监控项目模块
+from .routers.growhub_projects import router as growhub_projects_router
+app.include_router(growhub_projects_router, prefix="/api")
+
 
 
 @app.get("/")

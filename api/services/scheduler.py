@@ -314,24 +314,80 @@ class SchedulerService:
         return {"status": "unknown_task_type"}
     
     async def _run_crawler_task(self, task: ScheduledTask) -> Dict[str, Any]:
-        """执行爬虫任务"""
+        """执行爬虫任务 (真实调用)"""
+        try:
+            from api.services.crawler_manager import crawler_manager
+            from api.schemas import CrawlerStartRequest
+            from api.services.account_pool import get_account_pool, AccountPlatform
+        except ImportError:
+            return {"error": "Crawler modules not found"}
+
         params = task.params
         platform = params.get("platform", "xhs")
-        keywords = params.get("keywords", [])
+        keywords = params.get("keywords", "")
+        if isinstance(keywords, list):
+            keywords = " ".join(keywords)  # 转换为字符串
+            
+        # 1. 准备 Cookie
+        cookies = params.get("cookies")
+        account_name = "manual_input"
         
-        # 调用爬虫服务
-        from api.services.crawler_manager import CrawlerManager
-        manager = CrawlerManager()
+        if not cookies:
+            # 尝试从账号池获取
+            pool = get_account_pool()
+            # 简单的平台映射
+            try:
+                plat_enum = AccountPlatform(platform)
+                account = await pool.get_available_account(plat_enum)
+                if account:
+                    cookies = account.cookies
+                    account_name = account.account_name
+                    print(f"[Scheduler] 使用账号池账号: {account_name}")
+                else:
+                    raise Exception(f"账号池中没有可用的 {platform} 账号，且未在参数中提供 Cookie")
+            except ValueError:
+                pass
+
+        # 2. 构造启动配置
+        # 简单的类型映射: 默认使用 search 模式
+        crawler_type = params.get("crawler_type", "search")
         
-        # 模拟：这里应该调用实际的爬虫
-        print(f"[Scheduler] 执行爬虫任务: 平台={platform}, 关键词={keywords}")
-        await asyncio.sleep(2)  # 模拟耗时
-        
+        # 转换配置对象
+        try:
+            config = CrawlerStartRequest(
+                platform=platform,
+                login_type="cookie",
+                crawler_type=crawler_type,
+                save_option="sqlite",  # 默认入库
+                keywords=keywords,
+                cookies=cookies,
+                headless=True,  # 后台运行
+                # 其它限制参数
+                crawl_limit_count=int(params.get("limit_count", 20)),
+                enable_comments=bool(params.get("enable_comments", True))
+            )
+        except Exception as e:
+            raise Exception(f"配置无效: {str(e)}")
+
+        # 3. 启动爬虫
+        if crawler_manager.status == "running":
+            raise Exception("爬虫引擎正在忙碌中，请稍后重试")
+
+        success = await crawler_manager.start(config)
+        if not success:
+            raise Exception("爬虫启动失败")
+
+        # 4. 等待执行完成
+        while crawler_manager.status == "running":
+            await asyncio.sleep(2)
+            
+        # 5. 收集结果
         return {
             "platform": platform,
             "keywords": keywords,
-            "crawled_count": 0,
-            "message": "爬虫任务模拟执行完成"
+            "used_account": account_name,
+            "final_status": crawler_manager.status,
+            "message": "爬虫任务执行完成"
         }
     
     async def _run_keyword_monitor_task(self, task: ScheduledTask) -> Dict[str, Any]:

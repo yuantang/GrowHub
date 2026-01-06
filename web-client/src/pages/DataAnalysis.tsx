@@ -13,13 +13,10 @@ import {
     Tooltip,
     Legend,
     ResponsiveContainer,
-    PieChart,
-    Pie,
-    Cell,
     LineChart,
     Line
 } from 'recharts';
-import { Loader2, Filter, TrendingUp, Users, Heart, MessageCircle, ChevronLeft, ChevronRight, ExternalLink, Share2, Star, Image as ImageIcon, Play, X, FileText, Video as VideoIcon } from 'lucide-react';
+import { Loader2, Filter, TrendingUp, Users, Heart, MessageCircle, ChevronLeft, ChevronRight, ExternalLink, Share2, Star, Image as ImageIcon, Play, X, Video as VideoIcon } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 
 // Common data interface trying to cover multiple platforms

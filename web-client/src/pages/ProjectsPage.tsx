@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import {
     FolderOpen, Plus, Play, Pause, Trash2, RefreshCw,
-    Clock, Search, AlertTriangle, TrendingUp, Loader2, Zap
+    Clock, Search, AlertTriangle, TrendingUp, Loader2, Zap, Sparkles
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
+import { fetchAIKeywords } from '@/api';
 
 const API_BASE = 'http://localhost:8080/api';
 
@@ -16,6 +17,7 @@ interface Project {
     platforms: string[];
     crawler_type: string;
     crawl_limit: number;
+    crawl_date_range?: number;
     enable_comments: boolean;
     schedule_type: string;
     schedule_value: string;
@@ -31,6 +33,7 @@ interface Project {
     today_crawled: number;
     today_alerts: number;
     created_at?: string;
+    is_running?: boolean; // 任务正在执行中
 }
 
 interface Platform {
@@ -41,11 +44,187 @@ interface Platform {
 
 const PLATFORM_MAP: Record<string, { label: string; icon: string; color: string }> = {
     xhs: { label: '小红书', icon: '📕', color: 'bg-red-500/10 text-red-500' },
-    douyin: { label: '抖音', icon: '🎵', color: 'bg-black/10 text-gray-800' },
+    douyin: { label: '抖音', icon: '🎵', color: 'bg-slate-500/20 text-slate-300' },
     bilibili: { label: 'B站', icon: '📺', color: 'bg-pink-500/10 text-pink-500' },
     weibo: { label: '微博', icon: '📱', color: 'bg-orange-500/10 text-orange-500' },
     zhihu: { label: '知乎', icon: '❓', color: 'bg-blue-500/10 text-blue-500' },
 };
+
+// AI 关键词联想组件
+const AIKeywordSuggest: React.FC<{ onSelect: (keywords: string[]) => void }> = ({ onSelect }) => {
+    const [isOpen, setIsOpen] = useState(false);
+    const [target, setTarget] = useState('');
+    const [mode, setMode] = useState<'risk' | 'trend'>('risk');
+    const [loading, setLoading] = useState(false);
+    const [suggestions, setSuggestions] = useState<string[]>([]);
+    const [selected, setSelected] = useState<string[]>([]);
+
+    const handleAnalyze = async () => {
+        if (!target.trim()) return;
+        setLoading(true);
+        try {
+            const keywords = await fetchAIKeywords(target, mode, 'google/gemini-2.0-flash-exp:free');
+            if (keywords && keywords.length > 0) {
+                setSuggestions(keywords);
+                setSelected(keywords.slice(0, 5));
+            } else {
+                // API 返回空，使用本地备用关键词
+                const fallback = mode === 'risk'
+                    ? [`${target} 差评`, `${target} 避雷`, `${target} 假货`, `${target} 吐槽`, `${target} 踩坑`, `${target} 退款`, `${target} 质量差`, `${target} 不推荐`]
+                    : [`${target} 测评`, `${target} 推荐`, `${target} 好用`, `${target} 教程`, `${target} 种草`, `${target} 攻略`, `${target} 分享`, `${target} 体验`];
+                setSuggestions(fallback);
+                setSelected(fallback.slice(0, 5));
+            }
+        } catch (e) {
+            console.error('AI analysis failed:', e);
+            // 发生错误时也使用本地备用
+            const fallback = mode === 'risk'
+                ? [`${target} 差评`, `${target} 避雷`, `${target} 问题`, `${target} 吐槽`, `${target} 踩坑`]
+                : [`${target} 测评`, `${target} 推荐`, `${target} 好用`, `${target} 教程`, `${target} 种草`];
+            setSuggestions(fallback);
+            setSelected(fallback.slice(0, 3));
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const toggleKeyword = (kw: string) => {
+        setSelected(prev =>
+            prev.includes(kw) ? prev.filter(k => k !== kw) : [...prev, kw]
+        );
+    };
+
+    const handleConfirm = () => {
+        onSelect(selected);
+        setIsOpen(false);
+        setTarget('');
+        setSuggestions([]);
+        setSelected([]);
+    };
+
+    return (
+        <>
+            <button
+                type="button"
+                onClick={() => setIsOpen(true)}
+                className="text-xs px-2 py-1 rounded bg-violet-500/10 text-violet-600 hover:bg-violet-500/20 flex items-center gap-1 transition-colors"
+            >
+                <Sparkles className="w-3 h-3" />
+                AI 智能联想
+            </button>
+
+            {isOpen && (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4">
+                    <div className="bg-card rounded-lg p-6 w-full max-w-md">
+                        <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+                            <Sparkles className="w-5 h-5 text-violet-500" />
+                            AI 关键词联想
+                        </h3>
+
+                        {suggestions.length === 0 ? (
+                            <div className="space-y-4">
+                                <div>
+                                    <label className="text-sm font-medium mb-2 block">输入品牌/产品名</label>
+                                    <input
+                                        type="text"
+                                        value={target}
+                                        onChange={e => setTarget(e.target.value)}
+                                        placeholder="如：SK-II 神仙水、iPhone 16"
+                                        className="w-full px-3 py-2 bg-background border border-border rounded-lg"
+                                        autoFocus
+                                    />
+                                </div>
+
+                                <div>
+                                    <label className="text-sm font-medium mb-2 block">联想模式</label>
+                                    <div className="flex gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={() => setMode('risk')}
+                                            className={`flex-1 px-3 py-2 rounded-lg border text-sm transition-colors ${mode === 'risk'
+                                                ? 'bg-rose-500/10 border-rose-500 text-rose-600'
+                                                : 'bg-background border-border'
+                                                }`}
+                                        >
+                                            <AlertTriangle className="w-4 h-4 inline mr-1" />
+                                            舆情预警词
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setMode('trend')}
+                                            className={`flex-1 px-3 py-2 rounded-lg border text-sm transition-colors ${mode === 'trend'
+                                                ? 'bg-purple-500/10 border-purple-500 text-purple-600'
+                                                : 'bg-background border-border'
+                                                }`}
+                                        >
+                                            <TrendingUp className="w-4 h-4 inline mr-1" />
+                                            热点趋势词
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div className="flex gap-2 pt-2">
+                                    <Button variant="outline" onClick={() => setIsOpen(false)} className="flex-1">
+                                        取消
+                                    </Button>
+                                    <Button
+                                        onClick={handleAnalyze}
+                                        disabled={!target.trim() || loading}
+                                        className="flex-1 bg-violet-600 hover:bg-violet-700"
+                                    >
+                                        {loading ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Sparkles className="w-4 h-4 mr-1" />}
+                                        {loading ? '分析中...' : '开始联想'}
+                                    </Button>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="space-y-4">
+                                <div className="text-sm text-muted-foreground">
+                                    基于 <span className="font-medium text-foreground">{target}</span> 联想的
+                                    {mode === 'risk' ? '舆情预警' : '热点趋势'}关键词：
+                                </div>
+
+                                <div className="flex flex-wrap gap-2 max-h-48 overflow-y-auto p-1">
+                                    {suggestions.map(kw => (
+                                        <button
+                                            key={kw}
+                                            type="button"
+                                            onClick={() => toggleKeyword(kw)}
+                                            className={`px-3 py-1.5 rounded-full text-sm border transition-all ${selected.includes(kw)
+                                                ? 'bg-primary text-primary-foreground border-primary'
+                                                : 'bg-background border-border hover:border-primary/50'
+                                                }`}
+                                        >
+                                            {kw}
+                                        </button>
+                                    ))}
+                                </div>
+
+                                <div className="text-xs text-muted-foreground">
+                                    已选择 {selected.length} 个关键词
+                                </div>
+
+                                <div className="flex gap-2 pt-2">
+                                    <Button variant="outline" onClick={() => setSuggestions([])} className="flex-1">
+                                        重新输入
+                                    </Button>
+                                    <Button
+                                        onClick={handleConfirm}
+                                        disabled={selected.length === 0}
+                                        className="flex-1"
+                                    >
+                                        添加选中关键词
+                                    </Button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+        </>
+    );
+};
+
 
 const ProjectsPage: React.FC = () => {
     const [projects, setProjects] = useState<Project[]>([]);
@@ -53,6 +232,7 @@ const ProjectsPage: React.FC = () => {
     const [loading, setLoading] = useState(true);
     const [showCreateModal, setShowCreateModal] = useState(false);
     const [actionLoading, setActionLoading] = useState<number | null>(null);
+    const [runningProjects, setRunningProjects] = useState<Set<number>>(new Set()); // 跟踪正在执行的项目
 
     // 新建项目表单
     const [newProject, setNewProject] = useState({
@@ -62,12 +242,25 @@ const ProjectsPage: React.FC = () => {
         platforms: ['xhs'] as string[],
         crawler_type: 'search',
         crawl_limit: 20,
+        crawl_date_range: 7, // 默认最近7天
         schedule_type: 'interval',
         schedule_value: '3600',
         alert_on_negative: true,
         alert_on_hotspot: false,
         auto_start: false,
+        // 高级过滤 - 范围
+        min_likes: 0,
+        max_likes: 0,
+        min_comments: 0,
+        max_comments: 0,
+        min_shares: 0,
+        max_shares: 0,
+        min_favorites: 0,
+        max_favorites: 0,
+        enable_comments: true,
+        deduplicate_authors: false,
     });
+
 
     useEffect(() => {
         fetchProjects();
@@ -121,11 +314,22 @@ const ProjectsPage: React.FC = () => {
                     platforms: ['xhs'],
                     crawler_type: 'search',
                     crawl_limit: 20,
+                    crawl_date_range: 7,
                     schedule_type: 'interval',
                     schedule_value: '3600',
                     alert_on_negative: true,
                     alert_on_hotspot: false,
                     auto_start: false,
+                    min_likes: 0,
+                    max_likes: 0,
+                    min_comments: 0,
+                    max_comments: 0,
+                    min_shares: 0,
+                    max_shares: 0,
+                    min_favorites: 0,
+                    max_favorites: 0,
+                    enable_comments: true,
+                    deduplicate_authors: false,
                 });
                 fetchProjects();
             }
@@ -149,19 +353,95 @@ const ProjectsPage: React.FC = () => {
         }
     };
 
+    // Preflight 检查结果
+    const [preflightResult, setPreflightResult] = useState<{
+        show: boolean;
+        project?: Project;
+        data?: {
+            can_run: boolean;
+            message: string;
+            checks: Array<{
+                name: string;
+                label: string;
+                status: 'pass' | 'fail' | 'warn';
+                message: string;
+                blocking: boolean;
+                action?: { label: string; url: string };
+            }>;
+        };
+    }>({ show: false });
+
     const runProjectNow = async (project: Project) => {
         setActionLoading(project.id);
+
         try {
+            // 先进行前置检查
+            const preflightRes = await fetch(`${API_BASE}/growhub/projects/${project.id}/preflight`);
+            const preflight = await preflightRes.json();
+
+            if (!preflight.can_run) {
+                // 有阻断项，显示检查结果
+                setPreflightResult({
+                    show: true,
+                    project,
+                    data: preflight
+                });
+                setActionLoading(null);
+                return;
+            }
+
+            // 检查通过，执行任务
+            setRunningProjects(prev => new Set(prev).add(project.id));
+
             await fetch(`${API_BASE}/growhub/projects/${project.id}/run`, {
                 method: 'POST'
             });
-            fetchProjects();
+
+            // 执行成功后，等待一段时间后刷新数据
+            setTimeout(() => {
+                setRunningProjects(prev => {
+                    const next = new Set(prev);
+                    next.delete(project.id);
+                    return next;
+                });
+                fetchProjects();
+            }, 5000);
+
         } catch (error) {
             console.error('Failed to run project:', error);
+            setRunningProjects(prev => {
+                const next = new Set(prev);
+                next.delete(project.id);
+                return next;
+            });
         } finally {
             setActionLoading(null);
         }
     };
+
+    // 强制执行（跳过检查）
+    const forceRunProject = async (project: Project) => {
+        setPreflightResult({ show: false });
+        setRunningProjects(prev => new Set(prev).add(project.id));
+
+        try {
+            await fetch(`${API_BASE}/growhub/projects/${project.id}/run`, {
+                method: 'POST'
+            });
+            setTimeout(() => {
+                setRunningProjects(prev => {
+                    const next = new Set(prev);
+                    next.delete(project.id);
+                    return next;
+                });
+                fetchProjects();
+            }, 5000);
+        } catch (error) {
+            console.error('Failed to run project:', error);
+        }
+    };
+
+
 
     const deleteProject = async (project: Project) => {
         if (!confirm(`确定要删除项目"${project.name}"吗？`)) return;
@@ -278,17 +558,33 @@ const ProjectsPage: React.FC = () => {
             ) : (
                 <div className="space-y-4">
                     {projects.map(project => (
-                        <Card key={project.id} className="bg-card/50 hover:bg-card/70 transition-colors">
+                        <Card
+                            key={project.id}
+                            className="bg-card/50 hover:bg-card/70 transition-colors cursor-pointer"
+                            onClick={() => window.location.href = `/projects/${project.id}`}
+                        >
                             <CardContent className="py-5">
                                 <div className="flex items-start justify-between">
                                     {/* Left: Project Info */}
                                     <div className="flex-1">
                                         <div className="flex items-center gap-3 mb-2">
-                                            <div className={`w-3 h-3 rounded-full ${project.is_active ? 'bg-green-500 animate-pulse' : 'bg-gray-400'}`} />
+                                            <div className={`w-3 h-3 rounded-full ${runningProjects.has(project.id)
+                                                ? 'bg-blue-500 animate-ping'
+                                                : project.is_active
+                                                    ? 'bg-green-500 animate-pulse'
+                                                    : 'bg-gray-400'
+                                                }`} />
                                             <h3 className="font-semibold text-lg">{project.name}</h3>
-                                            <span className={`text-xs px-2 py-0.5 rounded ${project.is_active ? 'bg-green-500/10 text-green-500' : 'bg-gray-500/10 text-gray-500'}`}>
-                                                {project.is_active ? '运行中' : '已停止'}
-                                            </span>
+                                            {runningProjects.has(project.id) ? (
+                                                <span className="text-xs px-2 py-0.5 rounded bg-blue-500/10 text-blue-500 flex items-center gap-1">
+                                                    <Loader2 className="w-3 h-3 animate-spin" />
+                                                    执行中...
+                                                </span>
+                                            ) : (
+                                                <span className={`text-xs px-2 py-0.5 rounded ${project.is_active ? 'bg-green-500/10 text-green-500' : 'bg-gray-500/10 text-gray-500'}`}>
+                                                    {project.is_active ? '运行中' : '已停止'}
+                                                </span>
+                                            )}
                                         </div>
 
                                         {project.description && (
@@ -347,7 +643,7 @@ const ProjectsPage: React.FC = () => {
                                         </div>
 
                                         {/* Actions */}
-                                        <div className="flex items-center gap-2">
+                                        <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
                                             <Button
                                                 variant="ghost"
                                                 size="sm"
@@ -384,6 +680,7 @@ const ProjectsPage: React.FC = () => {
                                                 <Trash2 className="w-4 h-4" />
                                             </Button>
                                         </div>
+
                                     </div>
                                 </div>
                             </CardContent>
@@ -426,12 +723,20 @@ const ProjectsPage: React.FC = () => {
                                 />
                             </div>
 
-                            {/* 关键词 */}
+                            {/* 关键词 - 带 AI 联想 */}
                             <div>
-                                <label className="text-sm font-medium mb-2 block">
-                                    监控关键词 *
-                                    <span className="text-muted-foreground font-normal ml-2">多个关键词用逗号或空格分隔</span>
-                                </label>
+                                <div className="flex items-center justify-between mb-2">
+                                    <label className="text-sm font-medium">
+                                        监控关键词 *
+                                        <span className="text-muted-foreground font-normal ml-2">多个关键词用逗号或空格分隔</span>
+                                    </label>
+                                    <AIKeywordSuggest
+                                        onSelect={(keywords) => {
+                                            const current = newProject.keywords ? newProject.keywords + ', ' : '';
+                                            setNewProject({ ...newProject, keywords: current + keywords.join(', ') });
+                                        }}
+                                    />
+                                </div>
                                 <textarea
                                     value={newProject.keywords}
                                     onChange={e => setNewProject({ ...newProject, keywords: e.target.value })}
@@ -503,7 +808,7 @@ const ProjectsPage: React.FC = () => {
                             </div>
 
                             {/* 抓取配置 */}
-                            <div className="grid grid-cols-2 gap-4">
+                            <div className="grid grid-cols-3 gap-4">
                                 <div>
                                     <label className="text-sm font-medium mb-2 block">抓取模式</label>
                                     <select
@@ -514,6 +819,21 @@ const ProjectsPage: React.FC = () => {
                                         <option value="search">关键词搜索</option>
                                         <option value="detail">指定内容详情</option>
                                         <option value="creator">指定博主主页</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="text-sm font-medium mb-2 block">爬虫时间范围</label>
+                                    <select
+                                        value={newProject.crawl_date_range}
+                                        onChange={e => setNewProject({ ...newProject, crawl_date_range: parseInt(e.target.value) })}
+                                        className="w-full px-3 py-2 bg-background border border-border rounded-lg"
+                                    >
+                                        <option value="1">最近 1 天</option>
+                                        <option value="3">最近 3 天</option>
+                                        <option value="7">最近 7 天</option>
+                                        <option value="30">最近 30 天</option>
+                                        <option value="90">最近 3 个月</option>
+                                        <option value="0">不限时间</option>
                                     </select>
                                 </div>
                                 <div>
@@ -528,6 +848,138 @@ const ProjectsPage: React.FC = () => {
                                     />
                                 </div>
                             </div>
+
+                            <div className="flex items-center space-x-2">
+                                <input
+                                    type="checkbox"
+                                    id="new_dedup"
+                                    checked={newProject.deduplicate_authors || false}
+                                    onChange={(e) => setNewProject({ ...newProject, deduplicate_authors: e.target.checked })}
+                                    className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
+                                />
+                                <label htmlFor="new_dedup" className="text-sm font-medium leading-none cursor-pointer">
+                                    开启博主去重 (只保留最新内容)
+                                </label>
+                            </div>
+
+                            {/* 高级过滤 - 折叠面板 */}
+                            <details className="border border-border rounded-lg">
+                                <summary className="px-4 py-3 cursor-pointer text-sm font-medium hover:bg-muted/50 flex items-center gap-2">
+                                    <Search className="w-4 h-4" />
+                                    高级过滤（可选）
+                                </summary>
+                                <div className="p-4 border-t border-border space-y-4">
+                                    <p className="text-xs text-muted-foreground">设置过滤条件，只抓取符合条件的内容（0 = 不限制）</p>
+
+                                    {/* 点赞数范围 */}
+                                    <div>
+                                        <label className="text-sm font-medium mb-2 block">点赞数范围</label>
+                                        <div className="flex items-center gap-2">
+                                            <input
+                                                type="number"
+                                                min={0}
+                                                value={newProject.min_likes || 0}
+                                                onChange={e => setNewProject({ ...newProject, min_likes: parseInt(e.target.value) || 0 })}
+                                                placeholder="最小"
+                                                className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm"
+                                            />
+                                            <span className="text-muted-foreground">—</span>
+                                            <input
+                                                type="number"
+                                                min={0}
+                                                value={newProject.max_likes || 0}
+                                                onChange={e => setNewProject({ ...newProject, max_likes: parseInt(e.target.value) || 0 })}
+                                                placeholder="最大"
+                                                className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm"
+                                            />
+                                        </div>
+                                    </div>
+
+                                    {/* 评论数范围 */}
+                                    <div>
+                                        <label className="text-sm font-medium mb-2 block">评论数范围</label>
+                                        <div className="flex items-center gap-2">
+                                            <input
+                                                type="number"
+                                                min={0}
+                                                value={newProject.min_comments || 0}
+                                                onChange={e => setNewProject({ ...newProject, min_comments: parseInt(e.target.value) || 0 })}
+                                                placeholder="最小"
+                                                className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm"
+                                            />
+                                            <span className="text-muted-foreground">—</span>
+                                            <input
+                                                type="number"
+                                                min={0}
+                                                value={newProject.max_comments || 0}
+                                                onChange={e => setNewProject({ ...newProject, max_comments: parseInt(e.target.value) || 0 })}
+                                                placeholder="最大"
+                                                className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm"
+                                            />
+                                        </div>
+                                    </div>
+
+                                    {/* 分享/收藏范围 */}
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div>
+                                            <label className="text-sm font-medium mb-2 block">分享数范围</label>
+                                            <div className="flex items-center gap-1">
+                                                <input
+                                                    type="number"
+                                                    min={0}
+                                                    value={newProject.min_shares || 0}
+                                                    onChange={e => setNewProject({ ...newProject, min_shares: parseInt(e.target.value) || 0 })}
+                                                    placeholder="最小"
+                                                    className="w-full px-2 py-2 bg-background border border-border rounded-lg text-sm"
+                                                />
+                                                <span className="text-muted-foreground text-xs">—</span>
+                                                <input
+                                                    type="number"
+                                                    min={0}
+                                                    value={newProject.max_shares || 0}
+                                                    onChange={e => setNewProject({ ...newProject, max_shares: parseInt(e.target.value) || 0 })}
+                                                    placeholder="最大"
+                                                    className="w-full px-2 py-2 bg-background border border-border rounded-lg text-sm"
+                                                />
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <label className="text-sm font-medium mb-2 block">收藏数范围</label>
+                                            <div className="flex items-center gap-1">
+                                                <input
+                                                    type="number"
+                                                    min={0}
+                                                    value={newProject.min_favorites || 0}
+                                                    onChange={e => setNewProject({ ...newProject, min_favorites: parseInt(e.target.value) || 0 })}
+                                                    placeholder="最小"
+                                                    className="w-full px-2 py-2 bg-background border border-border rounded-lg text-sm"
+                                                />
+                                                <span className="text-muted-foreground text-xs">—</span>
+                                                <input
+                                                    type="number"
+                                                    min={0}
+                                                    value={newProject.max_favorites || 0}
+                                                    onChange={e => setNewProject({ ...newProject, max_favorites: parseInt(e.target.value) || 0 })}
+                                                    placeholder="最大"
+                                                    className="w-full px-2 py-2 bg-background border border-border rounded-lg text-sm"
+                                                />
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="flex items-center gap-2 pt-2">
+                                        <input
+                                            type="checkbox"
+                                            id="enableComments"
+                                            checked={newProject.enable_comments !== false}
+                                            onChange={e => setNewProject({ ...newProject, enable_comments: e.target.checked })}
+                                            className="w-4 h-4"
+                                        />
+                                        <label htmlFor="enableComments" className="text-sm cursor-pointer">同时抓取评论内容</label>
+                                    </div>
+                                </div>
+                            </details>
+
 
                             {/* 预警配置 */}
                             <div>
@@ -586,7 +1038,71 @@ const ProjectsPage: React.FC = () => {
                     </div>
                 </div>
             )}
+
+            {/* Preflight Check Dialog */}
+            {preflightResult.show && preflightResult.data && (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+                    <div className="bg-card rounded-lg p-6 w-full max-w-md">
+                        <h2 className="text-lg font-bold mb-4 flex items-center gap-2">
+                            <AlertTriangle className="w-5 h-5 text-orange-500" />
+                            执行前检查
+                        </h2>
+
+                        <p className="text-sm text-muted-foreground mb-4">
+                            项目 <span className="font-medium text-foreground">{preflightResult.project?.name}</span> 有以下问题需要解决：
+                        </p>
+
+                        <div className="space-y-3 mb-6">
+                            {preflightResult.data.checks.map((check, idx) => (
+                                <div
+                                    key={idx}
+                                    className={`flex items-start gap-3 p-3 rounded-lg ${check.status === 'pass' ? 'bg-green-500/10' :
+                                        check.status === 'fail' ? 'bg-red-500/10' :
+                                            'bg-yellow-500/10'
+                                        }`}
+                                >
+                                    <div className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold ${check.status === 'pass' ? 'bg-green-500 text-white' :
+                                        check.status === 'fail' ? 'bg-red-500 text-white' :
+                                            'bg-yellow-500 text-white'
+                                        }`}>
+                                        {check.status === 'pass' ? '✓' : check.status === 'fail' ? '✗' : '!'}
+                                    </div>
+                                    <div className="flex-1">
+                                        <div className="font-medium text-sm">{check.label}</div>
+                                        <div className="text-xs text-muted-foreground">{check.message}</div>
+                                        {check.action && (
+                                            <a
+                                                href={check.action.url}
+                                                className="text-xs text-primary hover:underline mt-1 inline-block"
+                                            >
+                                                {check.action.label} →
+                                            </a>
+                                        )}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+
+                        <div className="flex gap-3">
+                            <Button
+                                variant="outline"
+                                onClick={() => setPreflightResult({ show: false })}
+                                className="flex-1"
+                            >
+                                取消
+                            </Button>
+                            <Button
+                                onClick={() => preflightResult.project && forceRunProject(preflightResult.project)}
+                                className="flex-1 bg-orange-600 hover:bg-orange-700"
+                            >
+                                仍然执行
+                            </Button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
+
     );
 };
 

@@ -244,6 +244,15 @@ class CrawlerManager:
             
         if config.min_favorites > 0:
             cmd.extend(["--min_favorites", str(config.min_favorites)])
+            
+        if config.start_time:
+            cmd.extend(["--start_time", config.start_time])
+            
+        if config.end_time:
+            cmd.extend(["--end_time", config.end_time])
+            
+        if config.project_id > 0:
+            cmd.extend(["--project_id", str(config.project_id)])
 
         return cmd
 

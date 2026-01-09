@@ -290,6 +290,30 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
                 rich_help_panel="Filter Configuration",
             ),
         ] = config.MIN_FAVORITES_COUNT,
+        start_time: Annotated[
+            str,
+            typer.Option(
+                "--start_time",
+                help="Start time for crawling (YYYY-MM-DD)",
+                rich_help_panel="Filter Configuration",
+            ),
+        ] = config.START_TIME,
+        end_time: Annotated[
+            str,
+            typer.Option(
+                "--end_time",
+                help="End time for crawling (YYYY-MM-DD)",
+                rich_help_panel="Filter Configuration",
+            ),
+        ] = config.END_TIME,
+        project_id: Annotated[
+            int,
+            typer.Option(
+                "--project_id",
+                help="Associated project ID for content filtering",
+                rich_help_panel="Project Configuration",
+            ),
+        ] = config.PROJECT_ID,
     ) -> SimpleNamespace:
         """MediaCrawler 命令行入口"""
 
@@ -321,6 +345,9 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
         config.MIN_SHARES_COUNT = min_shares
         config.MIN_COMMENTS_COUNT = min_comments
         config.MIN_FAVORITES_COUNT = min_favorites
+        config.START_TIME = start_time
+        config.END_TIME = end_time
+        config.PROJECT_ID = project_id
 
         # Set platform-specific ID lists for detail/creator mode
         if specified_id_list:
@@ -361,6 +388,9 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
             cookies=config.COOKIES,
             specified_id=specified_id,
             creator_id=creator_id,
+            start_time=start_time,
+            end_time=end_time,
+            project_id=project_id,
         )
 
     command = typer.main.get_command(app)

@@ -76,6 +76,14 @@ async def update_tieba_note(note_item: TiebaNote):
     utils.logger.info(f"[store.tieba.update_tieba_note] tieba note: {save_note_item}")
 
     await TieBaStoreFactory.create_store().store_content(save_note_item)
+    
+    # 同步到 GrowHub 统一表
+    try:
+        from api.services.growhub_store import get_growhub_store_service
+        sync_service = get_growhub_store_service()
+        await sync_service.sync_to_growhub("tieba", save_note_item)
+    except Exception as e:
+        utils.logger.error(f"[store.tieba.update_tieba_note] Sync to GrowHub failed: {e}")
 
 
 async def batch_update_tieba_note_comments(note_id: str, comments: List[TiebaComment]):

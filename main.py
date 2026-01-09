@@ -113,6 +113,11 @@ async def main() -> None:
     config.HEADLESS = args.headless
     config.SAVE_DATA_OPTION = args.save_data_option
     config.COOKIES = args.cookies
+    config.START_TIME = getattr(args, 'start_time', "")
+    config.END_TIME = getattr(args, 'end_time', "")
+    config.PROJECT_ID = getattr(args, 'project_id', 0)
+    
+    print(f"[Debug] Config loaded - Start Time: {config.START_TIME}, End Time: {config.END_TIME}, Keywords: {config.KEYWORDS}, Project ID: {config.PROJECT_ID}")
 
     if args.init_db:
         await db.init_db(args.init_db)

@@ -22,6 +22,7 @@ PLATFORM = "xhs"  # 平台，xhs | dy | ks | bili | wb | tieba | zhihu
 KEYWORDS = "编程副业,编程兼职"  # 关键词搜索配置，以英文逗号分隔
 LOGIN_TYPE = "qrcode"  # qrcode or phone or cookie
 COOKIES = ""
+PROJECT_ID = 0  # 关联的项目 ID（用于数据过滤）
 CRAWLER_TYPE = (
     "search"  # 爬取类型，search(关键词搜索) | detail(帖子详情)| creator(创作者主页数据)
 )
@@ -96,6 +97,10 @@ MIN_LIKES_COUNT = 0       # 最小点赞数
 MIN_SHARES_COUNT = 0      # 最小分享数
 MIN_COMMENTS_COUNT = 0    # 最小评论数
 MIN_FAVORITES_COUNT = 0   # 最小收藏数
+
+# ==================== 时间筛选配置 ====================
+START_TIME = ""  # 开始时间 YYYY-MM-DD or YYYY-MM-DD HH:MM:SS
+END_TIME = ""    # 结束时间
 
 # 并发爬虫数量控制
 MAX_CONCURRENCY_NUM = 1

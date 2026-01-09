@@ -76,10 +76,15 @@ class CrawlerStartRequest(BaseModel):
 
     # Crawl Control and Filters
     crawl_limit_count: int = 0  # 0 means no limit (or default max)
+    start_time: str = ""  # YYYY-MM-DD or YYYY-MM-DD HH:MM:SS
+    end_time: str = ""
     min_likes: int = 0
     min_shares: int = 0
     min_comments: int = 0
     min_favorites: int = 0
+    
+    # Project association
+    project_id: int = 0  # 关联的项目 ID
 
 
 class CrawlerStatusResponse(BaseModel):

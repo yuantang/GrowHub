@@ -109,11 +109,16 @@ class TieBaDbStoreImplement(AbstractStore):
             stmt = select(TiebaNote).where(TiebaNote.note_id == note_id)
             res = await session.execute(stmt)
             db_note = res.scalar_one_or_none()
+
+            # Filter valid keys
+            valid_keys = {c.name for c in TiebaNote.__table__.columns}
+            filtered_item = {k: v for k, v in content_item.items() if k in valid_keys}
+
             if db_note:
-                for key, value in content_item.items():
+                for key, value in filtered_item.items():
                     setattr(db_note, key, value)
             else:
-                db_note = TiebaNote(**content_item)
+                db_note = TiebaNote(**filtered_item)
                 session.add(db_note)
             await session.commit()
 
@@ -128,11 +133,16 @@ class TieBaDbStoreImplement(AbstractStore):
             stmt = select(TiebaComment).where(TiebaComment.comment_id == comment_id)
             res = await session.execute(stmt)
             db_comment = res.scalar_one_or_none()
+
+            # Filter valid keys
+            valid_keys = {c.name for c in TiebaComment.__table__.columns}
+            filtered_item = {k: v for k, v in comment_item.items() if k in valid_keys}
+
             if db_comment:
-                for key, value in comment_item.items():
+                for key, value in filtered_item.items():
                     setattr(db_comment, key, value)
             else:
-                db_comment = TiebaComment(**comment_item)
+                db_comment = TiebaComment(**filtered_item)
                 session.add(db_comment)
             await session.commit()
 
@@ -147,11 +157,16 @@ class TieBaDbStoreImplement(AbstractStore):
             stmt = select(TiebaCreator).where(TiebaCreator.user_id == user_id)
             res = await session.execute(stmt)
             db_creator = res.scalar_one_or_none()
+
+            # Filter valid keys
+            valid_keys = {c.name for c in TiebaCreator.__table__.columns}
+            filtered_item = {k: v for k, v in creator.items() if k in valid_keys}
+
             if db_creator:
-                for key, value in creator.items():
+                for key, value in filtered_item.items():
                     setattr(db_creator, key, value)
             else:
-                db_creator = TiebaCreator(**creator)
+                db_creator = TiebaCreator(**filtered_item)
                 session.add(db_creator)
             await session.commit()
 

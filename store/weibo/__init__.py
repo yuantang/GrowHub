@@ -104,6 +104,14 @@ async def update_weibo_note(note_item: Dict):
     }
     utils.logger.info(f"[store.weibo.update_weibo_note] weibo note id:{note_id}, title:{save_content_item.get('content')[:24]} ...")
     await WeibostoreFactory.create_store().store_content(content_item=save_content_item)
+    
+    # 同步到 GrowHub 统一表
+    try:
+        from api.services.growhub_store import get_growhub_store_service
+        sync_service = get_growhub_store_service()
+        await sync_service.sync_to_growhub("wb", save_content_item)
+    except Exception as e:
+        utils.logger.error(f"[store.weibo.update_weibo_note] Sync to GrowHub failed: {e}")
 
 
 async def batch_update_weibo_note_comments(note_id: str, comments: List[Dict]):

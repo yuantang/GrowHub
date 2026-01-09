@@ -75,6 +75,14 @@ async def update_kuaishou_video(video_item: Dict):
     utils.logger.info(
         f"[store.kuaishou.update_kuaishou_video] Kuaishou video id:{video_id}, title:{save_content_item.get('title')}")
     await KuaishouStoreFactory.create_store().store_content(content_item=save_content_item)
+    
+    # 同步到 GrowHub 统一表
+    try:
+        from api.services.growhub_store import get_growhub_store_service
+        sync_service = get_growhub_store_service()
+        await sync_service.sync_to_growhub("ks", save_content_item)
+    except Exception as e:
+        utils.logger.error(f"[store.kuaishou.update_kuaishou_video] Sync to GrowHub failed: {e}")
 
 
 async def batch_update_ks_video_comments(video_id: str, comments: List[Dict]):

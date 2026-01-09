@@ -101,16 +101,30 @@ class DouyinDbStoreImplement(AbstractStore):
         async with get_session() as session:
             result = await session.execute(select(DouyinAweme).where(DouyinAweme.aweme_id == aweme_id))
             aweme_detail = result.scalar_one_or_none()
+            
+            # Filter valid columns for the model
+            valid_keys = {c.name for c in DouyinAweme.__table__.columns}
+            filtered_item = {k: v for k, v in content_item.items() if k in valid_keys}
 
             if not aweme_detail:
-                content_item["add_ts"] = utils.get_current_timestamp()
-                if content_item.get("title"):
-                    new_content = DouyinAweme(**content_item)
+                # Add timestamp if not present (though 'add_ts' should be in valid_keys)
+                if "add_ts" not in filtered_item:
+                    filtered_item["add_ts"] = utils.get_current_timestamp()
+                    
+                if filtered_item.get("title"):
+                    new_content = DouyinAweme(**filtered_item)
                     session.add(new_content)
             else:
-                for key, value in content_item.items():
+                for key, value in filtered_item.items():
                     setattr(aweme_detail, key, value)
             await session.commit()
+
+        # Sync to GrowHub Unified Content Table
+        try:
+            from api.services.growhub_store import get_growhub_store_service
+            await get_growhub_store_service().sync_to_growhub("douyin", content_item)
+        except Exception as e:
+            utils.logger.error(f"[DouyinStore] Failed to sync to GrowHub: {e}")
 
     async def store_comment(self, comment_item: Dict):
         """

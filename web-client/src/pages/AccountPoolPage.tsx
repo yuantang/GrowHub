@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
     Users, Plus, RefreshCw, Shield, AlertTriangle, CheckCircle,
-    XCircle, Trash2, Eye, EyeOff, Search, Activity
+    XCircle, Trash2, Eye, EyeOff, Search, Activity, Smartphone, QrCode, Loader2
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -70,6 +70,21 @@ const AccountPoolPage: React.FC = () => {
         group: 'default',
         notes: ''
     });
+
+    // Cookie guide state
+    const [showCookieGuide, setShowCookieGuide] = useState(false);
+
+    // QR Login state
+    const [showQRModal, setShowQRModal] = useState(false);
+    const [qrPlatform, setQRPlatform] = useState('xhs');
+    const [qrLoading, setQRLoading] = useState(false);
+    const [qrSession, setQRSession] = useState<{
+        session_id: string;
+        qr_image: string;
+        status: string;
+        message?: string;
+    } | null>(null);
+    const qrPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
     useEffect(() => {
         fetchAccounts();
@@ -187,6 +202,120 @@ const AccountPoolPage: React.FC = () => {
         return 'bg-red-500';
     };
 
+    // QR Login functions
+    const startQRLogin = async () => {
+        setQRLoading(true);
+        setQRSession(null);
+
+        try {
+            const response = await fetch(`${API_BASE}/growhub/accounts/qr-login/start`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ platform: qrPlatform })
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                setQRSession({
+                    session_id: data.session_id,
+                    qr_image: data.qr_image,
+                    status: 'pending',
+                    message: '请使用手机 App 扫描二维码'
+                });
+
+                // Start polling for status
+                startStatusPolling(data.session_id);
+            } else {
+                setQRSession({
+                    session_id: '',
+                    qr_image: '',
+                    status: 'error',
+                    message: data.error || '启动扫码登录失败'
+                });
+            }
+        } catch (error) {
+            setQRSession({
+                session_id: '',
+                qr_image: '',
+                status: 'error',
+                message: '网络错误，请重试'
+            });
+        } finally {
+            setQRLoading(false);
+        }
+    };
+
+    const startStatusPolling = (sessionId: string) => {
+        // Clear existing poll
+        if (qrPollRef.current) {
+            clearInterval(qrPollRef.current);
+        }
+
+        qrPollRef.current = setInterval(async () => {
+            try {
+                const response = await fetch(`${API_BASE}/growhub/accounts/qr-login/status/${sessionId}`);
+                const data = await response.json();
+
+                if (data.status === 'success') {
+                    // Login successful!
+                    clearInterval(qrPollRef.current!);
+                    setQRSession(prev => prev ? {
+                        ...prev,
+                        status: 'success',
+                        message: data.message || '登录成功！账号已自动添加'
+                    } : null);
+
+                    // Refresh account list
+                    setTimeout(() => {
+                        fetchAccounts();
+                        fetchStatistics();
+                        setShowQRModal(false);
+                        setQRSession(null);
+                    }, 2000);
+
+                } else if (data.status === 'expired' || data.status === 'error') {
+                    clearInterval(qrPollRef.current!);
+                    setQRSession(prev => prev ? {
+                        ...prev,
+                        status: data.status,
+                        message: data.status === 'expired' ? '二维码已过期，请重新获取' : (data.error || '登录失败')
+                    } : null);
+                } else if (data.status === 'scanned') {
+                    setQRSession(prev => prev ? {
+                        ...prev,
+                        status: 'scanned',
+                        message: '已扫码，请在手机上确认登录'
+                    } : null);
+                }
+            } catch (error) {
+                // Ignore polling errors
+            }
+        }, 2000);
+    };
+
+    const cancelQRLogin = () => {
+        if (qrPollRef.current) {
+            clearInterval(qrPollRef.current);
+        }
+        if (qrSession?.session_id) {
+            fetch(`${API_BASE}/growhub/accounts/qr-login/cancel/${qrSession.session_id}`, {
+                method: 'POST'
+            }).catch(() => { });
+        }
+        setShowQRModal(false);
+        setQRSession(null);
+    };
+
+    // Cleanup on unmount
+    useEffect(() => {
+        return () => {
+            if (qrPollRef.current) {
+                clearInterval(qrPollRef.current);
+            }
+        };
+    }, []);
+
     const filteredAccounts = accounts.filter(acc =>
         acc.account_name.toLowerCase().includes(searchTerm.toLowerCase())
     );
@@ -209,9 +338,17 @@ const AccountPoolPage: React.FC = () => {
                         <Shield className="w-4 h-4 mr-2" />
                         批量检测
                     </Button>
+                    <Button
+                        variant="outline"
+                        onClick={() => setShowQRModal(true)}
+                        className="border-primary/50 text-primary hover:bg-primary/10"
+                    >
+                        <QrCode className="w-4 h-4 mr-2" />
+                        扫码添加
+                    </Button>
                     <Button onClick={() => setShowAddModal(true)}>
                         <Plus className="w-4 h-4 mr-2" />
-                        添加账号
+                        手动添加
                     </Button>
                 </div>
             </div>
@@ -439,13 +576,76 @@ const AccountPoolPage: React.FC = () => {
                                 <textarea
                                     value={newAccount.cookies}
                                     onChange={(e) => setNewAccount({ ...newAccount, cookies: e.target.value })}
-                                    placeholder="粘贴 Cookie 字符串..."
-                                    rows={4}
-                                    className="w-full px-3 py-2 bg-background border border-border rounded-lg resize-none"
+                                    placeholder="建议使用下方【方法一】获取，然后在此粘贴..."
+                                    rows={3}
+                                    className="w-full px-3 py-2 bg-background border border-border rounded-lg resize-none text-xs font-mono"
                                 />
-                                <p className="text-xs text-muted-foreground mt-1">
-                                    可从浏览器开发者工具复制
-                                </p>
+
+                                {/* Cookie 教程折叠面板 */}
+                                <div className="mt-2 border border-blue-500/20 bg-blue-500/5 rounded-lg overflow-hidden">
+                                    <button
+                                        onClick={() => setShowCookieGuide(!showCookieGuide)}
+                                        className="w-full flex items-center justify-between p-3 text-xs font-medium text-blue-500 hover:bg-blue-500/10 transition-colors"
+                                    >
+                                        <span className="flex items-center gap-2">
+                                            <Shield className="w-3 h-3" />
+                                            小白教程：如何获取完整的 Cookie？
+                                        </span>
+                                        {showCookieGuide ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                                    </button>
+
+                                    {showCookieGuide && (
+                                        <div className="p-3 pt-0 text-xs space-y-4">
+                                            <div className="bg-background/50 p-2 rounded border border-border/50">
+                                                <div className="font-bold text-green-500 mb-1">方法一：控制台一键复制（推荐 ✨）</div>
+                                                <ol className="list-decimal list-inside space-y-1 text-muted-foreground">
+                                                    <li>在浏览器打开目标网站（如小红书）并登录</li>
+                                                    <li>按 <kbd className="px-1 py-0.5 bg-muted rounded border border-border font-sans">F12</kbd> 打开开发者工具，点击顶部标签栏的 <strong>控制台 (Console)</strong></li>
+                                                    <li>找到面板<strong>最底部</strong>的输入行（通常有一个 <span className="text-blue-500 font-bold">&gt;</span> 符号），粘贴代码并回车：</li>
+                                                </ol>
+                                                <div className="mt-2 flex gap-2">
+                                                    <code className="flex-1 bg-black/80 text-white p-2 rounded font-mono select-all">
+                                                        copy(document.cookie)
+                                                    </code>
+                                                    <Button
+                                                        size="sm"
+                                                        variant="outline"
+                                                        onClick={() => {
+                                                            navigator.clipboard.writeText('copy(document.cookie)');
+                                                            alert('代码已复制！请去浏览器控制台粘贴回车即可');
+                                                        }}
+                                                        className="h-auto py-1"
+                                                    >
+                                                        复制
+                                                    </Button>
+                                                </div>
+                                                <div className="mt-1 text-blue-500/80">
+                                                    💡 提示：如果浏览器提示"禁止粘贴"，请先按提示输入“允许粘贴”并回车，然后再粘贴代码。
+                                                </div>
+                                                <div className="mt-1 text-xs text-muted-foreground">
+                                                    回车后如果显示 "undefined" 是正常的，Cookie 已自动复制到您的剪贴板！
+                                                </div>
+                                            </div>
+
+                                            <div className="space-y-1 text-muted-foreground border-t border-border/50 pt-2">
+                                                <div className="font-bold text-foreground">方法二：Network 面板查找</div>
+                                                <ol className="list-decimal list-inside space-y-1">
+                                                    <li>按 <kbd className="px-1 py-0.5 bg-muted rounded border border-border font-sans">F12</kbd> 打开开发者工具，切到 <strong>网络 (Network)</strong></li>
+                                                    <li><strong>刷新页面</strong>，点击第一个请求（通常是网站名）</li>
+                                                    <li>在右侧 <strong>Headers</strong> 下找到 <strong>Request Headers</strong></li>
+                                                    <li>找到 <strong>Cookie</strong> 字段，复制冒号后的一长串字符</li>
+                                                </ol>
+                                            </div>
+
+                                            <div className="flex items-start gap-2 text-orange-500 bg-orange-500/10 p-2 rounded">
+                                                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                                                <span>
+                                                    注意：不要在 <strong>Application/存储</strong> 面板（表格形式）一个个复制，那里是不完整的！我们需要的是包含所有参数的字符串。
+                                                </span>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
                             </div>
 
                             <div>
@@ -480,6 +680,109 @@ const AccountPoolPage: React.FC = () => {
                                 disabled={loading || !newAccount.account_name || !newAccount.cookies}
                             >
                                 添加账号
+                            </Button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* QR Login Modal */}
+            {showQRModal && (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                    <div className="bg-card rounded-lg p-6 w-full max-w-md">
+                        <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+                            <Smartphone className="w-5 h-5 text-primary" />
+                            扫码添加账号
+                        </h2>
+
+                        <p className="text-sm text-muted-foreground mb-4">
+                            选择平台后，用手机 App 扫描二维码登录，系统会自动获取 Cookie
+                        </p>
+
+                        {/* Platform Selection */}
+                        {!qrSession && (
+                            <div className="space-y-4">
+                                <div>
+                                    <label className="text-sm text-muted-foreground mb-2 block">选择平台</label>
+                                    <div className="grid grid-cols-2 gap-2">
+                                        {[
+                                            { value: 'xhs', label: '小红书', emoji: '📕' },
+                                            { value: 'douyin', label: '抖音', emoji: '🎵' },
+                                            { value: 'bilibili', label: 'B站', emoji: '📺' },
+                                            { value: 'weibo', label: '微博', emoji: '📢' },
+                                        ].map(p => (
+                                            <button
+                                                key={p.value}
+                                                onClick={() => setQRPlatform(p.value)}
+                                                className={`p-3 rounded-lg border text-left transition-colors ${qrPlatform === p.value
+                                                    ? 'border-primary bg-primary/10'
+                                                    : 'border-border hover:border-primary/50'
+                                                    }`}
+                                            >
+                                                <span className="text-xl mr-2">{p.emoji}</span>
+                                                <span className="font-medium">{p.label}</span>
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                <Button
+                                    onClick={startQRLogin}
+                                    disabled={qrLoading}
+                                    className="w-full"
+                                >
+                                    {qrLoading ? (
+                                        <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> 正在获取二维码...</>
+                                    ) : (
+                                        <><QrCode className="w-4 h-4 mr-2" /> 获取登录二维码</>
+                                    )}
+                                </Button>
+                            </div>
+                        )}
+
+                        {/* QR Code Display */}
+                        {qrSession && (
+                            <div className="text-center space-y-4">
+                                {qrSession.status === 'pending' || qrSession.status === 'scanned' ? (
+                                    <>
+                                        <div className="bg-white p-4 rounded-lg inline-block">
+                                            <img
+                                                src={`data:image/png;base64,${qrSession.qr_image}`}
+                                                alt="QR Code"
+                                                className="w-48 h-48 mx-auto"
+                                            />
+                                        </div>
+                                        <div className={`text-sm flex items-center justify-center gap-2 ${qrSession.status === 'scanned' ? 'text-green-500' : 'text-muted-foreground'
+                                            }`}>
+                                            {qrSession.status === 'scanned' ? (
+                                                <CheckCircle className="w-4 h-4" />
+                                            ) : (
+                                                <Loader2 className="w-4 h-4 animate-spin" />
+                                            )}
+                                            {qrSession.message}
+                                        </div>
+                                    </>
+                                ) : qrSession.status === 'success' ? (
+                                    <div className="py-8">
+                                        <CheckCircle className="w-16 h-16 text-green-500 mx-auto mb-4" />
+                                        <p className="text-lg font-medium text-green-500">{qrSession.message}</p>
+                                    </div>
+                                ) : (
+                                    <div className="py-4">
+                                        <XCircle className="w-12 h-12 text-red-500 mx-auto mb-3" />
+                                        <p className="text-red-500 mb-4">{qrSession.message}</p>
+                                        <Button onClick={startQRLogin}>
+                                            <RefreshCw className="w-4 h-4 mr-2" />
+                                            重新获取
+                                        </Button>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        <div className="flex justify-end gap-3 mt-6 pt-4 border-t border-border">
+                            <Button variant="outline" onClick={cancelQRLogin}>
+                                {qrSession?.status === 'success' ? '完成' : '取消'}
                             </Button>
                         </div>
                     </div>

@@ -114,10 +114,15 @@ def _build_xs_common(a1: str, b1: str, x_s: str, x_t: str) -> str:
 
 async def get_b1_from_localstorage(page: Page) -> str:
     """Get b1 value from localStorage"""
+    from tools import utils
     try:
         local_storage = await page.evaluate("() => window.localStorage")
-        return local_storage.get("b1", "")
-    except Exception:
+        b1 = local_storage.get("b1", "")
+        if not b1:
+            utils.logger.warning("[get_b1_from_localstorage] b1 not found in localStorage")
+        return b1
+    except Exception as e:
+        utils.logger.error(f"[get_b1_from_localstorage] Failed to get b1: {e}")
         return ""
 
 
@@ -133,13 +138,23 @@ async def call_mnsv2(page: Page, sign_str: str, md5_str: str) -> str:
     Returns:
         Signature string returned by mnsv2
     """
+    from tools import utils
     sign_str_escaped = sign_str.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n")
     md5_str_escaped = md5_str.replace("\\", "\\\\").replace("'", "\\'")
 
     try:
+        # First check if mnsv2 exists
+        mnsv2_exists = await page.evaluate("() => typeof window.mnsv2 === 'function'")
+        if not mnsv2_exists:
+            utils.logger.error("[call_mnsv2] window.mnsv2 function NOT FOUND! Page JS may not have loaded properly.")
+            return ""
+        
         result = await page.evaluate(f"window.mnsv2('{sign_str_escaped}', '{md5_str_escaped}')")
+        if not result:
+            utils.logger.warning("[call_mnsv2] window.mnsv2 returned empty result")
         return result if result else ""
-    except Exception:
+    except Exception as e:
+        utils.logger.error(f"[call_mnsv2] Failed to call window.mnsv2: {e}")
         return ""
 
 

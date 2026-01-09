@@ -108,11 +108,16 @@ class ZhihuDbStoreImplement(AbstractStore):
             stmt = select(ZhihuContent).where(ZhihuContent.content_id == content_id)
             result = await session.execute(stmt)
             existing_content = result.scalars().first()
+
+            # Filter valid keys
+            valid_keys = {c.name for c in ZhihuContent.__table__.columns}
+            filtered_item = {k: v for k, v in content_item.items() if k in valid_keys}
+
             if existing_content:
-                for key, value in content_item.items():
+                for key, value in filtered_item.items():
                     setattr(existing_content, key, value)
             else:
-                new_content = ZhihuContent(**content_item)
+                new_content = ZhihuContent(**filtered_item)
                 session.add(new_content)
             await session.commit()
 
@@ -127,11 +132,16 @@ class ZhihuDbStoreImplement(AbstractStore):
             stmt = select(ZhihuComment).where(ZhihuComment.comment_id == comment_id)
             result = await session.execute(stmt)
             existing_comment = result.scalars().first()
+
+            # Filter valid keys
+            valid_keys = {c.name for c in ZhihuComment.__table__.columns}
+            filtered_item = {k: v for k, v in comment_item.items() if k in valid_keys}
+
             if existing_comment:
-                for key, value in comment_item.items():
+                for key, value in filtered_item.items():
                     setattr(existing_comment, key, value)
             else:
-                new_comment = ZhihuComment(**comment_item)
+                new_comment = ZhihuComment(**filtered_item)
                 session.add(new_comment)
             await session.commit()
 
@@ -146,11 +156,16 @@ class ZhihuDbStoreImplement(AbstractStore):
             stmt = select(ZhihuCreator).where(ZhihuCreator.user_id == user_id)
             result = await session.execute(stmt)
             existing_creator = result.scalars().first()
+
+            # Filter valid keys
+            valid_keys = {c.name for c in ZhihuCreator.__table__.columns}
+            filtered_item = {k: v for k, v in creator.items() if k in valid_keys}
+
             if existing_creator:
-                for key, value in creator.items():
+                for key, value in filtered_item.items():
                     setattr(existing_creator, key, value)
             else:
-                new_creator = ZhihuCreator(**creator)
+                new_creator = ZhihuCreator(**filtered_item)
                 session.add(new_creator)
             await session.commit()
 

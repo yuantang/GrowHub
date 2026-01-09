@@ -15,6 +15,8 @@ class ProjectConfig(BaseModel):
     
     # 关键词
     keywords: List[str] = []
+    # 舆情词
+    sentiment_keywords: List[str] = []
     
     # 平台
     platforms: List[str] = ["xhs"]
@@ -23,6 +25,7 @@ class ProjectConfig(BaseModel):
     crawler_type: str = "search"
     crawl_limit: int = 20
     enable_comments: bool = True
+    deduplicate_authors: bool = False
     
     # 调度配置
     schedule_type: str = "interval"  # interval / cron
@@ -41,10 +44,12 @@ class ProjectInfo(BaseModel):
     name: str
     description: Optional[str]
     keywords: List[str]
+    sentiment_keywords: List[str] = []
     platforms: List[str]
     crawler_type: str
     crawl_limit: int
     enable_comments: bool
+    deduplicate_authors: bool
     schedule_type: str
     schedule_value: str
     is_active: bool
@@ -78,10 +83,28 @@ class ProjectService:
             cls._instance._initialized = False
         return cls._instance
     
+    async def get_project_logs(self, project_id: int, limit: int = 100) -> List[str]:
+        """获取项目运行日志"""
+        return self._project_logs.get(project_id, [])[-limit:]
+
+    def append_log(self, project_id: int, message: str):
+        """添加日志"""
+        if project_id not in self._project_logs:
+            self._project_logs[project_id] = []
+        
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        log_entry = f"[{timestamp}] {message}"
+        self._project_logs[project_id].append(log_entry)
+        # 保持最新的 1000 条
+        if len(self._project_logs[project_id]) > 1000:
+            self._project_logs[project_id] = self._project_logs[project_id][-1000:]
+        print(f"[Project-{project_id}] {message}")  # 保留控制台输出
+
     def __init__(self):
         if self._initialized:
             return
         self._initialized = True
+        self._project_logs: Dict[int, List[str]] = {}
     
     async def create_project(self, config: ProjectConfig) -> Dict[str, Any]:
         """创建监控项目"""
@@ -93,10 +116,12 @@ class ProjectService:
                 name=config.name,
                 description=config.description,
                 keywords=config.keywords,
+                sentiment_keywords=config.sentiment_keywords,
                 platforms=config.platforms,
                 crawler_type=config.crawler_type,
                 crawl_limit=config.crawl_limit,
                 enable_comments=config.enable_comments,
+                deduplicate_authors=config.deduplicate_authors,
                 schedule_type=config.schedule_type,
                 schedule_value=config.schedule_value,
                 is_active=False,  # 创建时默认不启动
@@ -299,34 +324,77 @@ class ProjectService:
             project.last_run_at = datetime.now()
             project.run_count = (project.run_count or 0) + 1
             
+            # 清空旧日志并开始记录
+            self._project_logs[project_id] = []
+            self.append_log(project_id, f"开始执行任务: {project.name}")
+            self.append_log(project_id, f"关键词: {project.keywords}")
+            
             keywords_str = " ".join(project.keywords or [])
             platforms = project.platforms or ["xhs"]
             
             total_crawled = 0
+            start_time = datetime.now()
+            
             
             for platform in platforms:
+                # 平台名称映射
+                platform_names = {
+                    "xhs": "小红书",
+                    "douyin": "抖音", "dy": "抖音",
+                    "bilibili": "B站", "bili": "B站",
+                    "weibo": "微博", "wb": "微博",
+                    "zhihu": "知乎",
+                    "kuaishou": "快手", "ks": "快手",
+                    "tieba": "贴吧"
+                }
+                display_platform = platform_names.get(platform, platform)
+                
                 # 获取账号
                 pool = get_account_pool()
                 try:
                     plat_enum = AccountPlatform(platform)
+                    self.append_log(project_id, f"正在获取 {display_platform} 平台账号...")
                     account = await pool.get_available_account(plat_enum)
                     if not account:
-                        print(f"[Project] 平台 {platform} 没有可用账号")
+                        self.append_log(project_id, f"❌ 平台 {display_platform} 没有可用账号，跳过")
                         continue
                     
+                    self.append_log(project_id, f"✅ 获取到账号: {account.account_name}")
                     cookies = account.cookies
                 except Exception as e:
-                    print(f"[Project] 获取账号失败: {e}")
+                    self.append_log(project_id, f"❌ 获取账号失败: {e}")
                     continue
                 
                 # 检查爬虫状态
                 if crawler_manager.status == "running":
-                    print(f"[Project] 爬虫正忙，跳过平台 {platform}")
+                    self.append_log(project_id, f"⚠️ 爬虫引擎忙碌中，跳过平台 {display_platform}")
                     continue
                 
                 try:
+                    # 映射平台名称到 MediaCrawler 支持的格式
+                    platform_mapping = {
+                        "douyin": "dy",
+                        "bilibili": "bili",
+                        "weibo": "wb",
+                        "xhs": "xhs",
+                        "kuaishou": "ks",
+                        "zhihu": "zhihu",
+                        "tieba": "tieba"
+                    }
+                    mc_platform = platform_mapping.get(platform, platform)
+                    
+                    self.append_log(project_id, f"🚀 启动爬虫任务: {display_platform} - {project.crawler_type}")
+                    
+                    # 计算动态时间范围 (Dynamically calculate time range)
+                    start_time_str = ""
+                    if getattr(project, 'crawl_date_range', 0) > 0:
+                        range_days = project.crawl_date_range
+                        start_date = datetime.now() - timedelta(days=range_days)
+                        start_time_str = start_date.strftime("%Y-%m-%d")
+                        self.append_log(project_id, f"📅 爬取时间范围: 最近 {range_days} 天 (从 {start_time_str} 开始)")
+                    
                     config = CrawlerStartRequest(
-                        platform=platform,
+                        platform=mc_platform,
                         login_type="cookie",
                         crawler_type=project.crawler_type or "search",
                         save_option="sqlite",
@@ -334,22 +402,92 @@ class ProjectService:
                         cookies=cookies,
                         headless=True,
                         crawl_limit_count=project.crawl_limit or 20,
-                        enable_comments=project.enable_comments or True
+                        start_time=start_time_str,  # Pass dynamic start time
+                        enable_comments=project.enable_comments or True,
+                        project_id=project.id  # 关联项目 ID
                     )
                     
                     success = await crawler_manager.start(config)
                     if success:
-                        # 等待完成
+                        self.append_log(project_id, "爬虫已提交，等待执行...")
+                        
+                        # 同步爬虫日志的游标
+                        last_log_count = 0
+                        
+                        # 等待完成，并同步日志
                         while crawler_manager.status == "running":
-                            await asyncio.sleep(2)
+                            # 获取新产生的爬虫日志
+                            current_logs = crawler_manager.logs
+                            if len(current_logs) > last_log_count:
+                                new_logs = current_logs[last_log_count:]
+                                for log_entry in new_logs:
+                                    # 过滤一些无用日志
+                                    if "Starting crawler" in log_entry.message: continue
+                                    
+                                    # 格式化并添加到项目日志
+                                    self.append_log(project_id, f"🕷️ {log_entry.message}")
+                                
+                                last_log_count = len(current_logs)
+                            
+                            await asyncio.sleep(1)
+                            
+                        # 再次检查是否有遗漏的日志（任务刚结束时）
+                        current_logs = crawler_manager.logs
+                        if len(current_logs) > last_log_count:
+                            new_logs = current_logs[last_log_count:]
+                            for log_entry in new_logs:
+                                self.append_log(project_id, f"🕷️ {log_entry.message}")
+                        
+                        self.append_log(project_id, f"✅ 平台 {display_platform} 爬取任务完成")
                         total_crawled += 1
                         
                 except Exception as e:
-                    print(f"[Project] 爬虫执行失败: {e}")
+                    self.append_log(project_id, f"❌ 爬虫执行异常: {e}")
             
             # 更新统计
+            self.append_log(project_id, f"📊 任务统计: 新增抓取 {total_crawled} 次")
             project.total_crawled = (project.total_crawled or 0) + total_crawled
             project.today_crawled = (project.today_crawled or 0) + total_crawled
+            
+            # --- Alert Processing ---
+            if total_crawled > 0:
+                try:
+                    from api.services.alert import get_alert_service
+                    from database.growhub_models import GrowHubContent
+                    from sqlalchemy import select, and_
+                    
+                    alert_service = get_alert_service()
+                    
+                    if project.keywords:
+                        # Use a new session or the context session if available?
+                        # _execute_project is called within background task, session management is tricky.
+                        # We use get_session() context manager.
+                        from database.db_session import get_session
+                        
+                        async with get_session() as session:
+                            result = await session.execute(
+                                select(GrowHubContent).where(
+                                    and_(
+                                        GrowHubContent.created_at >= start_time,
+                                        GrowHubContent.source_keyword.in_(project.keywords)
+                                    )
+                                )
+                            )
+                            new_contents = result.scalars().all()
+                            
+                            if new_contents:
+                                self.append_log(project_id, f"🔔 发现 {len(new_contents)} 条新内容，正在分析舆情...")
+                                alerts_count = await alert_service.process_project_alerts(project, new_contents)
+                                
+                                project.total_alerts = (project.total_alerts or 0) + alerts_count
+                                project.today_alerts = (project.today_alerts or 0) + alerts_count
+                                self.append_log(project_id, f"📩 触发 {alerts_count} 条预警通知")
+                            else:
+                                self.append_log(project_id, "没有符合条件的新内容，跳过预警")
+                except Exception as e:
+                    self.append_log(project_id, f"❌ 预警处理失败: {e}")
+            
+            self.append_log(project_id, "🏁 本次任务执行结束")
             
             # 计算下次运行时间
             if project.is_active and project.schedule_type == "interval":
@@ -407,6 +545,194 @@ class ProjectService:
         
         print(f"[Project] 已取消调度任务: {project.name}")
     
+    async def get_project_contents(self, project_id: int, page: int = 1, page_size: int = 20, 
+                                 filters: Dict[str, Any] = None) -> Dict[str, Any]:
+        """获取项目关联的内容列表"""
+        filters = filters or {}
+        from database.db_session import get_session
+        from database.growhub_models import GrowHubProject, GrowHubContent
+        from sqlalchemy import select, desc, func, and_, or_
+        
+        async with get_session() as session:
+            # 1. 获取项目
+            result = await session.execute(
+                select(GrowHubProject).where(GrowHubProject.id == project_id)
+            )
+            project = result.scalar()
+            if not project:
+                return {"items": [], "total": 0, "error": "Project not found"}
+            
+            # 2. 构建查询 - 优先使用 project_id 过滤，否则回退到关键词匹配
+            # 先检查是否有 project_id 关联的内容
+            project_id_check = await session.execute(
+                select(func.count(GrowHubContent.id)).where(GrowHubContent.project_id == project_id)
+            )
+            has_project_id_content = (project_id_check.scalar() or 0) > 0
+            
+            if has_project_id_content:
+                # 使用 project_id 精确过滤
+                query = select(GrowHubContent).where(GrowHubContent.project_id == project_id)
+                count_query = select(func.count(GrowHubContent.id)).where(GrowHubContent.project_id == project_id)
+            else:
+                # 回退到关键词匹配（向后兼容）
+                if not project.keywords:
+                    return {"items": [], "total": 0, "page": page, "page_size": page_size}
+                
+                keywords = project.keywords
+                conditions = [GrowHubContent.source_keyword.like(f"%{k}%") for k in keywords]
+                query = select(GrowHubContent).where(or_(*conditions))
+                count_query = select(func.count(GrowHubContent.id)).where(or_(*conditions))
+            
+            # 3. 应用过滤
+            if filters:
+                if filters.get("platform"):
+                    query = query.where(GrowHubContent.platform == filters["platform"])
+                    count_query = count_query.where(GrowHubContent.platform == filters["platform"])
+                if filters.get("sentiment"):
+                    query = query.where(GrowHubContent.sentiment == filters["sentiment"])
+                    count_query = count_query.where(GrowHubContent.sentiment == filters["sentiment"])
+            
+            # 3.5 Apply Deduplication (Author)
+            should_dedup = filters.get("deduplicate_authors")
+            if should_dedup is None:
+                should_dedup = project.deduplicate_authors
+                
+            if should_dedup:
+                # Use Window Function to keep latest post per author
+                subq = query.subquery()
+                rn = func.row_number().over(
+                    partition_by=subq.c.author_id,
+                    order_by=desc(subq.c.publish_time)
+                ).label("rn")
+                
+                cte = select(subq.c.id, rn).cte()
+                
+                # Rebuild Query and Count Query
+                query = select(GrowHubContent).join(cte, GrowHubContent.id == cte.c.id).where(cte.c.rn == 1)
+                count_query = select(func.count()).select_from(cte).where(cte.c.rn == 1)
+            
+            # 4. 分页和排序
+            query = query.order_by(desc(GrowHubContent.publish_time))
+            query = query.offset((page - 1) * page_size).limit(page_size)
+            
+            # 5. 执行查询
+            content_result = await session.execute(query)
+            contents = content_result.scalars().all()
+            
+            total_result = await session.execute(count_query)
+            total = total_result.scalar() or 0
+            
+            return {
+                "items": self._contents_to_list(contents),
+                "total": total,
+                "page": page,
+                "page_size": page_size
+            }
+            
+    async def get_project_stats_chart(self, project_id: int, days: int = 7) -> Dict[str, Any]:
+        """获取项目图表统计数据"""
+        from database.db_session import get_session
+        from database.growhub_models import GrowHubProject, GrowHubContent
+        from sqlalchemy import select, func, and_
+        
+        async with get_session() as session:
+            # 1. 获取项目
+            result = await session.execute(
+                select(GrowHubProject).where(GrowHubProject.id == project_id)
+            )
+            project = result.scalar()
+            if not project or not project.keywords:
+                return {"dates": [], "sentiment_trend": [], "platform_dist": []}
+            
+            keywords = project.keywords
+            start_date = datetime.now() - timedelta(days=days)
+            
+            # 2. 情感趋势 (按日期分组)
+            # SQLite 的日期处理比较特殊，这里简化处理，只查数据然后在内存聚合
+            # 生产环境建议使用数据库特定的日期函数
+            date_query = select(
+                GrowHubContent.publish_time, 
+                GrowHubContent.sentiment
+            ).where(
+                and_(
+                    GrowHubContent.source_keyword.in_(keywords),
+                    GrowHubContent.publish_time >= start_date
+                )
+            )
+            
+            date_result = await session.execute(date_query)
+            rows = date_result.all()
+            
+            # 内存聚合
+            daily_stats = {}
+            for row in rows:
+                if not row.publish_time:
+                    continue
+                date_str = row.publish_time.strftime("%Y-%m-%d")
+                if date_str not in daily_stats:
+                    daily_stats[date_str] = {"positive": 0, "neutral": 0, "negative": 0}
+                
+                sentiment = row.sentiment or "neutral"
+                if sentiment in daily_stats[date_str]:
+                    daily_stats[date_str][sentiment] += 1
+            
+            # 补全日期
+            dates = []
+            sentiment_trend = {"positive": [], "neutral": [], "negative": []}
+            
+            for i in range(days):
+                d = (start_date + timedelta(days=i+1)).strftime("%Y-%m-%d")
+                dates.append(d)
+                stats = daily_stats.get(d, {"positive": 0, "neutral": 0, "negative": 0})
+                sentiment_trend["positive"].append(stats["positive"])
+                sentiment_trend["neutral"].append(stats["neutral"])
+                sentiment_trend["negative"].append(stats["negative"])
+                
+            # 3. 平台分布
+            platform_query = select(
+                GrowHubContent.platform,
+                func.count(GrowHubContent.id)
+            ).where(
+                GrowHubContent.source_keyword.in_(keywords)
+            ).group_by(GrowHubContent.platform)
+            
+            plat_result = await session.execute(platform_query)
+            platform_dist = [{"name": row[0], "value": row[1]} for row in plat_result.all()]
+            
+            return {
+                "dates": dates,
+                "sentiment_trend": sentiment_trend,
+                "platform_dist": platform_dist
+            }
+
+    def _contents_to_list(self, contents) -> List[Dict[str, Any]]:
+        return [
+            {
+                "id": c.id,
+                "platform": c.platform,
+                "title": c.title,
+                "description": (c.description[:200] + "...") if c.description and len(c.description) > 200 else c.description,
+                "url": c.content_url,
+                "author": c.author_name,
+                "author_avatar": c.author_avatar,
+                "cover_url": c.cover_url,
+                "publish_time": c.publish_time.isoformat() if c.publish_time else None,
+                "sentiment": c.sentiment,
+                "view_count": c.view_count,
+                "like_count": c.like_count,
+                "comment_count": c.comment_count,
+                "share_count": c.share_count,
+                "collect_count": c.collect_count,
+                "is_alert": c.is_alert,
+                "source_keyword": c.source_keyword,
+                # 新增字段：支持视频播放和媒体类型显示
+                "content_type": c.content_type,
+                "video_url": c.video_url,
+                "media_urls": c.media_urls,
+            }
+            for c in contents
+        ]
+
     def _to_dict(self, project) -> Dict[str, Any]:
         """转换为字典"""
         return {

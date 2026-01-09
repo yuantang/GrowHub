@@ -80,6 +80,14 @@ async def update_zhihu_content(content_item: ZhihuContent):
     local_db_item.update({"last_modify_ts": utils.get_current_timestamp()})
     utils.logger.info(f"[store.zhihu.update_zhihu_content] zhihu content: {local_db_item}")
     await ZhihuStoreFactory.create_store().store_content(local_db_item)
+    
+    # 同步到 GrowHub 统一表
+    try:
+        from api.services.growhub_store import get_growhub_store_service
+        sync_service = get_growhub_store_service()
+        await sync_service.sync_to_growhub("zhihu", local_db_item)
+    except Exception as e:
+        utils.logger.error(f"[store.zhihu.update_zhihu_content] Sync to GrowHub failed: {e}")
 
 
 

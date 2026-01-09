@@ -156,9 +156,15 @@ async def update_douyin_aweme(aweme_item: Dict):
     aweme_id = aweme_item.get("aweme_id")
     user_info = aweme_item.get("author", {})
     interact_info = aweme_item.get("statistics", {})
+    # Determine content type
+    # If images exist, it's an image note (mixed/image), otherwise it's a video
+    is_video = not bool(aweme_item.get("images"))
+    content_type = "video" if is_video else "image"
+
     save_content_item = {
         "aweme_id": aweme_id,
         "aweme_type": str(aweme_item.get("aweme_type")),
+        "type": content_type,
         "title": aweme_item.get("desc", ""),
         "desc": aweme_item.get("desc", ""),
         "create_time": aweme_item.get("create_time"),
@@ -187,6 +193,14 @@ async def update_douyin_aweme(aweme_item: Dict):
     }
     utils.logger.info(f"[store.douyin.update_douyin_aweme] douyin aweme id:{aweme_id}, title:{save_content_item.get('title')}")
     await DouyinStoreFactory.create_store().store_content(content_item=save_content_item)
+    
+    # 同步到 GrowHub 统一表
+    try:
+        from api.services.growhub_store import get_growhub_store_service
+        sync_service = get_growhub_store_service()
+        await sync_service.sync_to_growhub("dy", save_content_item)
+    except Exception as e:
+        utils.logger.error(f"[store.douyin.update_douyin_aweme] Sync to GrowHub failed: {e}")
 
 
 async def batch_update_dy_aweme_comments(aweme_id: str, comments: List[Dict]):

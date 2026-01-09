@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import Layout from '@/components/layout/Layout'
+import { Toaster } from 'sonner';
 import Dashboard from '@/pages/Dashboard'
 import DataView from '@/pages/DataView'
 import DataAnalysis from '@/pages/DataAnalysis'
@@ -14,6 +15,8 @@ import SmartCreatorPage from '@/pages/SmartCreatorPage'
 import SchedulerPage from '@/pages/SchedulerPage'
 import AccountPoolPage from '@/pages/AccountPoolPage'
 import ProjectsPage from '@/pages/ProjectsPage'
+import ProjectDetailPage from '@/pages/ProjectDetailPage'
+import SettingsPage from '@/pages/SettingsPage'
 
 function App() {
   return (
@@ -27,6 +30,7 @@ function App() {
           <Route path="checkpoints" element={<CheckpointsPage />} />
           {/* GrowHub Routes */}
           <Route path="projects" element={<ProjectsPage />} />
+          <Route path="projects/:id" element={<ProjectDetailPage />} />
           <Route path="keywords" element={<KeywordsPage />} />
           <Route path="monitor" element={<ContentMonitorPage />} />
           <Route path="hotspots" element={<HotspotsPage />} />
@@ -35,9 +39,11 @@ function App() {
           <Route path="account-pool" element={<AccountPoolPage />} />
           <Route path="notifications" element={<NotificationPage />} />
           <Route path="rules" element={<RulesPage />} />
+          <Route path="settings" element={<SettingsPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>
+      <Toaster />
     </BrowserRouter>
   )
 }

@@ -113,17 +113,35 @@ class WeiboDbStoreImplement(AbstractStore):
             stmt = select(WeiboNote).where(WeiboNote.note_id == note_id)
             res = await session.execute(stmt)
             db_note = res.scalar_one_or_none()
+
+            # Filter valid keys
+            valid_keys = {c.name for c in WeiboNote.__table__.columns}
+            filtered_item = {k: v for k, v in content_item.items() if k in valid_keys}
+
+
             if db_note:
                 db_note.last_modify_ts = utils.get_current_timestamp()
-                for key, value in content_item.items():
+                for key, value in filtered_item.items():
                     if hasattr(db_note, key):
                         setattr(db_note, key, value)
             else:
-                content_item["add_ts"] = utils.get_current_timestamp()
-                content_item["last_modify_ts"] = utils.get_current_timestamp()
-                db_note = WeiboNote(**content_item)
+                if "add_ts" not in filtered_item:
+                    filtered_item["add_ts"] = utils.get_current_timestamp()
+                possible_modify_ts_keys = ["last_modify_ts"]
+                for k in possible_modify_ts_keys:
+                    if k not in filtered_item and k in valid_keys:
+                        filtered_item[k] = utils.get_current_timestamp()
+                
+                db_note = WeiboNote(**filtered_item)
                 session.add(db_note)
             await session.commit()
+
+        # Sync to GrowHub Unified Content Table
+        try:
+            from api.services.growhub_store import get_growhub_store_service
+            await get_growhub_store_service().sync_to_growhub("weibo", content_item)
+        except Exception as e:
+            utils.logger.error(f"[WeiboStore] Failed to sync to GrowHub: {e}")
 
     async def store_comment(self, comment_item: Dict):
         """
@@ -139,15 +157,25 @@ class WeiboDbStoreImplement(AbstractStore):
             stmt = select(WeiboNoteComment).where(WeiboNoteComment.comment_id == comment_id)
             res = await session.execute(stmt)
             db_comment = res.scalar_one_or_none()
+
+            # Filter valid keys
+            valid_keys = {c.name for c in WeiboNoteComment.__table__.columns}
+            filtered_item = {k: v for k, v in comment_item.items() if k in valid_keys}
+
             if db_comment:
                 db_comment.last_modify_ts = utils.get_current_timestamp()
-                for key, value in comment_item.items():
+                for key, value in filtered_item.items():
                     if hasattr(db_comment, key):
                         setattr(db_comment, key, value)
             else:
-                comment_item["add_ts"] = utils.get_current_timestamp()
-                comment_item["last_modify_ts"] = utils.get_current_timestamp()
-                db_comment = WeiboNoteComment(**comment_item)
+                if "add_ts" not in filtered_item:
+                    filtered_item["add_ts"] = utils.get_current_timestamp()
+                possible_modify_ts_keys = ["last_modify_ts"]
+                for k in possible_modify_ts_keys:
+                    if k not in filtered_item and k in valid_keys:
+                        filtered_item[k] = utils.get_current_timestamp()
+
+                db_comment = WeiboNoteComment(**filtered_item)
                 session.add(db_comment)
             await session.commit()
 
@@ -165,15 +193,25 @@ class WeiboDbStoreImplement(AbstractStore):
             stmt = select(WeiboCreator).where(WeiboCreator.user_id == user_id)
             res = await session.execute(stmt)
             db_creator = res.scalar_one_or_none()
+
+            # Filter valid keys
+            valid_keys = {c.name for c in WeiboCreator.__table__.columns}
+            filtered_item = {k: v for k, v in creator.items() if k in valid_keys}
+
             if db_creator:
                 db_creator.last_modify_ts = utils.get_current_timestamp()
-                for key, value in creator.items():
+                for key, value in filtered_item.items():
                     if hasattr(db_creator, key):
                         setattr(db_creator, key, value)
             else:
-                creator["add_ts"] = utils.get_current_timestamp()
-                creator["last_modify_ts"] = utils.get_current_timestamp()
-                db_creator = WeiboCreator(**creator)
+                if "add_ts" not in filtered_item:
+                    filtered_item["add_ts"] = utils.get_current_timestamp()
+                possible_modify_ts_keys = ["last_modify_ts"]
+                for k in possible_modify_ts_keys:
+                    if k not in filtered_item and k in valid_keys:
+                        filtered_item[k] = utils.get_current_timestamp()
+
+                db_creator = WeiboCreator(**filtered_item)
                 session.add(db_creator)
             await session.commit()
 

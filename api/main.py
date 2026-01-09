@@ -31,13 +31,16 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
 from .routers import crawler_router, data_router, websocket_router, checkpoint_router, accounts_router, ai_router
+from .routers.data import proxy_router
 from .routers.growhub_keywords import router as growhub_keywords_router
 from .routers.growhub_content import router as growhub_content_router, rules_router as growhub_rules_router
 from .routers.growhub_notifications import router as growhub_notifications_router
 from .routers.growhub_websocket import router as growhub_websocket_router
 from .routers.growhub_ai_creator import router as growhub_ai_creator_router
 from .routers.growhub_scheduler import router as growhub_scheduler_router
+from .routers.growhub_scheduler import router as growhub_scheduler_router
 from .routers.growhub_account_pool import router as growhub_account_pool_router
+from .routers.growhub_system import router as growhub_system_router
 
 app = FastAPI(
     title="GrowHub API",
@@ -66,6 +69,7 @@ app.add_middleware(
 # Register routers
 app.include_router(crawler_router, prefix="/api")
 app.include_router(data_router, prefix="/api")
+app.include_router(proxy_router, prefix="/api")  # Image proxy
 app.include_router(websocket_router, prefix="/api")
 app.include_router(checkpoint_router, prefix="/api")
 app.include_router(accounts_router, prefix="/api")
@@ -80,11 +84,35 @@ app.include_router(growhub_websocket_router, prefix="/api")
 app.include_router(growhub_ai_creator_router, prefix="/api")
 app.include_router(growhub_scheduler_router, prefix="/api")
 app.include_router(growhub_account_pool_router, prefix="/api")
+app.include_router(growhub_system_router, prefix="/api")
 
 # Phase 2: 监控项目模块
 from .routers.growhub_projects import router as growhub_projects_router
 app.include_router(growhub_projects_router, prefix="/api")
 
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Application startup event"""
+    # Database Migration
+    from sqlalchemy import text
+    from database.db_session import get_session
+    
+    async with get_session() as session:
+        try:
+            await session.execute(text("SELECT crawl_date_range FROM growhub_projects LIMIT 1"))
+        except Exception:
+            print("Migrating: Adding crawl_date_range to growhub_projects")
+            try:
+                await session.execute(text("ALTER TABLE growhub_projects ADD COLUMN crawl_date_range INTEGER DEFAULT 7"))
+                await session.commit()
+            except Exception as e:
+                print(f"Migration Failed: {e}")
+
+    # Initialize Account Pool (Load from DB)
+    from api.services.account_pool import get_account_pool
+    await get_account_pool().initialize()
 
 
 @app.get("/")

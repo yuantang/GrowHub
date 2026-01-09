@@ -133,14 +133,26 @@ class BiliDbStoreImplement(AbstractStore):
             result = await session.execute(select(BilibiliVideo).where(BilibiliVideo.video_id == video_id))
             video_detail = result.scalar_one_or_none()
 
+            # Filter valid columns
+            valid_keys = {c.name for c in BilibiliVideo.__table__.columns}
+            filtered_item = {k: v for k, v in content_item.items() if k in valid_keys}
+
             if not video_detail:
-                content_item["add_ts"] = utils.get_current_timestamp()
-                new_content = BilibiliVideo(**content_item)
+                if "add_ts" not in filtered_item:
+                    filtered_item["add_ts"] = utils.get_current_timestamp()
+                new_content = BilibiliVideo(**filtered_item)
                 session.add(new_content)
             else:
-                for key, value in content_item.items():
+                for key, value in filtered_item.items():
                     setattr(video_detail, key, value)
             await session.commit()
+
+        # Sync to GrowHub Unified Content Table
+        try:
+            from api.services.growhub_store import get_growhub_store_service
+            await get_growhub_store_service().sync_to_growhub("bilibili", content_item)
+        except Exception as e:
+            utils.logger.error(f"[BilibiliStore] Failed to sync to GrowHub: {e}")
 
     async def store_comment(self, comment_item: Dict):
         """
@@ -153,12 +165,17 @@ class BiliDbStoreImplement(AbstractStore):
             result = await session.execute(select(BilibiliVideoComment).where(BilibiliVideoComment.comment_id == comment_id))
             comment_detail = result.scalar_one_or_none()
 
+            # Filter valid columns
+            valid_keys = {c.name for c in BilibiliVideoComment.__table__.columns}
+            filtered_item = {k: v for k, v in comment_item.items() if k in valid_keys}
+
             if not comment_detail:
-                comment_item["add_ts"] = utils.get_current_timestamp()
-                new_comment = BilibiliVideoComment(**comment_item)
+                if "add_ts" not in filtered_item:
+                    filtered_item["add_ts"] = utils.get_current_timestamp()
+                new_comment = BilibiliVideoComment(**filtered_item)
                 session.add(new_comment)
             else:
-                for key, value in comment_item.items():
+                for key, value in filtered_item.items():
                     setattr(comment_detail, key, value)
             await session.commit()
 
@@ -173,12 +190,17 @@ class BiliDbStoreImplement(AbstractStore):
             result = await session.execute(select(BilibiliUpInfo).where(BilibiliUpInfo.user_id == creator_id))
             creator_detail = result.scalar_one_or_none()
 
+            # Filter valid columns
+            valid_keys = {c.name for c in BilibiliUpInfo.__table__.columns}
+            filtered_item = {k: v for k, v in creator.items() if k in valid_keys}
+
             if not creator_detail:
-                creator["add_ts"] = utils.get_current_timestamp()
-                new_creator = BilibiliUpInfo(**creator)
+                if "add_ts" not in filtered_item:
+                    filtered_item["add_ts"] = utils.get_current_timestamp()
+                new_creator = BilibiliUpInfo(**filtered_item)
                 session.add(new_creator)
             else:
-                for key, value in creator.items():
+                for key, value in filtered_item.items():
                     setattr(creator_detail, key, value)
             await session.commit()
 
@@ -196,12 +218,17 @@ class BiliDbStoreImplement(AbstractStore):
             )
             contact_detail = result.scalar_one_or_none()
 
+            # Filter valid columns
+            valid_keys = {c.name for c in BilibiliContactInfo.__table__.columns}
+            filtered_item = {k: v for k, v in contact_item.items() if k in valid_keys}
+
             if not contact_detail:
-                contact_item["add_ts"] = utils.get_current_timestamp()
-                new_contact = BilibiliContactInfo(**contact_item)
+                if "add_ts" not in filtered_item:
+                    filtered_item["add_ts"] = utils.get_current_timestamp()
+                new_contact = BilibiliContactInfo(**filtered_item)
                 session.add(new_contact)
             else:
-                for key, value in contact_item.items():
+                for key, value in filtered_item.items():
                     setattr(contact_detail, key, value)
             await session.commit()
 
@@ -216,12 +243,17 @@ class BiliDbStoreImplement(AbstractStore):
             result = await session.execute(select(BilibiliUpDynamic).where(BilibiliUpDynamic.dynamic_id == dynamic_id))
             dynamic_detail = result.scalar_one_or_none()
 
+            # Filter valid columns
+            valid_keys = {c.name for c in BilibiliUpDynamic.__table__.columns}
+            filtered_item = {k: v for k, v in dynamic_item.items() if k in valid_keys}
+
             if not dynamic_detail:
-                dynamic_item["add_ts"] = utils.get_current_timestamp()
-                new_dynamic = BilibiliUpDynamic(**dynamic_item)
+                if "add_ts" not in filtered_item:
+                    filtered_item["add_ts"] = utils.get_current_timestamp()
+                new_dynamic = BilibiliUpDynamic(**filtered_item)
                 session.add(new_dynamic)
             else:
-                for key, value in dynamic_item.items():
+                for key, value in filtered_item.items():
                     setattr(dynamic_detail, key, value)
             await session.commit()
 

@@ -73,13 +73,18 @@ class GrowHubContent(Base):
     description = Column(Text)
     content_url = Column(Text)
     cover_url = Column(Text)
+    video_url = Column(Text, nullable=True)  # 可播放的视频URL (抖音/快手等)
     media_urls = Column(JSON)  # 媒体资源URL列表
     
     # 作者信息
     author_id = Column(String(255), index=True)
     author_name = Column(String(255))
     author_avatar = Column(Text)
+    author_contact = Column(String(255), nullable=True)  # 手机号/微信号
     author_fans_count = Column(Integer, default=0)
+    author_follows_count = Column(Integer, default=0)  # 作者关注数
+    author_likes_count = Column(Integer, default=0)    # 作者获赞数
+    ip_location = Column(String(100), nullable=True)   # IP归属地
     
     # 互动数据
     like_count = Column(Integer, default=0)
@@ -115,7 +120,10 @@ class GrowHubContent(Base):
     
     # 来源关键词
     source_keyword_id = Column(Integer, ForeignKey('growhub_keywords.id'), nullable=True)
-    source_keyword = Column(String(255), nullable=True)
+    source_keyword = Column(String(255), nullable=True, index=True)
+    
+    # 关联项目（用于精确过滤）
+    project_id = Column(Integer, ForeignKey('growhub_projects.id'), nullable=True, index=True)
 
 
 class GrowHubDistributionRule(Base):
@@ -230,6 +238,7 @@ class GrowHubProject(Base):
     
     # 关键词配置
     keywords = Column(JSON)  # ["品牌A", "竞品B", ...]
+    sentiment_keywords = Column(JSON)  # 自定义舆情词 ["差评", "避雷", ...]
     
     # 平台配置
     platforms = Column(JSON)  # ["xhs", "douyin", ...]
@@ -237,7 +246,19 @@ class GrowHubProject(Base):
     # 爬虫配置
     crawler_type = Column(String(50), default='search')  # search/detail/creator
     crawl_limit = Column(Integer, default=20)  # 每次抓取数量限制
+    crawl_date_range = Column(Integer, default=7)  # 爬取时间范围（最近N天），0表示不限
     enable_comments = Column(Boolean, default=True)  # 是否抓取评论
+    deduplicate_authors = Column(Boolean, default=False)  # 是否博主去重（只保留最新一条）
+    
+    # 高级过滤配置
+    min_likes = Column(Integer, default=0)
+    max_likes = Column(Integer, default=0)
+    min_comments = Column(Integer, default=0)
+    max_comments = Column(Integer, default=0)
+    min_shares = Column(Integer, default=0)
+    max_shares = Column(Integer, default=0)
+    min_favorites = Column(Integer, default=0)
+    max_favorites = Column(Integer, default=0)
     
     # 调度配置
     schedule_type = Column(String(20), default='interval')  # interval / cron
@@ -262,6 +283,41 @@ class GrowHubProject(Base):
     
     # 内部任务ID（关联调度器）
     scheduler_task_id = Column(String(50), nullable=True)
+    
+    # 时间戳
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class GrowHubAccount(Base):
+    """GrowHub 账号池表"""
+    __tablename__ = 'growhub_accounts'
+    
+    id = Column(String(50), primary_key=True)  # UUID
+    platform = Column(String(50), nullable=False)  # xhs/douyin/...
+    account_name = Column(String(255), nullable=False)
+    cookies = Column(Text, nullable=False)
+    
+    # 状态
+    status = Column(String(50), default='unknown')  # active/cooldown/expired/banned
+    health_score = Column(Integer, default=100)
+    
+    # 使用统计
+    use_count = Column(Integer, default=0)
+    success_count = Column(Integer, default=0)
+    fail_count = Column(Integer, default=0)
+    last_used = Column(DateTime, nullable=True)
+    last_check = Column(DateTime, nullable=True)
+    
+    # 冷却控制
+    cooldown_until = Column(DateTime, nullable=True)
+    
+    # 分组
+    group_name = Column(String(50), default='default')
+    tags = Column(JSON)
+    
+    # 备注
+    notes = Column(Text, nullable=True)
     
     # 时间戳
     created_at = Column(DateTime, server_default=func.now())

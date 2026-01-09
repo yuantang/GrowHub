@@ -103,12 +103,17 @@ class KuaishouDbStoreImplement(AbstractStore):
             result = await session.execute(select(KuaishouVideo).where(KuaishouVideo.video_id == video_id))
             video_detail = result.scalar_one_or_none()
 
+            # Filter valid keys
+            valid_keys = {c.name for c in KuaishouVideo.__table__.columns}
+            filtered_item = {k: v for k, v in content_item.items() if k in valid_keys}
+
             if not video_detail:
-                content_item["add_ts"] = utils.get_current_timestamp()
-                new_content = KuaishouVideo(**content_item)
+                if "add_ts" not in filtered_item:
+                    filtered_item["add_ts"] = utils.get_current_timestamp()
+                new_content = KuaishouVideo(**filtered_item)
                 session.add(new_content)
             else:
-                for key, value in content_item.items():
+                for key, value in filtered_item.items():
                     setattr(video_detail, key, value)
             await session.commit()
 
@@ -124,12 +129,17 @@ class KuaishouDbStoreImplement(AbstractStore):
                 select(KuaishouVideoComment).where(KuaishouVideoComment.comment_id == comment_id))
             comment_detail = result.scalar_one_or_none()
 
+            # Filter valid keys
+            valid_keys = {c.name for c in KuaishouVideoComment.__table__.columns}
+            filtered_item = {k: v for k, v in comment_item.items() if k in valid_keys}
+
             if not comment_detail:
-                comment_item["add_ts"] = utils.get_current_timestamp()
-                new_comment = KuaishouVideoComment(**comment_item)
+                if "add_ts" not in filtered_item:
+                    filtered_item["add_ts"] = utils.get_current_timestamp()
+                new_comment = KuaishouVideoComment(**filtered_item)
                 session.add(new_comment)
             else:
-                for key, value in comment_item.items():
+                for key, value in filtered_item.items():
                     setattr(comment_detail, key, value)
             await session.commit()
 

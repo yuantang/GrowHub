@@ -18,6 +18,7 @@ import {
 } from 'recharts';
 import { Loader2, Filter, TrendingUp, Users, Heart, MessageCircle, ChevronLeft, ChevronRight, ExternalLink, Share2, Star, Image as ImageIcon, Play, X, Video as VideoIcon } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
+import { ContentDataTable } from '@/components/business/ContentDataTable';
 
 // Common data interface trying to cover multiple platforms
 interface MediaItem {
@@ -422,276 +423,66 @@ const DataAnalysis: React.FC = () => {
                             <CardTitle>详细数据列表</CardTitle>
                         </CardHeader>
                         <CardContent>
-                            <div className="rounded-md border">
-                                <table className="w-full text-sm">
-                                    <thead className="bg-muted/50">
-                                        <tr className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted">
-                                            <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground w-[200px]">作者</th>
-                                            <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground w-[300px]">内容</th>
-                                            <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground w-[120px]">视频/图片</th>
-                                            <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">互动数据</th>
-                                            <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">发布时间</th>
-                                            <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">操作</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {currentTableData.map((item, i) => {
-                                            const cover = getFirstImage(item);
-                                            const tags = parseTags(item);
-                                            const jumpUrl = getJumpUrl(item);
-                                            const isVideo = item.type === 'video' || !!item.video_url;
-                                            const contactInfo = item.contact_info ? JSON.parse(JSON.stringify(item.contact_info)) : null; // Safe access
+                            <ContentDataTable
+                                data={currentTableData.map(item => {
+                                    const imageList = Array.isArray(item.image_list)
+                                        ? item.image_list
+                                        : (item.image_list ? (item.image_list as string).split(',') : []);
 
-                                            // Format contact info for display
-                                            let contactDisplay = null;
-                                            if (typeof item.contact_info === 'string' && item.contact_info) {
-                                                contactDisplay = item.contact_info;
-                                            } else if (typeof item.contact_info === 'object' && item.contact_info) {
-                                                const infoObj = item.contact_info as any;
-                                                const parts = [];
-                                                if (infoObj?.phone) parts.push(`手机: ${infoObj.phone}`);
-                                                if (infoObj?.wechat) parts.push(`微信: ${infoObj.wechat}`);
-                                                if (infoObj?.email) parts.push(`邮箱: ${infoObj.email}`);
-                                                if (parts.length > 0) contactDisplay = parts.join('\n');
-                                            }
+                                    const validImages = imageList.map((img: any) => typeof img === 'string' ? img : img?.url).filter(Boolean);
+                                    const isVideo = item.type === 'video' || !!item.video_url;
+                                    const jumpUrl = getJumpUrl(item);
 
-                                            return (
-                                                <tr key={i} className="border-b transition-colors hover:bg-muted/50">
-                                                    {/* 1. Author & Contact */}
-                                                    <td className="p-4 align-middle">
-                                                        <div className="flex gap-2 items-start">
-                                                            <div className="flex-shrink-0">
-                                                                {item.user_id ? (
-                                                                    <a
-                                                                        href={getUserProfileUrl(item)}
-                                                                        target="_blank"
-                                                                        rel="noopener noreferrer"
-                                                                    >
-                                                                        {item.avatar && (
-                                                                            <img
-                                                                                src={item.avatar}
-                                                                                alt="avatar"
-                                                                                className="w-8 h-8 rounded-full border border-border hover:opacity-80 transition-opacity block"
-                                                                                referrerPolicy="no-referrer"
-                                                                            />
-                                                                        )}
-                                                                    </a>
-                                                                ) : (
-                                                                    item.avatar && (
-                                                                        <img
-                                                                            src={item.avatar}
-                                                                            alt="avatar"
-                                                                            className="w-8 h-8 rounded-full border border-border block"
-                                                                            referrerPolicy="no-referrer"
-                                                                        />
-                                                                    )
-                                                                )}
-                                                            </div>
-                                                            <div className="flex flex-col min-w-0">
-                                                                <div className="h-8 flex items-center gap-2">
-                                                                    {item.user_id ? (
-                                                                        <a
-                                                                            href={getUserProfileUrl(item)}
-                                                                            target="_blank"
-                                                                            rel="noopener noreferrer"
-                                                                            className="font-medium text-sm hover:text-blue-500 transition-colors truncate"
-                                                                        >
-                                                                            {item.nickname || item.user_id || '-'}
-                                                                        </a>
-                                                                    ) : (
-                                                                        <span className="font-medium text-sm truncate">{item.nickname || item.user_id || '-'}</span>
-                                                                    )}
-                                                                </div>
-
-                                                                {item.ip_location && <span className="text-[10px] text-muted-foreground leading-none mb-1">IP: {item.ip_location}</span>}
-
-                                                                {/* Contact Info Display */}
-                                                                {contactDisplay && (
-                                                                    <div className="mt-0.5 text-xs text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-900/20 px-1.5 py-0.5 rounded w-fit select-text whitespace-pre-wrap">
-                                                                        {contactDisplay}
-                                                                    </div>
-                                                                )}
-
-                                                                {/* Author Stats: Uses author_stats object if available, primarily for B data but logic can be extended */}
-                                                                {item.author_stats && (
-                                                                    <div className="flex gap-2 mt-1 text-[10px] text-muted-foreground bg-muted/30 px-1 py-0.5 rounded w-fit">
-                                                                        <span>关注: {item.author_stats.follows || 0}</span>
-                                                                        <span className="w-px h-3 bg-border/50"></span>
-                                                                        <span>粉丝: {item.author_stats.fans || 0}</span>
-                                                                        <span className="w-px h-3 bg-border/50"></span>
-                                                                        <span>获赞: {item.author_stats.liked || 0}</span>
-                                                                    </div>
-                                                                )}
-                                                            </div>
-                                                        </div>
-                                                    </td>
-
-                                                    {/* 3. Content */}
-                                                    <td className="p-4 align-middle">
-                                                        <div className="font-medium truncate max-w-[280px] mb-1" title={item.title}>
-                                                            {item.title || '(无标题)'}
-                                                        </div>
-                                                        <p className="text-xs text-muted-foreground line-clamp-2 mb-2 max-w-[280px]" title={item.desc}>
-                                                            {item.desc}
-                                                        </p>
-
-                                                        {tags.length > 0 && (
-                                                            <div className="flex flex-wrap gap-1">
-                                                                {tags.map((tag: string, idx: number) => (
-                                                                    <span key={idx} className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-secondary text-secondary-foreground">
-                                                                        #{tag}
-                                                                    </span>
-                                                                ))}
-                                                            </div>
-                                                        )}
-                                                    </td>
-
-                                                    {/* 4. Media (Video/Image) */}
-                                                    {/* 4. Media (Video/Image) */}
-                                                    <td className="p-4 align-middle">
-                                                        <div
-                                                            className="relative w-24 h-24 rounded-md overflow-hidden border border-border bg-muted cursor-pointer group shadow-sm hover:shadow-md transition-all"
-                                                            onClick={() => {
-                                                                if (isVideo && item.video_url) {
-                                                                    setPlayingVideoUrl(item.video_url);
-                                                                } else {
-                                                                    window.open(jumpUrl, '_blank');
-                                                                }
-                                                            }}
-                                                        >
-                                                            {cover ? (
-                                                                <img
-                                                                    src={cover}
-                                                                    alt="cover"
-                                                                    className="w-full h-full object-cover transition-transform group-hover:scale-105"
-                                                                    referrerPolicy="no-referrer"
-                                                                />
-                                                            ) : (
-                                                                <div className="w-full h-full flex items-center justify-center text-muted-foreground">
-                                                                    <ImageIcon className="w-6 h-6" />
-                                                                </div>
-                                                            )}
-
-                                                            {isVideo && (
-                                                                <>
-                                                                    <div className="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/30 transition-colors">
-                                                                        <Play className="w-8 h-8 text-white/90 drop-shadow-md" fill="currentColor" />
-                                                                    </div>
-                                                                    <div className="absolute top-1.5 right-1.5 bg-black/40 backdrop-blur-[2px] rounded-md p-1">
-                                                                        <VideoIcon className="w-3 h-3 text-white" />
-                                                                    </div>
-                                                                </>
-                                                            )}
-                                                        </div>
-                                                    </td>
-
-                                                    {/* 5. Interaction Stats */}
-                                                    <td className="p-4 align-middle">
-                                                        <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                                                            <span className="flex items-center" title="点赞"><Heart className="w-3 h-3 mr-1" /> {Number(item.liked_count).toLocaleString()}</span>
-                                                            <span className="flex items-center" title="评论"><MessageCircle className="w-3 h-3 mr-1" /> {Number(item.comment_count).toLocaleString()}</span>
-                                                            <span className="flex items-center" title="收藏"><Star className="w-3 h-3 mr-1" /> {Number(item.collected_count).toLocaleString()}</span>
-                                                            <span className="flex items-center" title="分享"><Share2 className="w-3 h-3 mr-1" /> {Number(item.share_count).toLocaleString()}</span>
-                                                            {item.view_count !== undefined && item.view_count > 0 && (
-                                                                <span className="flex items-center col-span-2 mt-1 pt-1 border-t border-border/50" title="阅读/播放">
-                                                                    <Play className="w-3 h-3 mr-1" /> {Number(item.view_count).toLocaleString()}
-                                                                </span>
-                                                            )}
-                                                        </div>
-                                                    </td>
-
-                                                    {/* 6. Time */}
-                                                    <td className="p-4 align-middle text-muted-foreground text-xs whitespace-nowrap">
-                                                        {getTs(item) ? new Date(getTs(item)).toLocaleString() : '-'}
-                                                    </td>
-
-                                                    {/* 7. Action */}
-                                                    <td className="p-4 align-middle">
-                                                        {jumpUrl !== '#' && (
-                                                            <a
-                                                                href={jumpUrl}
-                                                                target="_blank"
-                                                                rel="noopener noreferrer"
-                                                                className="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 border border-input bg-background hover:bg-accent hover:text-accent-foreground h-8 px-3"
-                                                            >
-                                                                查看 <ExternalLink className="w-3 h-3 ml-1" />
-                                                            </a>
-                                                        )}
-                                                    </td>
-                                                </tr>
-                                            );
-                                        })}
-                                        {currentTableData.length === 0 && (
-                                            <tr>
-                                                <td colSpan={7} className="p-8 text-center text-muted-foreground">
-                                                    <div className="flex flex-col items-center justify-center">
-                                                        <div className="text-lg font-medium">暂无数据</div>
-                                                        <p className="text-sm mt-1">请选择文件或调整筛选条件</p>
-                                                    </div>
-                                                </td>
-                                            </tr>
-                                        )}
-                                    </tbody>
-                                </table>
-                            </div>
-
-                            {/* Pagination */}
-                            <div className="flex items-center justify-end space-x-2 py-4">
-                                <div className="text-xs text-muted-foreground">
-                                    第 {currentPage} 页 / 共 {totalPages} 页
-                                </div>
-                                <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                                    disabled={currentPage === 1}
-                                >
-                                    <ChevronLeft className="h-4 w-4" />
-                                </Button>
-                                <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                                    disabled={currentPage === totalPages}
-                                >
-                                    <ChevronRight className="h-4 w-4" />
-                                </Button>
-                            </div>
+                                    return {
+                                        id: item.note_id || item.aweme_id || Math.random().toString(),
+                                        platform: item.type,
+                                        author: {
+                                            name: item.nickname || item.user_id || '-',
+                                            avatar: item.avatar,
+                                            id: item.user_id,
+                                            url: getUserProfileUrl(item),
+                                            contact: typeof item.contact_info === 'string' ? item.contact_info : (item.contact_info ? JSON.stringify(item.contact_info) : undefined),
+                                            ip_location: item.ip_location,
+                                            stats: item.author_stats ? {
+                                                fans: item.author_stats.fans,
+                                                follows: item.author_stats.follows,
+                                                liked: item.author_stats.liked
+                                            } : undefined
+                                        },
+                                        content: {
+                                            title: item.title || '(无标题)',
+                                            desc: item.desc || '',
+                                            url: jumpUrl,
+                                            tags: parseTags(item)
+                                        },
+                                        media: {
+                                            cover: getFirstImage(item) || item.cover_url,
+                                            type: isVideo ? 'video' : 'image',
+                                            video_url: item.video_url,
+                                            image_list: validImages
+                                        },
+                                        stats: {
+                                            liked: Number(item.liked_count || 0),
+                                            comments: Number(item.comment_count || 0),
+                                            collected: Number(item.collected_count || 0),
+                                            share: Number(item.share_count || 0),
+                                            view: Number(item.view_count || 0)
+                                        },
+                                        meta: {
+                                            publish_time: item.create_time ? new Date(item.create_time).toLocaleString() : '-',
+                                        }
+                                    };
+                                })}
+                                total={processedData.length}
+                                page={currentPage}
+                                pageSize={pageSize}
+                                onPageChange={(p) => setCurrentPage(p)}
+                            />
                         </CardContent>
                     </Card>
                 </>
             )}
-            {/* Video Player Modal */}
-            {playingVideoUrl && (
-                <div
-                    className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
-                    onClick={() => setPlayingVideoUrl(null)}
-                >
-                    <div
-                        className="relative w-full max-w-5xl aspect-video bg-black rounded-xl overflow-hidden shadow-2xl ring-1 ring-white/10 flex flex-col"
-                        onClick={e => e.stopPropagation()}
-                    >
-                        <button
-                            className="absolute top-4 right-4 z-20 p-2 bg-black/50 hover:bg-black/70 rounded-full text-white transition-colors"
-                            onClick={() => setPlayingVideoUrl(null)}
-                        >
-                            <X className="w-6 h-6" />
-                        </button>
 
-                        {/* @ts-ignore */}
-                        <video
-                            src={playingVideoUrl || undefined}
-                            controls
-                            autoPlay
-                            className="w-full h-full flex-1"
-                            referrerPolicy="no-referrer"
-                        >
-                            您的浏览器不支持视频播放。
-                        </video>
-
-                    </div>
-                </div>
-            )}
         </div>
     );
 };

@@ -211,4 +211,233 @@ export const fetchAccountsOverview = () =>
 export const fetchAIKeywords = (keyword: string, mode: 'risk' | 'trend', model?: string) =>
     api.post<{ keywords: string[] }>('/ai/suggest', { keyword, mode, model }).then(res => res.data.keywords);
 
+// ============ Project API ============
+
+export interface Project {
+    id: number;
+    name: string;
+    description?: string;
+    keywords: string[];
+    sentiment_keywords: string[];
+    platforms: string[];
+    crawler_type: string;
+    crawl_limit: number;
+    crawl_date_range: number;
+    enable_comments: boolean;
+    deduplicate_authors: boolean;
+    schedule_type: string;
+    schedule_value: string;
+    is_active: boolean;
+    alert_on_negative: boolean;
+    alert_on_hotspot: boolean;
+    alert_channels: string[];
+    // Stats
+    total_crawled: number;
+    total_alerts: number;
+    today_crawled: number;
+    today_alerts: number;
+    last_run_at?: string;
+    next_run_at?: string;
+    run_count: number;
+    // 高级过滤
+    min_likes: number;
+    max_likes: number;
+    min_comments: number;
+    max_comments: number;
+    min_shares: number;
+    max_shares: number;
+    min_favorites: number;
+    max_favorites: number;
+}
+
+export const fetchProject = (id: number) =>
+    api.get<Project>(`/growhub/projects/${id}`).then(res => res.data);
+
+export const updateProject = (id: number, data: Partial<Project>) =>
+    api.put<{ message: string; project: Project }>(`/growhub/projects/${id}`, data).then(res => res.data);
+
+// ============ Project Detail API ============
+export interface ProjectContentFilters {
+    platform?: string;
+    sentiment?: string;
+    deduplicate_authors?: boolean;
+}
+
+export interface ProjectContentItem {
+    id: number;
+    platform: string;
+    title: string;
+    description: string;
+    url: string;
+    author: string;
+    author_avatar?: string;
+    cover_url?: string;
+    publish_time: string;
+    sentiment: string;
+    view_count: number;
+    like_count: number;
+    comment_count?: number;
+    share_count?: number;
+    collect_count?: number;
+    is_alert: boolean;
+    source_keyword: string;
+    // 新增字段：支持视频播放
+    content_type?: string;
+    video_url?: string;
+    media_urls?: string[];
+}
+
+export interface ProjectContentListResponse {
+    items: ProjectContentItem[];
+    total: number;
+    page: number;
+    page_size: number;
+    error?: string;
+}
+
+export interface ProjectStatsChartResponse {
+    dates: string[];
+    sentiment_trend: {
+        positive: number[];
+        neutral: number[];
+        negative: number[];
+    };
+    platform_dist: { name: string; value: number }[];
+}
+
+export const fetchProjectContents = (projectId: number, page: number, pageSize: number, filters?: ProjectContentFilters) =>
+    api.get<ProjectContentListResponse>(`/growhub/projects/${projectId}/contents`, { params: { page, page_size: pageSize, ...filters } }).then(res => res.data);
+
+export const fetchProjectStatsChart = (projectId: number, days = 7) =>
+    api.get<ProjectStatsChartResponse>(`/growhub/projects/${projectId}/stats-chart`, { params: { days } }).then(res => res.data);
+
+
+// ============ GrowHub Content (Data Pool) API ============
+
+export interface GrowHubContentItem {
+    id: number;
+    platform: string;
+    platform_content_id: string;
+    content_type: string;
+    title: string;
+    description: string;
+    content_url: string;
+    cover_url: string;
+    video_url?: string;  // 可播放的视频URL
+    author_id: string;
+    author_name: string;
+    author_avatar: string;
+    author_fans_count?: number;
+    author_follows_count?: number;  // 作者关注数
+    author_likes_count?: number;    // 作者获赞数
+    author_contact?: string;
+    ip_location?: string;           // IP归属地
+    media_urls?: string[];
+    like_count: number;
+    comment_count: number;
+    share_count: number;
+    collect_count: number;
+    view_count: number;
+    engagement_rate: number;
+    category: string;
+    sentiment: string;
+    source_keyword: string;
+    is_alert: boolean;
+    alert_level: string | null;
+    is_handled: boolean;
+    publish_time: string | null;
+    crawl_time: string;
+}
+
+export interface GrowHubContentListResponse {
+    items: GrowHubContentItem[];
+    total: number;
+}
+
+export interface GrowHubContentStats {
+    total: number;
+    total_likes: number;
+    total_comments: number;
+    total_shares: number;
+    total_collects: number;
+    total_views: number;
+    avg_likes: number;
+    by_platform: Record<string, number>;
+    by_sentiment: Record<string, number>;
+    by_category: Record<string, number>;
+    alerts: {
+        total: number;
+        unhandled: number;
+    };
+}
+
+export interface TopAnalysisItem {
+    id: number;
+    title: string;
+    like_count: number;
+    comment_count: number;
+}
+
+export interface GrowHubContentFilters {
+    page?: number;
+    page_size?: number;
+    deduplicate_authors?: boolean;
+    platform?: string;
+    category?: string;
+    sentiment?: string;
+    is_alert?: boolean;
+    is_handled?: boolean;
+    search?: string;
+    source_keyword?: string;
+    start_date?: string;
+    end_date?: string;
+    min_likes?: number;
+    min_comments?: number;
+    min_shares?: number;
+    max_likes?: number;
+    max_comments?: number;
+    max_shares?: number;
+    crawl_start_date?: string;
+    crawl_end_date?: string;
+    sort_by?: string;
+    sort_order?: string;
+}
+
+// Helper to clean params (remove null/undefined/empty string)
+const cleanParams = (params: any) => {
+    const cleaned: any = {};
+    Object.keys(params).forEach(key => {
+        const value = params[key];
+        if (value !== undefined && value !== null && value !== '') {
+            cleaned[key] = value;
+        }
+    });
+    return cleaned;
+};
+
+export const fetchGrowHubContents = (page: number, pageSize: number, filters?: GrowHubContentFilters) =>
+    api.get<GrowHubContentListResponse>('/growhub/content/list', { params: cleanParams({ page, page_size: pageSize, ...filters }) }).then(res => res.data);
+
+export const fetchGrowHubStats = (filters?: GrowHubContentFilters) =>
+    api.get<GrowHubContentStats>('/growhub/content/stats', { params: cleanParams({ ...filters }) }).then(res => res.data);
+
+export const fetchTopAnalysis = (limit = 10, filters?: GrowHubContentFilters) =>
+    api.get<TopAnalysisItem[]>('/growhub/content/top_analysis', { params: cleanParams({ limit, ...filters }) }).then(res => res.data);
+
+export const fetchGrowHubTrend = (days = 7, filters?: GrowHubContentFilters) =>
+    api.get<{ platform: string | null; days: number; data: any[] }>('/growhub/content/trend', { params: cleanParams({ days, ...filters }) }).then(res => res.data);
+
+export const getGrowHubExportUrl = (filters: GrowHubContentFilters) => {
+    const params = new URLSearchParams();
+    Object.entries(filters || {}).forEach(([key, value]) => {
+        if (value !== undefined && value !== null && value !== '') {
+            if (key === 'page' || key === 'page_size') return;
+            params.append(key, String(value));
+        }
+    });
+    return `/api/growhub/content/export?${params.toString()}`;
+};
+
+export default api;
+
 

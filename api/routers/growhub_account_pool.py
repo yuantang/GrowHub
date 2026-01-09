@@ -270,3 +270,90 @@ async def get_platforms():
             {"value": "tieba", "label": "百度贴吧"}
         ]
     }
+
+
+# ==================== QR Login Endpoints ====================
+
+class QRLoginStartRequest(BaseModel):
+    """扫码登录启动请求"""
+    platform: str = Field(..., description="平台标识: xhs, douyin, bilibili, weibo")
+
+
+@router.post("/qr-login/start")
+async def start_qr_login(request: QRLoginStartRequest):
+    """
+    启动扫码登录
+    返回 session_id 和二维码图片(base64)
+    """
+    from ..services.qr_login import get_qr_login_service
+    
+    service = get_qr_login_service()
+    result = await service.start_login(request.platform)
+    
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error"))
+    
+    return result
+
+
+@router.get("/qr-login/status/{session_id}")
+async def get_qr_login_status(session_id: str):
+    """
+    查询扫码登录状态
+    返回: pending(等待扫码) / scanned(已扫未确认) / success(成功) / expired(过期) / error(失败)
+    """
+    from ..services.qr_login import get_qr_login_service
+    
+    service = get_qr_login_service()
+    result = await service.get_status(session_id)
+    
+    # 如果登录成功，自动添加到账号池
+    if result.get("status") == "success" and result.get("cookies"):
+        pool = get_account_pool()
+        
+        # 将平台字符串转换为枚举
+        platform_str = result.get("platform", "xhs")
+        try:
+            platform_enum = AccountPlatform(platform_str)
+        except:
+            platform_enum = AccountPlatform.XHS
+        
+        account = AccountInfo(
+            id="",
+            platform=platform_enum,
+            account_name=result.get("account_name") or f"{platform_str}_扫码登录",
+            cookies=result["cookies"],
+            status=AccountStatus.ACTIVE,
+            notes="通过扫码登录添加"
+        )
+        
+        created = await pool.add_account(account)
+        result["account_id"] = created.id
+        result["message"] = "账号已自动添加到账号池"
+    
+    return result
+
+
+@router.post("/qr-login/cancel/{session_id}")
+async def cancel_qr_login(session_id: str):
+    """取消扫码登录"""
+    from ..services.qr_login import get_qr_login_service
+    
+    service = get_qr_login_service()
+    return await service.cancel_login(session_id)
+
+
+@router.get("/qr-login/platforms")
+async def get_qr_login_platforms():
+    """获取支持扫码登录的平台列表"""
+    from ..services.qr_login import get_qr_login_service
+    
+    service = get_qr_login_service()
+    platforms = []
+    for key, config in service.platform_configs.items():
+        platforms.append({
+            "value": key,
+            "label": config["name"]
+        })
+    
+    return {"platforms": platforms}

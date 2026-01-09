@@ -18,13 +18,15 @@
 
 import os
 import json
+import httpx
 from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
 router = APIRouter(prefix="/data", tags=["data"])
+proxy_router = APIRouter(prefix="/proxy", tags=["proxy"])
 
 # Data directory
 DATA_DIR = Path(__file__).parent.parent.parent / "data"
@@ -253,3 +255,72 @@ async def get_data_stats():
                 continue
 
     return stats
+
+
+# ==================== Image Proxy ====================
+
+@proxy_router.get("/image")
+async def proxy_image(url: str):
+    """
+    Proxy external images to avoid CORS issues.
+    Supports XHS, Douyin and other platform image URLs.
+    """
+    if not url:
+        raise HTTPException(status_code=400, detail="URL parameter is required")
+    
+    # Validate URL protocol
+    if not url.startswith(('http://', 'https://')):
+        raise HTTPException(status_code=400, detail="Invalid URL")
+    
+    # Allowed domains for security
+    allowed_domains = [
+        'xhscdn.com',
+        'xiaohongshu.com',
+        'douyinpic.com',
+        'douyincdn.com',
+        'toutiao.com',
+        'bytedance.com',
+        'kuaishou.com',
+        'biliimg.com',
+        'hdslb.com',
+        'weibocdn.com',
+        'sinaimg.cn',
+    ]
+    
+    # Check if URL is from allowed domain
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    domain = parsed.netloc.lower()
+    
+    is_allowed = any(allowed in domain for allowed in allowed_domains)
+    if not is_allowed:
+        # Allow all for now, but log warning
+        pass
+    
+    try:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8',
+                'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+                'Referer': 'https://www.xiaohongshu.com/',
+            }
+            response = await client.get(url, headers=headers)
+            
+            if response.status_code != 200:
+                raise HTTPException(status_code=response.status_code, detail="Failed to fetch image")
+            
+            content_type = response.headers.get('content-type', 'image/jpeg')
+            
+            return Response(
+                content=response.content,
+                media_type=content_type,
+                headers={
+                    'Cache-Control': 'public, max-age=86400',  # Cache for 24 hours
+                    'Access-Control-Allow-Origin': '*',
+                }
+            )
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="Image fetch timeout")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

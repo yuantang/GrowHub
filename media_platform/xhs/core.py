@@ -21,6 +21,7 @@ import asyncio
 import os
 import random
 from asyncio import Task
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Callable
 
 from playwright.async_api import (
@@ -40,7 +41,7 @@ from proxy.proxy_ip_pool import IpInfoModel, create_ip_pool
 from store import xhs as xhs_store
 from tools import utils
 from tools.cdp_browser import CDPBrowserManager
-from var import crawler_type_var, source_keyword_var
+from var import crawler_type_var, source_keyword_var, project_id_var
 
 from .client import XiaoHongShuClient
 from .exception import DataFetchError
@@ -66,7 +67,37 @@ class XiaoHongShuCrawler(AbstractCrawler):
         """Check if note meets the filtering criteria"""
         if not note_detail:
             return False
-            
+
+        # Time filter
+        if config.START_TIME or config.END_TIME:
+            try:
+                # API usually returns millisecond timestamp
+                note_ts = int(note_detail.get("create_time", 0) or note_detail.get("timestamp", 0) or note_detail.get("last_update_time", 0))
+                
+                if note_ts > 0:
+                    # Normalize to milliseconds
+                    if note_ts < 10000000000: # If seconds (10 digits)
+                        note_ts *= 1000
+
+                    if config.START_TIME:
+                        fmt = "%Y-%m-%d" if len(config.START_TIME) == 10 else "%Y-%m-%d %H:%M:%S"
+                        start_dt = datetime.strptime(config.START_TIME, fmt)
+                        start_ts = start_dt.timestamp() * 1000
+                        if note_ts < start_ts:
+                            # utils.logger.info(f"[Filter] Note {note_detail.get('note_id')} ignored. Time {datetime.fromtimestamp(note_ts/1000)} < {start_dt}")
+                            return False
+
+                    if config.END_TIME:
+                        fmt = "%Y-%m-%d" if len(config.END_TIME) == 10 else "%Y-%m-%d %H:%M:%S"
+                        end_dt = datetime.strptime(config.END_TIME, fmt)
+                        if len(config.END_TIME) == 10:
+                            end_dt = end_dt + timedelta(days=1)
+                        end_ts = end_dt.timestamp() * 1000
+                        if note_ts > end_ts:
+                            return False
+            except Exception as e:
+                utils.logger.error(f"[Filter] Time check error for note {note_detail.get('note_id')}: {e}")
+
         interact_info = note_detail.get("interact_info", {})
         
         # Check interaction filters
@@ -130,8 +161,10 @@ class XiaoHongShuCrawler(AbstractCrawler):
             await self.context_page.goto(self.index_url)
 
             # Create a client to interact with the Xiaohongshu website.
+            utils.logger.info(f"[XiaoHongShuCrawler] Config Cookies length: {len(config.COOKIES)}")
             self.xhs_client = await self.create_xhs_client(httpx_proxy_format)
             if not await self.xhs_client.pong():
+                utils.logger.info("[XiaoHongShuCrawler] Initial pong failed, attempting cookie login...")
                 login_obj = XiaoHongShuLogin(
                     login_type=config.LOGIN_TYPE,
                     login_phone="",  # input your phone number
@@ -140,7 +173,10 @@ class XiaoHongShuCrawler(AbstractCrawler):
                     cookie_str=config.COOKIES,
                 )
                 await login_obj.begin()
+                
+                # Update client cookies after login (original working pattern)
                 await self.xhs_client.update_cookies(browser_context=self.browser_context)
+                utils.logger.info("[XiaoHongShuCrawler] Cookies updated after login")
 
             # Login Only Mode: Save cookies and exit
             if config.CRAWLER_TYPE == "login":
@@ -186,6 +222,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
         start_page = config.START_PAGE
         for keyword in config.KEYWORDS.split(","):
             source_keyword_var.set(keyword)
+            project_id_var.set(config.PROJECT_ID)  # 设置关联项目 ID
             utils.logger.info(f"[XiaoHongShuCrawler.search] Current search keyword: {keyword}")
             page = 1
             search_id = get_search_id()

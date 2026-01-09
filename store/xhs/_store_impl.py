@@ -114,6 +114,13 @@ class XhsDbStoreImplement(AbstractStore):
                 await self.update_content(session, content_item)
             else:
                 await self.add_content(session, content_item)
+        
+        # Sync to GrowHub Unified Content Table
+        try:
+            from api.services.growhub_store import get_growhub_store_service
+            await get_growhub_store_service().sync_to_growhub("xhs", content_item)
+        except Exception as e:
+            utils.logger.error(f"[XhsStore] Failed to sync to GrowHub: {e}")
 
     async def add_content(self, session: AsyncSession, content_item: Dict):
         add_ts = int(get_current_timestamp())

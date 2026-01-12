@@ -33,7 +33,17 @@ ENABLE_IP_PROXY = False
 IP_PROXY_POOL_COUNT = 2
 
 # 代理IP提供商名称
+# 代理IP提供商名称
 IP_PROXY_PROVIDER_NAME = "kuaidaili"  # kuaidaili | wandouhttp
+
+# ==================== System & Browser Fingerprint Constants ====================
+# Centralized source of truth for Anti-Bot Fingerprinting
+# MUST match exactly between Browser Context and API Headers
+DEFAULT_USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+BROWSER_VERSION = "126.0.0.0"
+BROWSER_NAME = "Chrome"
+OS_NAME = "Mac OS"
+OS_VERSION = "10.15.7"
 
 # ==================== 签名服务配置 ====================
 # 是否启用独立签名服务（用于去除Playwright依赖）
@@ -56,7 +66,12 @@ SAVE_LOGIN_STATE = True
 # 是否启用CDP模式 - 使用用户现有的Chrome/Edge浏览器进行爬取，提供更好的反检测能力
 # 启用后将自动检测并启动用户的Chrome/Edge浏览器，通过CDP协议进行控制
 # 这种方式使用真实的浏览器环境，包括用户的扩展、Cookie和设置，大大降低被检测的风险
+#
+# ⚠️ 注意：CDP模式可能导致签名JS(mnsv2)加载失败，推荐设为 False
+# 如需使用 CDP 模式，请确保浏览器中已打开小红书页面且加载完成
+# 2026-01-11: Enabled to bypass Douyin's anti-bot detection on Playwright
 ENABLE_CDP_MODE = True
+
 
 # CDP调试端口，用于与浏览器通信
 # 如果端口被占用，系统会自动尝试下一个可用端口
@@ -97,6 +112,7 @@ MIN_LIKES_COUNT = 0       # 最小点赞数
 MIN_SHARES_COUNT = 0      # 最小分享数
 MIN_COMMENTS_COUNT = 0    # 最小评论数
 MIN_FAVORITES_COUNT = 0   # 最小收藏数
+DEDUPLICATE_AUTHORS = False  # 博主去重：每个博主只保留一条内容
 
 # ==================== 时间筛选配置 ====================
 START_TIME = ""  # 开始时间 YYYY-MM-DD or YYYY-MM-DD HH:MM:SS
@@ -117,6 +133,10 @@ CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES = 10
 # 是否开启爬二级评论模式, 默认不开启爬二级评论
 # 老版本项目使用了 db, 则需参考 schema/tables.sql line 287 增加表字段
 ENABLE_GET_SUB_COMMENTS = False
+
+# Aliases for compatibility
+PER_NOTE_MAX_COMMENTS_COUNT = CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES
+CRAWLER_TIME_SLEEP = 1.0  # Fixed sleep time in seconds
 
 # 词云相关
 # 是否开启生成评论词云图

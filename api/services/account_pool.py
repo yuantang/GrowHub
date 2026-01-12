@@ -228,19 +228,34 @@ class AccountPoolService:
         from sqlalchemy import select
         
         async with self._lock:
+            db_deleted = False
+            memory_deleted = False
+            
             # DB Delete
-            async with get_session() as session:
-                result = await session.execute(select(GrowHubAccount).where(GrowHubAccount.id == account_id))
-                model = result.scalar_one_or_none() # Use scalar_one_or_none for single result
-                if model:
-                    await session.delete(model)
-                    await session.commit() # Commit the changes
+            try:
+                print(f"[AccountPool] Deleting account {account_id} from DB...")
+                async with get_session() as session:
+                    result = await session.execute(select(GrowHubAccount).where(GrowHubAccount.id == account_id))
+                    model = result.scalar_one_or_none()
+                    if model:
+                        await session.delete(model)
+                        await session.commit()
+                        db_deleted = True
+                        print(f"[AccountPool] Account {account_id} deleted from DB")
+                    else:
+                        print(f"[AccountPool] Account {account_id} not found in DB")
+            except Exception as e:
+                print(f"[AccountPool] DB delete failed: {e}")
             
             # Memory Delete
             if account_id in self.accounts:
                 del self.accounts[account_id]
-                return True
-            return False
+                memory_deleted = True
+                print(f"[AccountPool] Account {account_id} deleted from memory")
+            else:
+                print(f"[AccountPool] Account {account_id} not found in memory keys: {list(self.accounts.keys())}")
+                
+            return db_deleted or memory_deleted
     
     def get_account(self, account_id: str) -> Optional[AccountInfo]:
         """获取单个账号 (Read from Memory)"""
@@ -253,14 +268,21 @@ class AccountPoolService:
             accounts = [a for a in accounts if a.platform == platform]
         return accounts
     
-    async def get_available_account(self, platform: AccountPlatform) -> Optional[AccountInfo]:
-        """获取可用账号"""
+    async def get_available_account(self, platform: AccountPlatform, exclude_ids: List[str] = None) -> Optional[AccountInfo]:
+        """获取可用账号
+        
+        Args:
+            platform: 平台类型
+            exclude_ids: 要排除的账号ID列表（用于重试时跳过已失败的账号）
+        """
         # Read from memory is fine, as memory is the truth for status
         now = datetime.now()
+        exclude_ids = exclude_ids or []
         
         candidates = [
             a for a in self.accounts.values()
             if a.platform == platform
+            and a.id not in exclude_ids
             and a.status == AccountStatus.ACTIVE
             and a.health_score >= self.config["min_health_for_use"]
             and (a.cooldown_until is None or a.cooldown_until < now)
@@ -271,6 +293,11 @@ class AccountPoolService:
         
         candidates.sort(key=lambda x: (-x.health_score, x.last_used or datetime.min))
         return candidates[0]
+    
+    async def record_account_usage(self, account_id: str, success: bool, cooldown_seconds: Optional[int] = None):
+        """记录账号使用（mark_account_used 的别名，更清晰的 API）"""
+        await self.mark_account_used(account_id, success, cooldown_seconds)
+
     
     async def mark_account_used(self, account_id: str, success: bool, cooldown_seconds: Optional[int] = None):
         """标记使用"""

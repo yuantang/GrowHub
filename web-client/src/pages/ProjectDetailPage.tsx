@@ -48,6 +48,73 @@ import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { AiKeywordDialog } from '@/components/business/AiKeywordDialog';
 
+
+// Custom helper for clean number inputs (handles 0 as empty, fixes leading zeros)
+const CleanNumberInput = ({ value, onChange, placeholder, className }: { 
+    value: number | string; 
+    onChange: (val: number) => void; 
+    placeholder?: string;
+    className?: string;
+}) => {
+    // Helper to check if value is effectively 0
+    const isZero = (v: number | string) => Number(v) === 0;
+
+    // Initialize: if value is 0, show empty string
+    const [localValue, setLocalValue] = useState<string>(isZero(value) ? '' : String(value));
+
+    useEffect(() => {
+        // Sync from parent prop to local state
+        // If parent is 0, local should be empty
+        if (isZero(value)) {
+            if (localValue !== '') setLocalValue('');
+        } else {
+            // If parent has a value, make sure local matches it
+            // use String(value) to handle both number and string types
+            if (String(value) !== localValue) {
+                setLocalValue(String(value));
+            }
+        }
+    }, [value]);
+
+    const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const val = e.target.value;
+        
+        // 1. Handle empty input
+        if (val === '') {
+            setLocalValue('');
+            onChange(0);
+            return;
+        }
+
+        // 2. Allow digits only
+        if (!/^\d+$/.test(val)) return;
+
+        // 3. Parse integer to remove leading zeros immediately
+        const num = parseInt(val, 10);
+
+        if (num === 0) {
+            // If user types '0' or '00', treat as empty/0
+            setLocalValue('');
+            onChange(0);
+        } else {
+            // If valid number, update local to clean string (e.g. '01' -> '1')
+            // This prevents '0100' by forcing it to '100' immediately
+            setLocalValue(String(num));
+            onChange(num);
+        }
+    };
+
+    return (
+        <Input
+            value={localValue}
+            onChange={handleChange}
+            placeholder={placeholder}
+            className={className}
+        />
+    );
+};
+
+// Colors for charts
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d'];
 
 const ProjectDetailPage: React.FC = () => {
@@ -372,7 +439,7 @@ const ProjectDetailPage: React.FC = () => {
                                         content: { title: item.title || '(无标题)', desc: item.description || '', url: item.url, tags: item.source_keyword ? [item.source_keyword] : [] },
                                         media: { cover: item.cover_url || (validImages.length > 0 ? validImages[0] : undefined), type: isVideo ? 'video' : 'image', video_url: item.video_url, image_list: validImages },
                                         stats: { liked: item.like_count || 0, comments: item.comment_count || 0, collected: item.collect_count || 0, share: item.share_count || 0, view: item.view_count || 0 },
-                                        meta: { publish_time: item.publish_time ? new Date(item.publish_time).toLocaleString() : '-', source_keyword: item.source_keyword, is_alert: item.is_alert }
+                                        meta: { publish_time: item.publish_time ? new Date(item.publish_time).toLocaleString() : '-', crawl_time: item.crawl_time ? new Date(item.crawl_time).toLocaleString() : '-', source_keyword: item.source_keyword, is_alert: item.is_alert }
                                     };
                                 })}
                                 loading={contentsLoading}
@@ -419,16 +486,16 @@ const ProjectDetailPage: React.FC = () => {
                         {/* Settings Navigation */}
                         <Tabs value={settingsTab} onValueChange={setSettingsTab} className="w-full">
                             <TabsList className="grid w-full grid-cols-4 h-12 p-1 bg-muted/30 rounded-lg border">
-                                <TabsTrigger value="basic" className="flex items-center gap-2 text-muted-foreground data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm rounded-md transition-all">
+                                <TabsTrigger value="basic" className="flex items-center gap-2 text-muted-foreground hover:text-foreground data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm rounded-md transition-all">
                                     <FileText className="w-4 h-4" /> <span>基础信息</span>
                                 </TabsTrigger>
-                                <TabsTrigger value="crawl" className="flex items-center gap-2 text-muted-foreground data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm rounded-md transition-all">
+                                <TabsTrigger value="crawl" className="flex items-center gap-2 text-muted-foreground hover:text-foreground data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm rounded-md transition-all">
                                     <Target className="w-4 h-4" /> <span>抓取配置</span>
                                 </TabsTrigger>
-                                <TabsTrigger value="schedule" className="flex items-center gap-2 text-muted-foreground data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm rounded-md transition-all">
+                                <TabsTrigger value="schedule" className="flex items-center gap-2 text-muted-foreground hover:text-foreground data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm rounded-md transition-all">
                                     <Clock className="w-4 h-4" /> <span>调度配置</span>
                                 </TabsTrigger>
-                                <TabsTrigger value="alerts" className="flex items-center gap-2 text-muted-foreground data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm rounded-md transition-all">
+                                <TabsTrigger value="alerts" className="flex items-center gap-2 text-muted-foreground hover:text-foreground data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm rounded-md transition-all">
                                     <Bell className="w-4 h-4" /> <span>预警通知</span>
                                 </TabsTrigger>
                             </TabsList>
@@ -548,21 +615,17 @@ const ProjectDetailPage: React.FC = () => {
                                         <div>
                                             <label className="text-sm font-medium mb-2 block">点赞数范围</label>
                                             <div className="flex items-center gap-2">
-                                                <input
-                                                    type="number"
-                                                    min={0}
-                                                    value={project.min_likes || 0}
-                                                    onChange={e => updateSettings({ min_likes: parseInt(e.target.value) || 0 })}
-                                                    placeholder="最小"
+                                                <CleanNumberInput
+                                                    value={project.min_likes}
+                                                    onChange={val => updateSettings({ min_likes: val })}
+                                                    placeholder="不限"
                                                     className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm"
                                                 />
                                                 <span className="text-muted-foreground">—</span>
-                                                <input
-                                                    type="number"
-                                                    min={0}
-                                                    value={project.max_likes || 0}
-                                                    onChange={e => updateSettings({ max_likes: parseInt(e.target.value) || 0 })}
-                                                    placeholder="最大"
+                                                <CleanNumberInput
+                                                    value={project.max_likes}
+                                                    onChange={val => updateSettings({ max_likes: val })}
+                                                    placeholder="不限"
                                                     className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm"
                                                 />
                                             </div>
@@ -572,21 +635,17 @@ const ProjectDetailPage: React.FC = () => {
                                         <div>
                                             <label className="text-sm font-medium mb-2 block">评论数范围</label>
                                             <div className="flex items-center gap-2">
-                                                <input
-                                                    type="number"
-                                                    min={0}
-                                                    value={project.min_comments || 0}
-                                                    onChange={e => updateSettings({ min_comments: parseInt(e.target.value) || 0 })}
-                                                    placeholder="最小"
+                                                <CleanNumberInput
+                                                    value={project.min_comments}
+                                                    onChange={val => updateSettings({ min_comments: val })}
+                                                    placeholder="不限"
                                                     className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm"
                                                 />
                                                 <span className="text-muted-foreground">—</span>
-                                                <input
-                                                    type="number"
-                                                    min={0}
-                                                    value={project.max_comments || 0}
-                                                    onChange={e => updateSettings({ max_comments: parseInt(e.target.value) || 0 })}
-                                                    placeholder="最大"
+                                                <CleanNumberInput
+                                                    value={project.max_comments}
+                                                    onChange={val => updateSettings({ max_comments: val })}
+                                                    placeholder="不限"
                                                     className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm"
                                                 />
                                             </div>
@@ -597,21 +656,17 @@ const ProjectDetailPage: React.FC = () => {
                                             <div>
                                                 <label className="text-sm font-medium mb-2 block">分享数范围</label>
                                                 <div className="flex items-center gap-1">
-                                                    <input
-                                                        type="number"
-                                                        min={0}
-                                                        value={project.min_shares || 0}
-                                                        onChange={e => updateSettings({ min_shares: parseInt(e.target.value) || 0 })}
-                                                        placeholder="最小"
+                                                    <CleanNumberInput
+                                                        value={project.min_shares}
+                                                        onChange={val => updateSettings({ min_shares: val })}
+                                                        placeholder="不限"
                                                         className="w-full px-2 py-2 bg-background border border-border rounded-lg text-sm"
                                                     />
                                                     <span className="text-muted-foreground text-xs">—</span>
-                                                    <input
-                                                        type="number"
-                                                        min={0}
-                                                        value={project.max_shares || 0}
-                                                        onChange={e => updateSettings({ max_shares: parseInt(e.target.value) || 0 })}
-                                                        placeholder="最大"
+                                                    <CleanNumberInput
+                                                        value={project.max_shares}
+                                                        onChange={val => updateSettings({ max_shares: val })}
+                                                        placeholder="不限"
                                                         className="w-full px-2 py-2 bg-background border border-border rounded-lg text-sm"
                                                     />
                                                 </div>
@@ -619,21 +674,17 @@ const ProjectDetailPage: React.FC = () => {
                                             <div>
                                                 <label className="text-sm font-medium mb-2 block">收藏数范围</label>
                                                 <div className="flex items-center gap-1">
-                                                    <input
-                                                        type="number"
-                                                        min={0}
-                                                        value={project.min_favorites || 0}
-                                                        onChange={e => updateSettings({ min_favorites: parseInt(e.target.value) || 0 })}
-                                                        placeholder="最小"
+                                                    <CleanNumberInput
+                                                        value={project.min_favorites}
+                                                        onChange={val => updateSettings({ min_favorites: val })}
+                                                        placeholder="不限"
                                                         className="w-full px-2 py-2 bg-background border border-border rounded-lg text-sm"
                                                     />
                                                     <span className="text-muted-foreground text-xs">—</span>
-                                                    <input
-                                                        type="number"
-                                                        min={0}
-                                                        value={project.max_favorites || 0}
-                                                        onChange={e => updateSettings({ max_favorites: parseInt(e.target.value) || 0 })}
-                                                        placeholder="最大"
+                                                    <CleanNumberInput
+                                                        value={project.max_favorites}
+                                                        onChange={val => updateSettings({ max_favorites: val })}
+                                                        placeholder="不限"
                                                         className="w-full px-2 py-2 bg-background border border-border rounded-lg text-sm"
                                                     />
                                                 </div>

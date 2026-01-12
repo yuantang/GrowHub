@@ -61,6 +61,7 @@ const AccountPoolPage: React.FC = () => {
     const [filterPlatform, setFilterPlatform] = useState<string>('');
     const [filterStatus, setFilterStatus] = useState<string>('');
     const [searchTerm, setSearchTerm] = useState('');
+    const [checkingId, setCheckingId] = useState<string | null>(null); // 正在检测的账号ID
 
     // Add form
     const [newAccount, setNewAccount] = useState({
@@ -139,23 +140,42 @@ const AccountPoolPage: React.FC = () => {
                 });
                 fetchAccounts();
                 fetchStatistics();
+                alert('✅ 账号添加成功！');
+            } else {
+                const errorData = await response.json().catch(() => ({}));
+                const errorMsg = errorData.detail || errorData.message || `请求失败 (${response.status})`;
+                alert(`❌ 添加失败: ${errorMsg}`);
             }
         } catch (error) {
             console.error('Failed to add account:', error);
+            alert(`❌ 添加失败: ${error instanceof Error ? error.message : '网络错误'}`);
         } finally {
             setLoading(false);
         }
     };
 
+
     const checkAccountHealth = async (accountId: string) => {
+        setCheckingId(accountId);
         try {
-            await fetch(`${API_BASE}/growhub/accounts/${accountId}/check`, {
+            const response = await fetch(`${API_BASE}/growhub/accounts/${accountId}/check`, {
                 method: 'POST'
             });
-            fetchAccounts();
-            fetchStatistics();
+            const data = await response.json();
+            await fetchAccounts();
+            await fetchStatistics();
+            // 显示检测结果
+            const status = data.account?.status;
+            if (status === 'active') {
+                alert('✅ 账号状态正常！');
+            } else {
+                alert(`⚠️ 账号状态: ${status || '未知'}\n${data.check_result?.message || '检测完成'}`);
+            }
         } catch (error) {
             console.error('Failed to check account:', error);
+            alert('❌ 检测失败，请稍后重试');
+        } finally {
+            setCheckingId(null);
         }
     };
 
@@ -174,17 +194,35 @@ const AccountPoolPage: React.FC = () => {
         }
     };
 
-    const deleteAccount = async (accountId: string) => {
-        if (!confirm('确定要删除这个账号吗？')) return;
+    const [accountToDelete, setAccountToDelete] = useState<string | null>(null);
+
+    const handleDeleteClick = (accountId: string) => {
+        setAccountToDelete(accountId);
+    };
+
+    const confirmDelete = async () => {
+        if (!accountToDelete) return;
+        const accountId = accountToDelete;
+        setAccountToDelete(null); // Close modal immediately
 
         try {
-            await fetch(`${API_BASE}/growhub/accounts/${accountId}`, {
+            console.log(`Sending DELETE request for account: ${accountId}`);
+            const response = await fetch(`${API_BASE}/growhub/accounts/${accountId}`, {
                 method: 'DELETE'
             });
-            fetchAccounts();
-            fetchStatistics();
+
+            if (response.ok) {
+                console.log('Delete successful, refreshing list...');
+                fetchAccounts();
+                fetchStatistics();
+            } else {
+                const data = await response.json().catch(() => ({}));
+                console.error('Delete failed response:', data);
+                alert(`❌ 删除失败: ${data.detail || '未知错误'}`);
+            }
         } catch (error) {
             console.error('Failed to delete account:', error);
+            alert('❌ 删除请求失败，请检查网络或后端服务');
         }
     };
 
@@ -517,13 +555,18 @@ const AccountPoolPage: React.FC = () => {
                                                         size="sm"
                                                         onClick={() => checkAccountHealth(acc.id)}
                                                         title="检测健康"
+                                                        disabled={checkingId === acc.id}
                                                     >
-                                                        <Shield className="w-4 h-4" />
+                                                        {checkingId === acc.id ? (
+                                                            <Loader2 className="w-4 h-4 animate-spin" />
+                                                        ) : (
+                                                            <Shield className="w-4 h-4" />
+                                                        )}
                                                     </Button>
                                                     <Button
                                                         variant="ghost"
                                                         size="sm"
-                                                        onClick={() => deleteAccount(acc.id)}
+                                                        onClick={() => handleDeleteClick(acc.id)}
                                                         className="text-red-500"
                                                         title="删除"
                                                     >
@@ -783,6 +826,36 @@ const AccountPoolPage: React.FC = () => {
                         <div className="flex justify-end gap-3 mt-6 pt-4 border-t border-border">
                             <Button variant="outline" onClick={cancelQRLogin}>
                                 {qrSession?.status === 'success' ? '完成' : '取消'}
+                            </Button>
+                        </div>
+                    </div>
+                </div>
+            )}
+            {/* Delete Confirmation Modal */}
+            {accountToDelete && (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                    <div className="bg-card rounded-lg p-6 w-full max-w-sm border border-border shadow-lg">
+                        <div className="flex flex-col items-center text-center mb-6">
+                            <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center mb-4 text-red-600">
+                                <AlertTriangle className="w-6 h-6" />
+                            </div>
+                            <h3 className="text-lg font-semibold">确认删除账号？</h3>
+                            <p className="text-sm text-muted-foreground mt-2">
+                                删除后无法恢复，且会清除该账号的所有历史记录。
+                            </p>
+                        </div>
+                        <div className="flex justify-end gap-3">
+                            <Button
+                                variant="outline"
+                                onClick={() => setAccountToDelete(null)}
+                            >
+                                取消
+                            </Button>
+                            <Button
+                                variant="destructive"
+                                onClick={confirmDelete}
+                            >
+                                确认删除
                             </Button>
                         </div>
                     </div>

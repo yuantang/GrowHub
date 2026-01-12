@@ -315,6 +315,24 @@ class SchedulerService:
     
     async def _run_crawler_task(self, task: ScheduledTask) -> Dict[str, Any]:
         """执行爬虫任务 (真实调用)"""
+        params = task.params
+        
+        # If this is a project-based task, delegate to project service
+        project_id = params.get("project_id")
+        if project_id:
+            try:
+                from api.services.project import get_project_service
+                project_service = get_project_service()
+                result = await project_service.execute_project(project_id)
+                return {
+                    "project_id": project_id,
+                    "result": result,
+                    "message": "项目任务执行完成"
+                }
+            except Exception as e:
+                raise Exception(f"项目任务执行失败: {str(e)}")
+        
+        # Fallback: Direct crawler task (for non-project tasks)
         try:
             from api.services.crawler_manager import crawler_manager
             from api.schemas import CrawlerStartRequest
@@ -322,7 +340,6 @@ class SchedulerService:
         except ImportError:
             return {"error": "Crawler modules not found"}
 
-        params = task.params
         platform = params.get("platform", "xhs")
         keywords = params.get("keywords", "")
         if isinstance(keywords, list):

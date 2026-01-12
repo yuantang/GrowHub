@@ -273,6 +273,7 @@ export interface ProjectContentItem {
     author_avatar?: string;
     cover_url?: string;
     publish_time: string;
+    crawl_time?: string;  // Fix: add missing crawl_time
     sentiment: string;
     view_count: number;
     like_count: number;

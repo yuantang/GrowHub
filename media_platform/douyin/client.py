@@ -37,7 +37,7 @@ if TYPE_CHECKING:
 from .exception import *
 from .field import *
 from .help import *
-
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
 
@@ -72,6 +72,7 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
             return
         headers = headers or self.headers
         local_storage: Dict = await self.playwright_page.evaluate("() => window.localStorage")  # type: ignore
+        import config
         common_params = {
             "device_platform": "webapp",
             "aid": "6383",
@@ -83,12 +84,12 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
             "cookie_enabled": "true",
             "browser_language": "zh-CN",
             "browser_platform": "MacIntel",
-            "browser_name": "Chrome",
-            "browser_version": "125.0.0.0",
+            "browser_name": config.BROWSER_NAME,
+            "browser_version": config.BROWSER_VERSION,
             "browser_online": "true",
             "engine_name": "Blink",
-            "os_name": "Mac OS",
-            "os_version": "10.15.7",
+            "os_name": config.OS_NAME,
+            "os_version": config.OS_VERSION,
             "cpu_core_num": "8",
             "device_memory": "8",
             "engine_version": "109.0",
@@ -108,10 +109,19 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
         if request_method == "POST":
             post_data = params
 
+        # Reference MediaCrawler logic: Search API does NOT use a_bogus
+        # This matches the working open-source implementation
         if "/v1/web/general/search" not in uri:
-            a_bogus = await get_a_bogus(uri, query_string, post_data, headers["User-Agent"], self.playwright_page)
+            a_bogus = await get_a_bogus(
+                url=uri,
+                params=query_string,
+                post_data=post_data,
+                user_agent=headers.get("User-Agent"),
+                page=self.playwright_page
+            )
             params["a_bogus"] = a_bogus
 
+    @retry(stop=stop_after_attempt(3), wait=wait_fixed(1))
     async def request(self, method, url, **kwargs):
         # 每次请求前检测代理是否过期
         await self._refresh_proxy_if_expired()

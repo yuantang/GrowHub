@@ -6,6 +6,7 @@ import asyncio
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
 from pydantic import BaseModel
+from ..services.account_pool import AccountStatus
 
 
 class ProjectConfig(BaseModel):
@@ -105,6 +106,28 @@ class ProjectService:
             return
         self._initialized = True
         self._project_logs: Dict[int, List[str]] = {}
+    
+    async def sync_active_projects_to_scheduler(self):
+        """Startup sync: Register all active projects with scheduler (after server restart)"""
+        from database.db_session import get_session
+        from database.growhub_models import GrowHubProject
+        from sqlalchemy import select
+        
+        async with get_session() as session:
+            result = await session.execute(
+                select(GrowHubProject).where(GrowHubProject.is_active == True)
+            )
+            active_projects = result.scalars().all()
+            
+            registered_count = 0
+            for project in active_projects:
+                try:
+                    await self._register_scheduler_task(project)
+                    registered_count += 1
+                except Exception as e:
+                    print(f"[Scheduler Sync] Failed to register project {project.id}: {e}")
+            
+            print(f"[Scheduler Sync] Registered {registered_count}/{len(active_projects)} active projects")
     
     async def create_project(self, config: ProjectConfig) -> Dict[str, Any]:
         """创建监控项目"""
@@ -209,6 +232,9 @@ class ProjectService:
                     await self._register_scheduler_task(project)
                 else:
                     await self._unregister_scheduler_task(project)
+            
+            # Commit changes to database
+            await session.commit()
             
             return self._to_dict(project)
     
@@ -323,6 +349,7 @@ class ProjectService:
             
             project.last_run_at = datetime.now()
             project.run_count = (project.run_count or 0) + 1
+            await session.commit()  # Persist run statistics immediately
             
             # 清空旧日志并开始记录
             self._project_logs[project_id] = []
@@ -335,6 +362,8 @@ class ProjectService:
             total_crawled = 0
             start_time = datetime.now()
             
+            
+            MAX_ACCOUNT_RETRIES = 3  # 最大账号切换次数
             
             for platform in platforms:
                 # 平台名称映射
@@ -349,100 +378,176 @@ class ProjectService:
                 }
                 display_platform = platform_names.get(platform, platform)
                 
-                # 获取账号
-                pool = get_account_pool()
-                try:
-                    plat_enum = AccountPlatform(platform)
-                    self.append_log(project_id, f"正在获取 {display_platform} 平台账号...")
-                    account = await pool.get_available_account(plat_enum)
-                    if not account:
-                        self.append_log(project_id, f"❌ 平台 {display_platform} 没有可用账号，跳过")
-                        continue
-                    
-                    self.append_log(project_id, f"✅ 获取到账号: {account.account_name}")
-                    cookies = account.cookies
-                except Exception as e:
-                    self.append_log(project_id, f"❌ 获取账号失败: {e}")
-                    continue
+                # 账号重试循环
+                success_this_platform = False
+                tried_accounts = []
                 
-                # 检查爬虫状态
-                if crawler_manager.status == "running":
-                    self.append_log(project_id, f"⚠️ 爬虫引擎忙碌中，跳过平台 {display_platform}")
-                    continue
-                
-                try:
-                    # 映射平台名称到 MediaCrawler 支持的格式
-                    platform_mapping = {
-                        "douyin": "dy",
-                        "bilibili": "bili",
-                        "weibo": "wb",
-                        "xhs": "xhs",
-                        "kuaishou": "ks",
-                        "zhihu": "zhihu",
-                        "tieba": "tieba"
-                    }
-                    mc_platform = platform_mapping.get(platform, platform)
-                    
-                    self.append_log(project_id, f"🚀 启动爬虫任务: {display_platform} - {project.crawler_type}")
-                    
-                    # 计算动态时间范围 (Dynamically calculate time range)
-                    start_time_str = ""
-                    if getattr(project, 'crawl_date_range', 0) > 0:
-                        range_days = project.crawl_date_range
-                        start_date = datetime.now() - timedelta(days=range_days)
-                        start_time_str = start_date.strftime("%Y-%m-%d")
-                        self.append_log(project_id, f"📅 爬取时间范围: 最近 {range_days} 天 (从 {start_time_str} 开始)")
-                    
-                    config = CrawlerStartRequest(
-                        platform=mc_platform,
-                        login_type="cookie",
-                        crawler_type=project.crawler_type or "search",
-                        save_option="sqlite",
-                        keywords=keywords_str,
-                        cookies=cookies,
-                        headless=True,
-                        crawl_limit_count=project.crawl_limit or 20,
-                        start_time=start_time_str,  # Pass dynamic start time
-                        enable_comments=project.enable_comments or True,
-                        project_id=project.id  # 关联项目 ID
-                    )
-                    
-                    success = await crawler_manager.start(config)
-                    if success:
-                        self.append_log(project_id, "爬虫已提交，等待执行...")
+                for retry_num in range(MAX_ACCOUNT_RETRIES):
+                    # 获取账号（排除已尝试的）
+                    pool = get_account_pool()
+                    try:
+                        plat_enum = AccountPlatform(platform)
+                        self.append_log(project_id, f"正在获取 {display_platform} 平台账号 (尝试 {retry_num + 1}/{MAX_ACCOUNT_RETRIES})...")
                         
-                        # 同步爬虫日志的游标
-                        last_log_count = 0
+                        # 获取所有可用账号中未尝试过的
+                        account = await pool.get_available_account(plat_enum, exclude_ids=tried_accounts)
+                        if not account:
+                            if retry_num == 0:
+                                self.append_log(project_id, f"❌ 平台 {display_platform} 没有可用账号，跳过")
+                            else:
+                                self.append_log(project_id, f"❌ 平台 {display_platform} 没有更多可用账号")
+                            break
                         
-                        # 等待完成，并同步日志
-                        while crawler_manager.status == "running":
-                            # 获取新产生的爬虫日志
+                        tried_accounts.append(account.id)
+                        self.append_log(project_id, f"✅ 获取到账号: {account.account_name}")
+                        cookies = account.cookies
+                    except Exception as e:
+                        self.append_log(project_id, f"❌ 获取账号失败: {e}")
+                        break
+                    
+                    # 检查爬虫状态
+                    if crawler_manager.status == "running":
+                        self.append_log(project_id, f"⚠️ 爬虫引擎忙碌中，跳过平台 {display_platform}")
+                        break
+                    
+                    try:
+                        # 映射平台名称到 MediaCrawler 支持的格式
+                        platform_mapping = {
+                            "douyin": "dy",
+                            "bilibili": "bili",
+                            "weibo": "wb",
+                            "xhs": "xhs",
+                            "kuaishou": "ks",
+                            "zhihu": "zhihu",
+                            "tieba": "tieba"
+                        }
+                        mc_platform = platform_mapping.get(platform, platform)
+                        
+                        self.append_log(project_id, f"🚀 启动爬虫任务: {display_platform} - {project.crawler_type}")
+                        
+                        # 计算动态时间范围 (Dynamically calculate time range)
+                        start_time_str = ""
+                        if getattr(project, 'crawl_date_range', 0) > 0:
+                            range_days = project.crawl_date_range
+                            start_date = datetime.now() - timedelta(days=range_days)
+                            start_time_str = start_date.strftime("%Y-%m-%d")
+                            self.append_log(project_id, f"📅 爬取时间范围: 最近 {range_days} 天 (从 {start_time_str} 开始)")
+                        
+                        config = CrawlerStartRequest(
+                            platform=mc_platform,
+                            login_type="cookie",
+                            crawler_type=project.crawler_type or "search",
+                            save_option="sqlite",
+                            keywords=keywords_str,
+                            cookies=cookies,
+                            headless=True,
+                            crawl_limit_count=project.crawl_limit or 20,
+                            start_time=start_time_str,  # Pass dynamic start time
+                            enable_comments=project.enable_comments or True,
+                            project_id=project.id,  # 关联项目 ID
+                            # Pass interaction filters from project settings
+                            min_likes=getattr(project, 'min_likes', 0) or 0,
+                            min_comments=getattr(project, 'min_comments', 0) or 0,
+                            min_shares=getattr(project, 'min_shares', 0) or 0,
+                            min_favorites=getattr(project, 'min_favorites', 0) or 0,
+                            deduplicate_authors=getattr(project, 'deduplicate_authors', False) or False,
+                        )
+                        
+                        # Log all config values before execution
+                        self.append_log(project_id, f"📋 爬虫配置参数:")
+                        self.append_log(project_id, f"   - 平台: {mc_platform}, 类型: {config.crawler_type}")
+                        self.append_log(project_id, f"   - 抓取数量: {config.crawl_limit_count}")
+                        self.append_log(project_id, f"   - 开始时间: {config.start_time or '不限'}")
+                        self.append_log(project_id, f"   - 最小点赞: {config.min_likes}, 最小评论: {config.min_comments}")
+                        self.append_log(project_id, f"   - 最小分享: {config.min_shares}, 最小收藏: {config.min_favorites}")
+                        self.append_log(project_id, f"   - 博主去重: {'是' if config.deduplicate_authors else '否'}")
+                        
+                        success = await crawler_manager.start(config)
+                        if success:
+                            self.append_log(project_id, "爬虫已提交，等待执行...")
+                            
+                            # 同步爬虫日志的游标
+                            last_log_count = 0
+                            
+                            # 等待完成，并同步日志
+                            while crawler_manager.status == "running":
+                                # 获取新产生的爬虫日志
+                                current_logs = crawler_manager.logs
+                                if len(current_logs) > last_log_count:
+                                    new_logs = current_logs[last_log_count:]
+                                    for log_entry in new_logs:
+                                        # 过滤一些无用日志
+                                        if "Starting crawler" in log_entry.message: continue
+                                        
+                                        # 格式化并添加到项目日志
+                                        self.append_log(project_id, f"🕷️ {log_entry.message}")
+                                    
+                                    last_log_count = len(current_logs)
+                                
+                                await asyncio.sleep(1)
+                                
+                            # 再次检查是否有遗漏的日志（任务刚结束时）
                             current_logs = crawler_manager.logs
                             if len(current_logs) > last_log_count:
                                 new_logs = current_logs[last_log_count:]
                                 for log_entry in new_logs:
-                                    # 过滤一些无用日志
-                                    if "Starting crawler" in log_entry.message: continue
-                                    
-                                    # 格式化并添加到项目日志
                                     self.append_log(project_id, f"🕷️ {log_entry.message}")
+                            
+                            # 检查最终状态
+                            final_status = crawler_manager.status
+                            if final_status == "completed":
+                                self.append_log(project_id, f"✅ 平台 {display_platform} 爬取任务成功完成")
+                                total_crawled += 1
+                                success_this_platform = True
                                 
-                                last_log_count = len(current_logs)
-                            
-                            await asyncio.sleep(1)
-                            
-                        # 再次检查是否有遗漏的日志（任务刚结束时）
-                        current_logs = crawler_manager.logs
-                        if len(current_logs) > last_log_count:
-                            new_logs = current_logs[last_log_count:]
-                            for log_entry in new_logs:
-                                self.append_log(project_id, f"🕷️ {log_entry.message}")
+                                # 更新账号成功次数
+                                await pool.record_account_usage(account.id, success=True)
+                                break  # 成功，跳出重试循环
+                            else:
+                                # 爬虫失败
+                                self.append_log(project_id, f"⚠️ 爬虫状态异常: {final_status}，尝试切换账号...")
+                                
+                                # 扫描日志查找特定错误 (Auto-invalidate account on permission error)
+                                has_permission_error = False
+                                self.append_log(project_id, f"🔍 正在检查 {len(crawler_manager.logs)} 条日志以查找权限错误...")
+                                for entry in crawler_manager.logs:
+                                    if "-104" in entry.message or "没有权限" in entry.message:
+                                        self.append_log(project_id, f"🔍 发现错误日志: {entry.message[:50]}...")
+                                        has_permission_error = True
+                                        break
+                                
+                                if has_permission_error:
+                                    self.append_log(project_id, f"🚫 检测到账号 {account.account_name} 权限受限，标记为无效")
+                                    await pool.update_account(account.id, {"status": AccountStatus.BANNED})
+                                else:
+                                    self.append_log(project_id, "🔍 未发现权限相关错误")
+                                
+                                await pool.record_account_usage(account.id, success=False)
+                                # 继续下一次重试
+                                
+                    except Exception as e:
+                        error_msg = str(e)
+                        self.append_log(project_id, f"❌ 爬虫执行异常: {error_msg}")
                         
-                        self.append_log(project_id, f"✅ 平台 {display_platform} 爬取任务完成")
-                        total_crawled += 1
+                        # 标记账号失败
+                        try:
+                            await pool.record_account_usage(account.id, success=False)
+                        except:
+                            pass
                         
-                except Exception as e:
-                    self.append_log(project_id, f"❌ 爬虫执行异常: {e}")
+                        # 判断是否是账号相关的错误，决定是否重试
+                        account_errors = ["没有权限", "Cookie", "403", "401", "406", "登录"]
+                        is_account_error = any(err in error_msg for err in account_errors)
+                        
+                        if is_account_error and retry_num < MAX_ACCOUNT_RETRIES - 1:
+                            self.append_log(project_id, "🔄 检测到账号问题，尝试切换账号...")
+                            continue
+                        else:
+                            break
+                
+                if not success_this_platform:
+                    self.append_log(project_id, f"❌ 平台 {display_platform} 所有账号均失败")
+
             
             # 更新统计
             self.append_log(project_id, f"📊 任务统计: 新增抓取 {total_crawled} 次")
@@ -717,6 +822,7 @@ class ProjectService:
                 "author_avatar": c.author_avatar,
                 "cover_url": c.cover_url,
                 "publish_time": c.publish_time.isoformat() if c.publish_time else None,
+                "crawl_time": c.crawl_time.isoformat() if c.crawl_time else None,  # Fix: add missing crawl_time
                 "sentiment": c.sentiment,
                 "view_count": c.view_count,
                 "like_count": c.like_count,
@@ -740,16 +846,29 @@ class ProjectService:
             "name": project.name,
             "description": project.description,
             "keywords": project.keywords or [],
+            "sentiment_keywords": project.sentiment_keywords or [],
             "platforms": project.platforms or [],
             "crawler_type": project.crawler_type,
             "crawl_limit": project.crawl_limit,
+            "crawl_date_range": project.crawl_date_range,
             "enable_comments": project.enable_comments,
+            "deduplicate_authors": project.deduplicate_authors,
             "schedule_type": project.schedule_type,
             "schedule_value": project.schedule_value,
             "is_active": project.is_active,
             "alert_on_negative": project.alert_on_negative,
             "alert_on_hotspot": project.alert_on_hotspot,
             "alert_channels": project.alert_channels or [],
+            
+            # Advanced Filters
+            "min_likes": project.min_likes or 0,
+            "max_likes": project.max_likes or 0,
+            "min_comments": project.min_comments or 0,
+            "max_comments": project.max_comments or 0,
+            "min_shares": project.min_shares or 0,
+            "max_shares": project.max_shares or 0,
+            "min_favorites": project.min_favorites or 0,
+            "max_favorites": project.max_favorites or 0,
             "last_run_at": project.last_run_at.isoformat() if project.last_run_at else None,
             "next_run_at": project.next_run_at.isoformat() if project.next_run_at else None,
             "run_count": project.run_count or 0,

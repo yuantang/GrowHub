@@ -42,39 +42,67 @@ class AccountVerifier:
 
     @classmethod
     async def _verify_xhs(cls, cookies: str) -> Dict[str, Any]:
-        """验证小红书 Cookie"""
-        url = "https://edith.xiaohongshu.com/api/sns/web/v1/user/selfinfo"
-        headers = cls.DEFAULT_HEADERS.copy()
-        headers.update({
-            "Cookie": cookies,
-            "Origin": "https://www.xiaohongshu.com",
-            "Referer": "https://www.xiaohongshu.com/"
-        })
+        """验证小红书 Cookie (使用 Cookie 结构检测)
         
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(url, headers=headers)
-            
-            if response.status_code == 401:
-                return {"valid": False, "message": "Cookie 已失效 (401)"}
-                
-            if response.status_code != 200:
-                # 可能是风控或其他错误，暂时视为失效或者未知
-                return {"valid": False, "message": f"请求失败: {response.status_code}"}
-                
-            try:
-                data = response.json()
-                if data.get("success"):
-                    info = data.get("data", {})
-                    return {
-                        "valid": True, 
-                        "message": "验证成功",
-                        "nickname": info.get("nickname"),
-                        "user_id": info.get("user_id")
-                    }
-                else:
-                    return {"valid": False, "message": data.get("msg", "未知错误")}
-            except:
-                return {"valid": False, "message": "响应解析失败"}
+        原因：小红书页面的 "loggedIn":false 是 HTML 模板硬编码，
+        需要 JS 执行才会更新。HTTP 请求无法执行 JS，因此改用 Cookie 结构检测。
+        """
+        if not cookies:
+            return {"valid": False, "expired": True, "message": "Cookie 为空"}
+        
+        # 解析 Cookie 字符串
+        cookie_dict = {}
+        try:
+            for item in cookies.split(";"):
+                item = item.strip()
+                if "=" in item:
+                    key, value = item.split("=", 1)
+                    cookie_dict[key.strip()] = value.strip()
+        except Exception as e:
+            return {"valid": False, "message": f"Cookie 格式解析失败: {e}"}
+        
+        # 小红书必需的关键 Cookie
+        required_cookies = {
+            "a1": {"min_len": 20, "desc": "设备标识"},
+            "web_session": {"min_len": 20, "desc": "会话凭证"},
+            "webId": {"min_len": 20, "desc": "用户标识"},
+        }
+        
+        missing = []
+        invalid = []
+        
+        for key, config in required_cookies.items():
+            if key not in cookie_dict:
+                missing.append(key)
+            elif len(cookie_dict[key]) < config["min_len"]:
+                invalid.append(f"{key}(长度不足)")
+        
+        if missing:
+            return {
+                "valid": False, 
+                "expired": True,
+                "message": f"缺少关键 Cookie: {', '.join(missing)}"
+            }
+        
+        if invalid:
+            return {
+                "valid": False, 
+                "expired": True,
+                "message": f"Cookie 格式无效: {', '.join(invalid)}"
+            }
+        
+        # 可选检查：检测额外的有用 Cookie
+        bonus_cookies = ["gid", "xsecappid", "acw_tc"]
+        found_bonus = [c for c in bonus_cookies if c in cookie_dict]
+        
+        return {
+            "valid": True, 
+            "message": f"Cookie 结构有效 (含 {len(found_bonus)} 个增强 Cookie)"
+        }
+
+
+
+
 
     @classmethod
     async def _verify_douyin(cls, cookies: str) -> Dict[str, Any]:

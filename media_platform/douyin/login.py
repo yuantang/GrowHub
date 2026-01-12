@@ -56,36 +56,82 @@ class DouYinLogin(AbstractLogin):
             The verification accuracy of the slider verification is not very good... If there are no special requirements, it is recommended not to use Douyin login, or use cookie login
         """
 
-        # popup login dialog
-        await self.popup_login_dialog()
-
-        # select login type
-        if config.LOGIN_TYPE == "qrcode":
-            await self.login_by_qrcode()
-        elif config.LOGIN_TYPE == "phone":
-            await self.login_by_mobile()
-        elif config.LOGIN_TYPE == "cookie":
+        # For cookie login, inject cookies first then handle verification
+        if config.LOGIN_TYPE == "cookie":
+            utils.logger.info("[DouYinLogin.begin] Using cookie login mode...")
             await self.login_by_cookies()
+            await self.context_page.goto("https://www.douyin.com")
+            await asyncio.sleep(3)
         else:
-            raise ValueError("[DouYinLogin.begin] Invalid Login Type Currently only supported qrcode or phone or cookie ...")
+            # For qrcode/phone login, use the original flow with popup
+            await self.popup_login_dialog()
 
-        # If the page redirects to the slider verification page, need to slide again
-        await asyncio.sleep(6)
+            if config.LOGIN_TYPE == "qrcode":
+                await self.login_by_qrcode()
+            elif config.LOGIN_TYPE == "phone":
+                await self.login_by_mobile()
+            else:
+                raise ValueError("[DouYinLogin.begin] Invalid Login Type Currently only supported qrcode or phone or cookie ...")
+
+        # CRITICAL: Handle verification page for ALL login types (including cookie!)
+        utils.logger.info("[DouYinLogin.begin] Checking for verification page...")
+        await asyncio.sleep(3)
         current_page_title = await self.context_page.title()
+        utils.logger.info(f"[DouYinLogin.begin] Current page title: {current_page_title}")
+        
+        # Handle verification page
         if "验证码中间页" in current_page_title:
-            await self.check_page_display_slider(move_step=3, slider_level="hard")
+            utils.logger.warning("[DouYinLogin.begin] Verification page detected!")
+            
+            # Take screenshot for debugging
+            try:
+                await self.context_page.screenshot(path="douyin_verification_page.png")
+                utils.logger.info("[DouYinLogin.begin] Screenshot saved as douyin_verification_page.png")
+            except:
+                pass
+            
+            # CRITICAL: Detect captcha type FIRST
+            captcha_type = await self._detect_captcha_type()
+            utils.logger.info(f"[DouYinLogin.begin] Detected captcha type: {captcha_type}")
+            
+            if captcha_type == "slider":
+                # Try slider verification (max 3 attempts, not 5)
+                for attempt in range(3):
+                    utils.logger.info(f"[DouYinLogin.begin] Slider verification attempt {attempt + 1}/3")
+                    await self.check_page_display_slider(move_step=3, slider_level="hard")
+                    await asyncio.sleep(3)
+                    
+                    current_page_title = await self.context_page.title()
+                    if "验证码中间页" not in current_page_title:
+                        utils.logger.info("[DouYinLogin.begin] Slider verification passed!")
+                        break
+                else:
+                    # Slider failed, fall through to QR login
+                    utils.logger.warning("[DouYinLogin.begin] Slider verification failed, switching to QR login...")
+                    await self._trigger_qr_login()
+            else:
+                # Click captcha or unknown - directly use QR login
+                utils.logger.warning(f"[DouYinLogin.begin] {captcha_type} captcha detected, cannot auto-solve. Using QR login...")
+                await self._trigger_qr_login()
 
-        # check login state
-        utils.logger.info(f"[DouYinLogin.begin] login finished then check login state ...")
-        try:
-            await self.check_login_state()
-        except RetryError:
-            utils.logger.info("[DouYinLogin.begin] login failed please confirm ...")
-            sys.exit()
+        # Check login state
+        if config.LOGIN_TYPE == "cookie":
+            is_logged_in = await self._check_cookie_login_success()
+            if is_logged_in:
+                utils.logger.info("[DouYinLogin.begin] Cookie login successful!")
+            else:
+                utils.logger.warning("[DouYinLogin.begin] Cookie login state unclear, proceeding anyway...")
+        else:
+            utils.logger.info("[DouYinLogin.begin] Checking login state...")
+            try:
+                await self.check_login_state()
+            except RetryError:
+                utils.logger.info("[DouYinLogin.begin] login failed please confirm ...")
+                sys.exit()
 
         # wait for redirect
         wait_redirect_seconds = 5
-        utils.logger.info(f"[DouYinLogin.begin] Login successful then wait for {wait_redirect_seconds} seconds redirect ...")
+        utils.logger.info(f"[DouYinLogin.begin] Login finished, waiting {wait_redirect_seconds} seconds...")
         await asyncio.sleep(wait_redirect_seconds)
 
     @retry(stop=stop_after_attempt(600), wait=wait_fixed(1), retry=retry_if_result(lambda value: value is False))
@@ -108,18 +154,206 @@ class DouYinLogin(AbstractLogin):
 
         return False
 
+    async def _check_cookie_login_success(self) -> bool:
+        """
+        Check if cookie login was successful. Uses more lenient criteria than check_login_state.
+        Only tries a few times instead of 600.
+        """
+        for attempt in range(5):
+            try:
+                # Check localStorage
+                local_storage = await self.context_page.evaluate("() => window.localStorage")
+                if local_storage.get("HasUserLogin", "") == "1":
+                    utils.logger.info(f"[DouYinLogin._check_cookie_login_success] Found HasUserLogin=1 in localStorage")
+                    return True
+                
+                # Check cookies
+                current_cookies = await self.browser_context.cookies()
+                _, cookie_dict = utils.convert_cookies(current_cookies)
+                
+                if cookie_dict.get("LOGIN_STATUS") == "1":
+                    utils.logger.info(f"[DouYinLogin._check_cookie_login_success] Found LOGIN_STATUS=1 in cookies")
+                    return True
+                
+                # Also check for core auth cookies as a fallback
+                core_auth_cookies = ["passport_csrf_token", "passport_auth_mix_state", "__ac_signature"]
+                has_auth = any(cookie_dict.get(c) for c in core_auth_cookies)
+                if has_auth:
+                    utils.logger.info(f"[DouYinLogin._check_cookie_login_success] Found core auth cookies, assuming logged in")
+                    return True
+                    
+            except Exception as e:
+                utils.logger.warning(f"[DouYinLogin._check_cookie_login_success] Check failed (attempt {attempt+1}): {e}")
+            
+            await asyncio.sleep(1)
+        
+        return False
+    
+    async def _detect_captcha_type(self) -> str:
+        """
+        Detect the type of captcha on the verification page.
+        Returns: 'slider', 'click', or 'unknown'
+        """
+        try:
+            page_content = await self.context_page.content()
+            
+            # Slider verification indicators
+            slider_indicators = [
+                "captcha-verify-image",
+                "secsdk_captcha_drag",
+                "拖动滑块"
+            ]
+            for indicator in slider_indicators:
+                if indicator in page_content:
+                    return "slider"
+            
+            # Click verification indicators
+            click_indicators = [
+                "请完成下列验证后继续",
+                "按顺序点击",
+                "请点击图中",
+                "请依次点击"
+            ]
+            for indicator in click_indicators:
+                if indicator in page_content:
+                    return "click"
+            
+            return "unknown"
+        except Exception as e:
+            utils.logger.error(f"[DouYinLogin._detect_captcha_type] Error: {e}")
+            return "unknown"
+    
+    async def _trigger_qr_login(self):
+        """
+        Trigger QR code login flow. Navigates to main page and shows QR code.
+        """
+        utils.logger.info("[DouYinLogin._trigger_qr_login] Triggering QR code login...")
+        
+        try:
+            # Clear cookies to force logout and ensure login dialog can appear
+            await self.browser_context.clear_cookies()
+            utils.logger.info("[DouYinLogin._trigger_qr_login] Cleared cookies to force fresh login")
+            
+            # Navigate to main page
+            await self.context_page.goto("https://www.douyin.com")
+            await asyncio.sleep(3)
+            
+            # Check if we are stuck on verification page
+            title = await self.context_page.title()
+            if "验证" in title:
+                utils.logger.error("[DouYinLogin._trigger_qr_login] Stuck on verification page even after clearing cookies. IP might be blocked.")
+                # Try to force reload or wait
+                await asyncio.sleep(2)
+            
+            # Try to popup login dialog
+            await self.popup_login_dialog()
+            
+            # Show QR code
+            await self.login_by_qrcode()
+            
+            # Wait for user to scan QR code (up to 60 seconds)
+            utils.logger.info("[DouYinLogin._trigger_qr_login] ⚠️ Please scan QR code to login (60 seconds timeout)...")
+            utils.logger.info("[DouYinLogin._trigger_qr_login] QR码已显示，请使用抖音APP扫描二维码登录！")
+            
+            for i in range(60):
+                await asyncio.sleep(1)
+                try:
+                    current_title = await self.context_page.title()
+                    if "验证" not in current_title and "登录" not in current_title and "抖音" in current_title:
+                        utils.logger.info(f"[DouYinLogin._trigger_qr_login] QR login successful! Page: {current_title}")
+                        return True
+                    
+                    # Check login state via cookies
+                    is_logged = await self._check_cookie_login_success()
+                    if is_logged:
+                        utils.logger.info("[DouYinLogin._trigger_qr_login] QR login successful!")
+                        return True
+                except:
+                    pass
+                
+                if i % 10 == 0 and i > 0:
+                    utils.logger.info(f"[DouYinLogin._trigger_qr_login] Waiting for QR scan... {60-i}s remaining")
+            
+            utils.logger.error("[DouYinLogin._trigger_qr_login] QR login timed out")
+            return False
+            
+        except Exception as e:
+            utils.logger.error(f"[DouYinLogin._trigger_qr_login] QR login failed: {e}")
+            return False
+
     async def popup_login_dialog(self):
         """If the login dialog box does not pop up automatically, we will manually click the login button"""
         dialog_selector = "xpath=//div[@id='login-panel-new']"
-        try:
-            # check dialog box is auto popup and wait for 10 seconds
-            await self.context_page.wait_for_selector(dialog_selector, timeout=1000 * 10)
-        except Exception as e:
-            utils.logger.error(f"[DouYinLogin.popup_login_dialog] login dialog box does not pop up automatically, error: {e}")
-            utils.logger.info("[DouYinLogin.popup_login_dialog] login dialog box does not pop up automatically, we will manually click the login button")
-            login_button_ele = self.context_page.locator("xpath=//p[text() = '登录']")
-            await login_button_ele.click()
-            await asyncio.sleep(0.5)
+        
+        # Function to check if dialog is open
+        async def is_dialog_open():
+            try:
+                dialog = self.context_page.locator(dialog_selector)
+                return await dialog.count() > 0 and await dialog.is_visible()
+            except:
+                return False
+
+        # If already open, return
+        if await is_dialog_open():
+            return
+
+        utils.logger.info("[DouYinLogin.popup_login_dialog] Dialog not open, trying to open it...")
+        
+        # Try to click login button - Attempt 1
+        await self._click_login_button()
+        await asyncio.sleep(2)
+        if await is_dialog_open():
+            return
+
+        # Attempt 2: Reload page and try again
+        utils.logger.info("[DouYinLogin.popup_login_dialog] Click failed, reloading page...")
+        await self.context_page.reload()
+        await asyncio.sleep(5)
+        
+        # Check title again
+        current_title = await self.context_page.title()
+        if "验证" in current_title:
+             utils.logger.error(f"[DouYinLogin.popup_login_dialog] Reloaded but still on verification page: {current_title}")
+             return
+
+        # Clear cookies again just in case
+        await self.browser_context.clear_cookies()
+        
+        await self._click_login_button()
+        await asyncio.sleep(2)
+        if await is_dialog_open():
+            return
+            
+        utils.logger.error(f"[DouYinLogin.popup_login_dialog] Failed to open login dialog after retries. Current Title: {current_title}")
+        
+    async def _click_login_button(self):
+        login_selectors = [
+                 "xpath=//p[text() = '登录']",
+                 "header a[href*='login']",
+                 "button:has-text('登录')",
+                 ".login-button",
+                 "#header-login-button",
+                 "div:has-text('登录')",
+                 "li:has-text('登录')",
+                 "span:has-text('登录')"
+        ]
+            
+        for selector in login_selectors:
+            try:
+                # Use stricter matching for generic tags to avoid false positives (like '登录成功' text)
+                if "text(" in selector and ("div" in selector or "span" in selector):
+                     btn = self.context_page.locator(selector).first
+                     # Ensure it's clickable or looks like a button
+                else:
+                     btn = self.context_page.locator(selector).first
+                
+                if await btn.count() > 0 and await btn.is_visible():
+                    utils.logger.info(f"[DouYinLogin] Clicking login button: {selector}")
+                    await btn.click(force=True)
+                    return True
+            except:
+                continue
+        return False
 
     async def login_by_qrcode(self):
         utils.logger.info("[DouYinLogin.login_by_qrcode] Begin login douyin by qrcode...")

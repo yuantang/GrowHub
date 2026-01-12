@@ -112,7 +112,7 @@ class CDPBrowserManager:
             self.debug_port = self.launcher.find_available_port(config.CDP_DEBUG_PORT)
 
             # 3. Launch browser
-            await self._launch_browser(browser_path, headless)
+            await self._launch_browser(browser_path, headless, user_agent)
 
             # 4. Register cleanup handlers (ensure cleanup on abnormal exit)
             self._register_cleanup_handlers()
@@ -186,7 +186,7 @@ class CDPBrowserManager:
             utils.logger.warning(f"[CDPBrowserManager] CDP connection test failed: {e}")
             return False
 
-    async def _launch_browser(self, browser_path: str, headless: bool):
+    async def _launch_browser(self, browser_path: str, headless: bool, user_agent: Optional[str] = None):
         """
         Launch browser process
         """
@@ -207,6 +207,7 @@ class CDPBrowserManager:
             debug_port=self.debug_port,
             headless=headless,
             user_data_dir=user_data_dir,
+            user_agent=user_agent,
         )
 
         # Wait for browser to be ready

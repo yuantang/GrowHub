@@ -253,6 +253,9 @@ class CrawlerManager:
             
         if config.project_id > 0:
             cmd.extend(["--project_id", str(config.project_id)])
+        
+        if config.deduplicate_authors:
+            cmd.extend(["--deduplicate_authors", "true"])
 
         return cmd
 
@@ -290,10 +293,13 @@ class CrawlerManager:
                 exit_code = self.process.returncode if self.process else -1
                 if exit_code == 0:
                     entry = self._create_log_entry("Crawler completed successfully", "success")
+                    self.status = "completed"
                 else:
                     entry = self._create_log_entry(f"Crawler exited with code: {exit_code}", "warning")
+                    self.status = "failed"
                 await self._push_log(entry)
-                self.status = "idle"
+                # self.status = "idle"  <-- Don't reset to idle immediately, let project service read the final status
+
 
         except asyncio.CancelledError:
             pass

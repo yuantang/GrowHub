@@ -117,7 +117,7 @@ class BrowserLauncher:
         raise RuntimeError(f"Cannot find available port, tried {start_port} to {port-1}")
 
     def launch_browser(self, browser_path: str, debug_port: int, headless: bool = False,
-                      user_data_dir: Optional[str] = None) -> subprocess.Popen:
+                      user_data_dir: Optional[str] = None, user_agent: Optional[str] = None) -> subprocess.Popen:
         """
         Launch browser process
         """
@@ -159,6 +159,10 @@ class BrowserLauncher:
         # User data directory
         if user_data_dir:
             args.append(f"--user-data-dir={user_data_dir}")
+
+        # User Agent
+        if user_agent:
+            args.append(f"--user-agent={user_agent}")
 
         utils.logger.info(f"[BrowserLauncher] Launching browser: {browser_path}")
         utils.logger.info(f"[BrowserLauncher] Debug port: {debug_port}")

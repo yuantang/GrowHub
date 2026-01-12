@@ -1,4 +1,8 @@
 
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import asyncio
 from sqlalchemy import text
 from database.db_session import get_session

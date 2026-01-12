@@ -41,6 +41,7 @@ from .routers.growhub_scheduler import router as growhub_scheduler_router
 from .routers.growhub_scheduler import router as growhub_scheduler_router
 from .routers.growhub_account_pool import router as growhub_account_pool_router
 from .routers.growhub_system import router as growhub_system_router
+from .routers.growhub_projects import router as growhub_projects_router
 
 app = FastAPI(
     title="GrowHub API",
@@ -85,10 +86,10 @@ app.include_router(growhub_ai_creator_router, prefix="/api")
 app.include_router(growhub_scheduler_router, prefix="/api")
 app.include_router(growhub_account_pool_router, prefix="/api")
 app.include_router(growhub_system_router, prefix="/api")
+app.include_router(growhub_projects_router, prefix="/api")
 
 # Phase 2: 监控项目模块
-from .routers.growhub_projects import router as growhub_projects_router
-app.include_router(growhub_projects_router, prefix="/api")
+# (Moved to top imports)
 
 
 
@@ -113,6 +114,15 @@ async def startup_event():
     # Initialize Account Pool (Load from DB)
     from api.services.account_pool import get_account_pool
     await get_account_pool().initialize()
+
+    # Startup sync: Register active projects with scheduler
+    from api.services.project import get_project_service
+    try:
+        project_service = get_project_service()
+        await project_service.sync_active_projects_to_scheduler()
+        print("[Startup] Active projects synced to scheduler")
+    except Exception as e:
+        print(f"[Startup] Failed to sync projects to scheduler: {e}")
 
 
 @app.get("/")

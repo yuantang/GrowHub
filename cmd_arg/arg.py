@@ -314,6 +314,14 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
                 rich_help_panel="Project Configuration",
             ),
         ] = config.PROJECT_ID,
+        deduplicate_authors: Annotated[
+            str,
+            typer.Option(
+                "--deduplicate_authors",
+                help="Deduplicate by author (true/false)",
+                rich_help_panel="Filter Configuration",
+            ),
+        ] = "false",
     ) -> SimpleNamespace:
         """MediaCrawler 命令行入口"""
 
@@ -391,6 +399,7 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
             start_time=start_time,
             end_time=end_time,
             project_id=project_id,
+            deduplicate_authors=deduplicate_authors,
         )
 
     command = typer.main.get_command(app)

@@ -85,6 +85,7 @@ class CrawlerStartRequest(BaseModel):
     
     # Project association
     project_id: int = 0  # 关联的项目 ID
+    deduplicate_authors: bool = False  # 博主去重
 
 
 class CrawlerStatusResponse(BaseModel):

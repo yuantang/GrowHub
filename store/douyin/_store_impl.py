@@ -141,10 +141,13 @@ class DouyinDbStoreImplement(AbstractStore):
                 comment_item["add_ts"] = utils.get_current_timestamp()
                 new_comment = DouyinAwemeComment(**comment_item)
                 session.add(new_comment)
+                utils.logger.info(f"[DouyinDbStore.store_comment] Added new comment {comment_id} to session")
             else:
                 for key, value in comment_item.items():
                     setattr(comment_detail, key, value)
+                utils.logger.info(f"[DouyinDbStore.store_comment] Updated existing comment {comment_id} in session")
             await session.commit()
+            utils.logger.info(f"[DouyinDbStore.store_comment] Committed comment {comment_id} to DB")
 
     async def store_creator(self, creator: Dict):
         """

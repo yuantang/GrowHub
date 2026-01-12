@@ -80,6 +80,11 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
             Dict: Signed request header parameters
         """
         a1_value = self.cookie_dict.get("a1", "")
+        
+        # Debug logging for signature parameters
+        utils.logger.info(f"[XiaoHongShuClient._pre_headers] Signing with a1: {a1_value[:10]}..." if a1_value else "[XiaoHongShuClient._pre_headers] Signing with EMPTY a1!")
+        cookie_header = self.headers.get("Cookie", "")
+        utils.logger.info(f"[XiaoHongShuClient._pre_headers] Current Cookie Header: {cookie_header[:50]}...")
 
         # Determine request data, method and URI
         if params is not None:
@@ -145,7 +150,11 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
         elif data["code"] == self.IP_ERROR_CODE:
             raise IPBlockError(self.IP_ERROR_STR)
         else:
+            # Enhanced error logging for debugging
+            err_code = data.get("code", "unknown")
             err_msg = data.get("msg", None) or f"{response.text}"
+            utils.logger.error(f"[XiaoHongShuClient.request] API Error - Code: {err_code}, Msg: {err_msg}")
+            utils.logger.error(f"[XiaoHongShuClient.request] Full response: {response.text[:500]}")
             raise DataFetchError(err_msg)
 
     async def get(self, uri: str, params: Optional[Dict] = None) -> Dict:

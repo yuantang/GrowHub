@@ -16,6 +16,8 @@ try:
 except ImportError:
     PLAYWRIGHT_AVAILABLE = False
 
+from tools import utils
+
 
 class QRLoginStatus(str, Enum):
     """二维码登录状态"""
@@ -140,18 +142,19 @@ class QRLoginService:
         config = self.platform_configs[platform]
         
         try:
+            import config as app_config
             # 创建新的浏览器上下文
             context = await self.browser.new_context(
                 viewport={"width": 1280, "height": 800},
-                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                user_agent=app_config.DEFAULT_USER_AGENT
             )
             page = await context.new_page()
             
             session.browser_context = context
             session.page = page
             
-            # 打开登录页面
-            await page.goto(config["login_url"], wait_until="networkidle", timeout=30000)
+            # 打开登录页面（使用 domcontentloaded 更快，增加超时时间）
+            await page.goto(config["login_url"], wait_until="domcontentloaded", timeout=60000)
             
             # 等待并触发登录弹窗（某些平台需要点击登录按钮）
             await self._trigger_login_dialog(page, platform)
@@ -192,6 +195,7 @@ class QRLoginService:
     async def _trigger_login_dialog(self, page: Page, platform: str):
         """触发登录弹窗"""
         try:
+            utils.logger.info(f"[QRLogin] Triggering login dialog for {platform}...")
             if platform == "xhs":
                 # 小红书：点击右上角登录按钮
                 login_btn = await page.query_selector("text=登录")
@@ -199,12 +203,46 @@ class QRLoginService:
                     await login_btn.click()
                     await asyncio.sleep(1)
             elif platform == "douyin":
-                # 抖音：点击登录
-                login_btn = await page.query_selector(".login-btn, text=登录")
-                if login_btn:
-                    await login_btn.click()
-                    await asyncio.sleep(1)
-        except Exception:
+                # 抖音：优先使用精确选择器，减少超时等待
+                login_selectors = [
+                    "[data-e2e='top-login']",  # Most stable (Attribute)
+                    "#header-login-btn",       # ID
+                    ".login-button",           # Class
+                    ".login-btn",              # Class
+                    "button:has-text('登录')", # Text (slower)
+                ]
+                
+                # Check if already open (Fast check)
+                try:
+                    dialog = await page.query_selector(".web-login-scan-code__content img, .qrcode-image img")
+                    if dialog and await dialog.is_visible():
+                         utils.logger.info("[QRLogin] Login dialog already open (fast check)")
+                         return
+                except:
+                    pass
+
+                for selector in login_selectors:
+                    try:
+                        # Reduce timeout to 500ms for fast skipping
+                        login_btn = await page.wait_for_selector(selector, timeout=500, state="visible")
+                        if login_btn:
+                            utils.logger.info(f"[QRLogin] Clicking login button: {selector}")
+                            await login_btn.click()
+                            
+                            # Wait only 1.5s for dialog to appear
+                            start_time = asyncio.get_event_loop().time()
+                            while asyncio.get_event_loop().time() - start_time < 1.5:
+                                if await page.query_selector(".web-login-scan-code__content, .qrcode-image"):
+                                    utils.logger.info("[QRLogin] Login dialog opened successfully")
+                                    return
+                                await asyncio.sleep(0.2)
+                    except Exception:
+                        continue
+                        
+                utils.logger.warning("[QRLogin] Failed to click login button via selectors")
+                
+        except Exception as e:
+            utils.logger.error(f"[QRLogin] Error triggering dialog: {e}")
             pass  # 忽略错误，可能已经显示登录框
     
     async def _capture_qr_code(self, page: Page, selector: str) -> Optional[str]:
@@ -233,38 +271,94 @@ class QRLoginService:
         poll_interval = 2  # 每2秒检查一次
         max_polls = 90  # 最多检查90次（3分钟）
         
-        for _ in range(max_polls):
+        utils.logger.info(f"[QRLogin] Starting poll for session {session_id} (platform: {session.platform})")
+        
+        for i in range(max_polls):
             if session.status in [QRLoginStatus.CANCELLED, QRLoginStatus.SUCCESS, QRLoginStatus.ERROR]:
                 break
             
             if session.is_expired():
                 session.status = QRLoginStatus.EXPIRED
+                utils.logger.info(f"[QRLogin] Session {session_id} expired")
                 break
             
             try:
                 if session.page:
-                    # 检查是否已登录
-                    logged_in = await session.page.query_selector(config["login_check_selector"])
-                    if logged_in:
-                        # 获取 Cookie
-                        cookies = await session.browser_context.cookies()
+                    # Method 1: Check Cookies (Primary & Fastest)
+                    cookies = await session.browser_context.cookies()
+                    cookie_dict = {c['name']: c['value'] for c in cookies}
+                    
+                    found_cookies = True
+                    missing_keys = []
+                    
+                    # Log all cookies for debugging
+                    utils.logger.info(f"[QRLogin] Poll {i} Cookies: {list(cookie_dict.keys())}")
+                    
+                    critical_keys = ["sessionid"] 
+                    
+                    for key in critical_keys:
+                        if key not in cookie_dict:
+                            found_cookies = False
+                            missing_keys.append(key)
+                            break
+                    
+                    # Force Reload Mechanism detected by UI Text
+                    # If user confirmed on phone, Douyin UI often says "登录成功" or closes modal but doesn't reload
+                    if not found_cookies:
+                        try:
+                            # Check for common success text indicators
+                            success_indicators = [
+                                "text=登录成功",
+                                "text=扫描成功",
+                                ".login-success",
+                            ]
+                            for indicator in success_indicators:
+                                if await session.page.query_selector(indicator):
+                                    utils.logger.info(f"[QRLogin] Found success indicator '{indicator}', reloading page to refresh cookies...")
+                                    await session.page.reload(wait_until="domcontentloaded")
+                                    await asyncio.sleep(3)
+                                    break
+                        except Exception as e:
+                             utils.logger.warning(f"[QRLogin] Error checking success text: {e}")
+
+                    if found_cookies:
+                        utils.logger.info(f"[QRLogin] Login detected via Cookies! {session_id}")
+                    else:
+                        # Log periodically
+                        if i % 10 == 0:
+                            utils.logger.debug(f"[QRLogin] Poll {i}: Missing critical cookies {missing_keys}")
+
+                    # Method 2: Check Selector (Secondary)
+                    logged_in_el = None
+                    if not found_cookies:
+                        try:
+                            # Use a short timeout to avoid blocking
+                            logged_in_el = await session.page.query_selector(config["login_check_selector"])
+                        except:
+                            pass
+
+                    if found_cookies or logged_in_el:
+                        # Success Logic
                         cookie_str = "; ".join([f"{c['name']}={c['value']}" for c in cookies])
                         
                         session.cookies = cookie_str
                         session.status = QRLoginStatus.SUCCESS
                         
-                        # 尝试获取用户名
+                        # Save screenshot of success state for debugging
                         try:
+                            # Try to get user info for display
                             username_el = await session.page.query_selector(
-                                ".user-name, .nickname, [class*='username'], [class*='nick']"
+                                ".user-name, .nickname, [class*='username'], [class*='nick'], .avatar-name"
                             )
                             if username_el:
                                 session.account_name = await username_el.text_content()
                         except:
                             pass
-                        
+                            
+                        utils.logger.info(f"[QRLogin] Session {session_id} Login SUCCESS. Account: {session.account_name}")
                         break
-            except Exception:
+            except Exception as e:
+                utils.logger.error(f"[QRLogin] Poll check failed: {e}")
                 pass
             
             await asyncio.sleep(poll_interval)

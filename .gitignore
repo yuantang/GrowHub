@@ -180,3 +180,9 @@ debug_tools
 
 database/*.db
 *.png
+
+# Runtime files
+nohup.out
+*.db
+accounts*.json
+*.log

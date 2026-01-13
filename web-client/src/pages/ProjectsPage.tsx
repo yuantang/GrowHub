@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
     FolderOpen, Plus, Play, Pause, Trash2, RefreshCw,
     Clock, Search, AlertTriangle, TrendingUp, Loader2, Zap, Sparkles
@@ -7,7 +8,7 @@ import { Card, CardContent } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { fetchAIKeywords } from '@/api';
 
-const API_BASE = 'http://localhost:8080/api';
+const API_BASE = '/api';
 
 interface Project {
     id: number;
@@ -44,9 +45,14 @@ interface Platform {
 
 const PLATFORM_MAP: Record<string, { label: string; icon: string; color: string }> = {
     xhs: { label: '小红书', icon: '📕', color: 'bg-red-500/10 text-red-500' },
+    dy: { label: '抖音', icon: '🎵', color: 'bg-slate-500/20 text-slate-300' },
     douyin: { label: '抖音', icon: '🎵', color: 'bg-slate-500/20 text-slate-300' },
+    bili: { label: 'B站', icon: '📺', color: 'bg-pink-500/10 text-pink-500' },
     bilibili: { label: 'B站', icon: '📺', color: 'bg-pink-500/10 text-pink-500' },
+    wb: { label: '微博', icon: '📱', color: 'bg-orange-500/10 text-orange-500' },
     weibo: { label: '微博', icon: '📱', color: 'bg-orange-500/10 text-orange-500' },
+    ks: { label: '快手', icon: '📹', color: 'bg-yellow-500/10 text-yellow-500' },
+    kuaishou: { label: '快手', icon: '📹', color: 'bg-yellow-500/10 text-yellow-500' },
     zhihu: { label: '知乎', icon: '❓', color: 'bg-blue-500/10 text-blue-500' },
 };
 
@@ -227,6 +233,7 @@ const AIKeywordSuggest: React.FC<{ onSelect: (keywords: string[]) => void }> = (
 
 
 const ProjectsPage: React.FC = () => {
+    const navigate = useNavigate();
     const [projects, setProjects] = useState<Project[]>([]);
     const [platforms, setPlatforms] = useState<Platform[]>([]);
     const [loading, setLoading] = useState(true);
@@ -561,7 +568,7 @@ const ProjectsPage: React.FC = () => {
                         <Card
                             key={project.id}
                             className="bg-card/50 hover:bg-card/70 transition-colors cursor-pointer"
-                            onClick={() => window.location.href = `/projects/${project.id}`}
+                            onClick={() => navigate(`/projects/${project.id}`)}
                         >
                             <CardContent className="py-5">
                                 <div className="flex items-start justify-between">

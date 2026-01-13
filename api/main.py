@@ -25,10 +25,12 @@ import asyncio
 import os
 import subprocess
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
+import traceback
+from tools import utils
 
 from .routers import crawler_router, data_router, websocket_router, checkpoint_router, accounts_router, ai_router
 from .routers.data import proxy_router
@@ -38,7 +40,7 @@ from .routers.growhub_notifications import router as growhub_notifications_route
 from .routers.growhub_websocket import router as growhub_websocket_router
 from .routers.growhub_ai_creator import router as growhub_ai_creator_router
 from .routers.growhub_scheduler import router as growhub_scheduler_router
-from .routers.growhub_scheduler import router as growhub_scheduler_router
+
 from .routers.growhub_account_pool import router as growhub_account_pool_router
 from .routers.growhub_system import router as growhub_system_router
 from .routers.growhub_projects import router as growhub_projects_router
@@ -76,6 +78,24 @@ app.include_router(checkpoint_router, prefix="/api")
 app.include_router(accounts_router, prefix="/api")
 app.include_router(ai_router, prefix="/api")
 
+# Exception logging middleware
+@app.middleware("http")
+async def log_exceptions_middleware(request: Request, call_next):
+    try:
+        return await call_next(request)
+    except Exception as e:
+        import traceback
+        from tools import utils
+        utils.logger.error(f"Unhandled exception during {request.method} {request.url.path}")
+        utils.logger.error(traceback.format_exc())
+        return JSONResponse(
+            status_code=500,
+            content={
+                "detail": str(e),
+                "traceback": traceback.format_exc().split("\n")
+            }
+        )
+
 # GrowHub routers
 app.include_router(growhub_keywords_router, prefix="/api")
 app.include_router(growhub_content_router, prefix="/api")
@@ -109,9 +129,53 @@ async def startup_event():
                 await session.execute(text("ALTER TABLE growhub_projects ADD COLUMN crawl_date_range INTEGER DEFAULT 7"))
                 await session.commit()
             except Exception as e:
-                print(f"Migration Failed: {e}")
+                print(f"Migration Failed (crawl_date_range): {e}")
 
-    # Initialize Account Pool (Load from DB)
+        try:
+            await session.execute(text("SELECT max_concurrency FROM growhub_projects LIMIT 1"))
+        except Exception:
+            print("Migrating: Adding max_concurrency to growhub_projects")
+            try:
+                await session.execute(text("ALTER TABLE growhub_projects ADD COLUMN max_concurrency INTEGER DEFAULT 3"))
+                await session.commit()
+            except Exception as e:
+                print(f"Migration failed (max_concurrency): {e}")
+
+        # Migration: consecutive_fails for growhub_accounts
+        try:
+            await session.execute(text("SELECT consecutive_fails FROM growhub_accounts LIMIT 1"))
+        except Exception:
+            print("Migrating: Adding consecutive_fails to growhub_accounts")
+            try:
+                await session.execute(text("ALTER TABLE growhub_accounts ADD COLUMN consecutive_fails INTEGER DEFAULT 0"))
+                await session.execute(text("ALTER TABLE growhub_accounts ADD COLUMN last_project_id INTEGER"))
+                await session.commit()
+            except Exception as e:
+                print(f"Migration failed: {e}")
+        
+        try:
+            await session.execute(text("SELECT last_proxy_id FROM growhub_accounts LIMIT 1"))
+        except Exception:
+            print("Migrating: Adding proxy columns to growhub_accounts")
+            try:
+                await session.execute(text("ALTER TABLE growhub_accounts ADD COLUMN last_proxy_id VARCHAR(50)"))
+                await session.execute(text("ALTER TABLE growhub_accounts ADD COLUMN proxy_config JSON"))
+                await session.commit()
+            except Exception as e:
+                print(f"Migration failed: {e}")
+
+        # growhub_checkpoints migrations
+        try:
+            await session.execute(text("SELECT project_id FROM growhub_checkpoints LIMIT 1"))
+        except Exception:
+            print("Migrating: Adding project_id to growhub_checkpoints")
+            try:
+                await session.execute(text("ALTER TABLE growhub_checkpoints ADD COLUMN project_id INTEGER"))
+                await session.commit()
+            except Exception as e:
+                print(f"Migration failed (checkpoints.project_id): {e}")
+                
+    # Initialize Services
     from api.services.account_pool import get_account_pool
     await get_account_pool().initialize()
 
@@ -198,13 +262,13 @@ async def get_platforms():
     """Get list of supported platforms"""
     return {
         "platforms": [
-            {"value": "xhs", "label": "Xiaohongshu", "icon": "book-open"},
-            {"value": "dy", "label": "Douyin", "icon": "music"},
-            {"value": "ks", "label": "Kuaishou", "icon": "video"},
-            {"value": "bili", "label": "Bilibili", "icon": "tv"},
-            {"value": "wb", "label": "Weibo", "icon": "message-circle"},
-            {"value": "tieba", "label": "Baidu Tieba", "icon": "messages-square"},
-            {"value": "zhihu", "label": "Zhihu", "icon": "help-circle"},
+            {"value": "xhs", "label": "小红书", "icon": "book-open"},
+            {"value": "dy", "label": "抖音", "icon": "music"},
+            {"value": "ks", "label": "快手", "icon": "video"},
+            {"value": "bili", "label": "B站", "icon": "tv"},
+            {"value": "wb", "label": "微博", "icon": "message-circle"},
+            {"value": "tieba", "label": "贴吧", "icon": "messages-square"},
+            {"value": "zhihu", "label": "知乎", "icon": "help-circle"},
         ]
     }
 
@@ -248,4 +312,4 @@ if os.path.exists(WEBUI_DIR):
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8080)
+    uvicorn.run(app, host="0.0.0.0", port=8040)

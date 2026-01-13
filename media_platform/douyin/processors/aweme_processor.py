@@ -50,28 +50,27 @@ class AwemeProcessor:
                 
                 aweme_data = await self.dy_client.get_video_by_id(aweme_id)
                 if aweme_data:
-                    # TODO: Use proper Extractor (like in Pro version)
-                    # For now, manual mapping or simple initialization if fields match
-                    # Warning: direct init might fail if fields don't match exactly
-                    # Let's map critical fields manually for safety or use a helper
-                    from media_platform.douyin.help import parse_video_info_from_url
+                    from media_platform.douyin.extractor import DouyinExtractor
+                    extractor = DouyinExtractor()
                     
-                    # Simplistic mapping (Improve this in Processor refactor iteration)
+                    # 使用工业级 Extractor 解析
+                    aweme_info = extractor.extract_aweme_info(aweme_data)
+                    stats = extractor.get_item_statistics(aweme_info)
+                    
                     aweme = DouyinAweme(
-                        aweme_id=aweme_data.get("aweme_id", ""),
-                        desc=aweme_data.get("desc", ""),
-                        create_time=str(aweme_data.get("create_time", "")),
-                        nickname=aweme_data.get("author", {}).get("nickname", ""),
-                        user_id=aweme_data.get("author", {}).get("uid", ""),
-                        sec_uid=aweme_data.get("author", {}).get("sec_uid", ""),
-                        avatar=aweme_data.get("author", {}).get("avatar_thumb", {}).get("url_list", [""])[0],
-                        liked_count=str(aweme_data.get("statistics", {}).get("digg_count", "")),
-                        comment_count=str(aweme_data.get("statistics", {}).get("comment_count", "")),
-                        share_count=str(aweme_data.get("statistics", {}).get("share_count", "")),
-                        collected_count=str(aweme_data.get("statistics", {}).get("collect_count", "")),
-                        aweme_url=f"https://www.douyin.com/video/{aweme_data.get('aweme_id', '')}",
-                        cover_url=aweme_data.get("video", {}).get("cover", {}).get("url_list", [""])[0],
-                        # Add other fields as necessary
+                        aweme_id=aweme_info.get("aweme_id", ""),
+                        desc=aweme_info.get("desc", ""),
+                        create_time=str(aweme_info.get("create_time", "")),
+                        nickname=aweme_info.get("author", {}).get("nickname", ""),
+                        user_id=aweme_info.get("author", {}).get("uid", ""),
+                        sec_uid=aweme_info.get("author", {}).get("sec_uid", ""),
+                        avatar=aweme_info.get("author", {}).get("avatar_thumb", {}).get("url_list", [""])[0],
+                        liked_count=str(stats.get("digg_count", 0)),
+                        comment_count=str(stats.get("comment_count", 0)),
+                        share_count=str(stats.get("share_count", 0)),
+                        collected_count=str(stats.get("collect_count", 0)),
+                        aweme_url=f"https://www.douyin.com/video/{aweme_info.get('aweme_id', '')}",
+                        cover_url=aweme_info.get("video", {}).get("cover", {}).get("url_list", [""])[0],
                     )
                     
                     # GrowHub store expects dict usually, but let's check store/douyin.py
@@ -99,8 +98,37 @@ class AwemeProcessor:
 
             finally:
                 if checkpoint and aweme:
-                    checkpoint.add_processed_note(aweme_id)
+                    # 使用数据库级的细粒度去重（Pro 版特性）
+                    await self.checkpoint_manager.add_processed_note(checkpoint.task_id, aweme_id)
+                    # 传统的 save 仍保留，用于更新主表统计和 basic 进度
                     await self.checkpoint_manager.save(checkpoint)
+
+    async def process_aweme_list(
+        self,
+        aweme_list: List[dict],
+        checkpoint: "CrawlerCheckpoint"
+    ) -> List[str]:
+        """
+        Directly process a list of aweme data dictionaries (no re-fetch)
+        """
+        processed_aweme_ids = []
+        for aweme_data in aweme_list:
+            if not aweme_data:
+                continue
+                
+            aweme_id = aweme_data.get("aweme_id")
+            try:
+                # Direct save
+                await douyin_store.update_douyin_aweme(aweme_data, client=self.dy_client)
+                
+                if checkpoint and aweme_id:
+                    checkpoint.add_processed_note(aweme_id)
+                    processed_aweme_ids.append(aweme_id)
+                    
+            except Exception as ex:
+                utils.logger.error(f"[AwemeProcessor] Save aweme error id={aweme_id}: {ex}")
+                
+        return processed_aweme_ids
 
     async def batch_get_aweme_list_from_ids(
         self, 
@@ -110,11 +138,12 @@ class AwemeProcessor:
         """
         Concurrently obtain the specified aweme list by IDs and save the data
         """
-        task_list, processed_aweme_ids = [], []
+        task_list = []
+        processed_aweme_ids = []
         for aweme_id in aweme_ids:
-            if checkpoint.is_note_processed(aweme_id):
+            if await self.checkpoint_manager.is_note_processed(checkpoint.task_id, aweme_id):
                 utils.logger.info(
-                    f"[AwemeProcessor] Aweme {aweme_id} is already crawled, skip"
+                    f"[AwemeProcessor] Aweme {aweme_id} is already crawled (DB Checked), skip"
                 )
                 processed_aweme_ids.append(aweme_id)
                 continue

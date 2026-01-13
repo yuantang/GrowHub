@@ -51,10 +51,11 @@ class BatchAddRequest(BaseModel):
 async def get_statistics(platform: Optional[AccountPlatform] = None):
     """获取账号统计信息"""
     pool = get_account_pool()
-    return pool.get_statistics(platform)
+    return await pool.get_statistics(platform)
 
 
-@router.get("/")
+@router.get("/", include_in_schema=False)
+@router.get("")
 async def list_accounts(
     platform: Optional[AccountPlatform] = None,
     status: Optional[AccountStatus] = None,
@@ -62,7 +63,7 @@ async def list_accounts(
 ):
     """获取账号列表"""
     pool = get_account_pool()
-    accounts = pool.get_all_accounts(platform)
+    accounts = await pool.get_all_accounts(platform)
     
     if status:
         accounts = [a for a in accounts if a.status == status]
@@ -192,10 +193,10 @@ async def batch_check_health(platform: Optional[AccountPlatform] = None):
 
 
 @router.post("/get-available")
-async def get_available_account(platform: AccountPlatform):
+async def get_available_account(platform: AccountPlatform, project_id: Optional[int] = Query(None)):
     """获取一个可用账号（用于任务执行）"""
     pool = get_account_pool()
-    account = await pool.get_available_account(platform)
+    account = await pool.get_available_account(platform, project_id=project_id)
     
     if not account:
         raise HTTPException(
@@ -211,11 +212,12 @@ async def get_available_account(platform: AccountPlatform):
 async def mark_account_used(
     account_id: str,
     success: bool = Query(..., description="本次使用是否成功"),
-    cooldown_seconds: Optional[int] = Query(None, description="冷却时间(秒)")
+    cooldown_seconds: Optional[int] = Query(None, description="冷却时间(秒)"),
+    project_id: Optional[int] = Query(None, description="项目 ID")
 ):
     """标记账号已使用"""
     pool = get_account_pool()
-    await pool.mark_account_used(account_id, success, cooldown_seconds)
+    await pool.mark_account_used(account_id, success, cooldown_seconds, project_id)
     
     account = pool.get_account(account_id)
     if not account:
@@ -228,7 +230,7 @@ async def mark_account_used(
 async def list_groups():
     """获取所有分组"""
     pool = get_account_pool()
-    accounts = pool.get_all_accounts()
+    accounts = await pool.get_all_accounts()
     
     groups = set()
     for acc in accounts:

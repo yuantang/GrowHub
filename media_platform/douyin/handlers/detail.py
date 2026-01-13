@@ -40,13 +40,15 @@ class DetailHandler:
         # Create/Load Checkpoint
         checkpoint = await self.checkpoint_manager.find_matching_checkpoint(
             platform="douyin",
-            crawler_type="detail"
+            crawler_type="detail",
+            project_id=config.PROJECT_ID if hasattr(config, "PROJECT_ID") else None
         )
         if not checkpoint:
             checkpoint = await self.checkpoint_manager.create_checkpoint(
                 platform="douyin",
                 crawler_type="detail",
-                specified_ids=aweme_ids
+                specified_ids=aweme_ids,
+                project_id=config.PROJECT_ID if hasattr(config, "PROJECT_ID") else None
             )
 
         # Process IDs

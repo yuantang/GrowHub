@@ -245,8 +245,26 @@ class CrawlerManager:
         if config.min_favorites > 0:
             cmd.extend(["--min_favorites", str(config.min_favorites)])
             
+        if config.max_likes > 0:
+            cmd.extend(["--max_likes", str(config.max_likes)])
+        
+        if config.max_shares > 0:
+            cmd.extend(["--max_shares", str(config.max_shares)])
+            
+        if config.max_comments > 0:
+            cmd.extend(["--max_comments", str(config.max_comments)])
+            
+        if config.max_favorites > 0:
+            cmd.extend(["--max_favorites", str(config.max_favorites)])
+            
         if config.start_time:
             cmd.extend(["--start_time", config.start_time])
+
+        if config.project_id > 0:
+            cmd.extend(["--project_id", str(config.project_id)])
+            
+        if config.deduplicate_authors:
+            cmd.extend(["--deduplicate_authors", "true"])
             
         if config.end_time:
             cmd.extend(["--end_time", config.end_time])
@@ -257,7 +275,14 @@ class CrawlerManager:
         if config.deduplicate_authors:
             cmd.extend(["--deduplicate_authors", "true"])
 
+        if config.concurrency_num > 0:
+            cmd.extend(["--concurrency_num", str(config.concurrency_num)])
+
+        if config.account_id:
+            cmd.extend(["--account_id", config.account_id])
+
         return cmd
+
 
     async def _read_output(self):
         """Asynchronously read process output"""

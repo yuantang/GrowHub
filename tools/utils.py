@@ -19,30 +19,42 @@
 
 
 import argparse
-import logging
+import sys
+from loguru import logger
 
 from .crawler_util import *
 from .slider_util import *
 from .time_util import *
 
 
-def init_loging_config():
-    level = logging.INFO
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s %(name)s %(levelname)s (%(filename)s:%(lineno)d) - %(message)s",
-        datefmt='%Y-%m-%d %H:%M:%S'
+def init_logging_config():
+    """初始化 loguru 日志配置"""
+    # 移除默认配置
+    logger.remove()
+    
+    # 添加控制台输出 (带颜色和自定义格式)
+    # <green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>
+    logger.add(
+        sys.stdout, 
+        format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{file}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
+        level="INFO",
+        colorize=True
     )
-    _logger = logging.getLogger("MediaCrawler")
-    _logger.setLevel(level)
+    
+    # 添加文件输出 (自动轮转)
+    logger.add(
+        "logs/mediacrawler_{time:YYYY-MM-DD}.log",
+        rotation="1 day",
+        retention="7 days",
+        level="INFO",
+        encoding="utf-8",
+        enqueue=True
+    )
 
-    # Disable httpx INFO level logs
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-
-    return _logger
+    return logger
 
 
-logger = init_loging_config()
+logger = init_logging_config()
 
 def str2bool(v):
     if isinstance(v, bool):

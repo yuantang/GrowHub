@@ -24,7 +24,7 @@ interface UseGrowHubWebSocketReturn {
     reconnect: () => void;
 }
 
-const WS_BASE = 'ws://localhost:8080/api/growhub/ws';
+const WS_BASE = 'ws://localhost:8040/api/growhub/ws';
 
 export function useGrowHubWebSocket(options: UseGrowHubWebSocketOptions): UseGrowHubWebSocketReturn {
     const {

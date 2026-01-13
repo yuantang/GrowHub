@@ -44,13 +44,15 @@ class CreatorHandler:
             checkpoint = await self.checkpoint_manager.find_matching_checkpoint(
                 platform="douyin",
                 crawler_type="creator",
-                keywords=sec_user_id # reusing keywords field as identifier
+                keywords=sec_user_id, # reusing keywords field as identifier
+                project_id=config.PROJECT_ID if hasattr(config, "PROJECT_ID") else None
             )
             if not checkpoint:
                 checkpoint = await self.checkpoint_manager.create_checkpoint(
                     platform="douyin",
                     crawler_type="creator",
-                    keywords=sec_user_id
+                    keywords=sec_user_id,
+                    project_id=config.PROJECT_ID if hasattr(config, "PROJECT_ID") else None
                 )
 
             # Get User Info

@@ -45,14 +45,17 @@ class ProxyRefreshMixin:
     """
 
     _proxy_ip_pool: Optional["ProxyIpPool"] = None
+    account_id: Optional[str] = None
 
-    def init_proxy_pool(self, proxy_ip_pool: Optional["ProxyIpPool"]) -> None:
+    def init_proxy_pool(self, proxy_ip_pool: Optional["ProxyIpPool"], account_id: Optional[str] = None) -> None:
         """
         Initialize proxy pool reference
         Args:
             proxy_ip_pool: Proxy IP pool instance
+            account_id: Optional account ID for IP affinity
         """
         self._proxy_ip_pool = proxy_ip_pool
+        self.account_id = account_id
 
     async def _refresh_proxy_if_expired(self) -> None:
         """
@@ -64,14 +67,14 @@ class ProxyRefreshMixin:
 
         if self._proxy_ip_pool.is_current_proxy_expired():
             utils.logger.info(
-                f"[{self.__class__.__name__}._refresh_proxy_if_expired] Proxy expired, refreshing..."
+                f"[{self.__class__.__name__}._refresh_proxy_if_expired] Proxy expired, refreshing for account {self.account_id}..."
             )
-            new_proxy = await self._proxy_ip_pool.get_or_refresh_proxy()
+            new_proxy = await self._proxy_ip_pool.get_proxy(account_id=self.account_id)
             # Update httpx proxy URL
             if new_proxy.user and new_proxy.password:
                 self.proxy = f"http://{new_proxy.user}:{new_proxy.password}@{new_proxy.ip}:{new_proxy.port}"
             else:
                 self.proxy = f"http://{new_proxy.ip}:{new_proxy.port}"
             utils.logger.info(
-                f"[{self.__class__.__name__}._refresh_proxy_if_expired] New proxy: {new_proxy.ip}:{new_proxy.port}"
+                f"[{self.__class__.__name__}._refresh_proxy_if_expired] New affinity proxy: {new_proxy.ip}:{new_proxy.port}"
             )

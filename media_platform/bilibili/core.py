@@ -52,6 +52,8 @@ from .exception import DataFetchError
 from .field import SearchOrderType
 from .help import parse_video_info_from_url, parse_creator_info_from_url
 from .login import BilibiliLogin
+from .extractor import BiliExtractor
+from checkpoint.manager import CheckpointManager
 
 
 class BilibiliCrawler(AbstractCrawler):
@@ -65,6 +67,8 @@ class BilibiliCrawler(AbstractCrawler):
         self.user_agent = utils.get_user_agent()
         self.cdp_manager = None
         self.ip_proxy_pool = None  # Proxy IP pool for automatic proxy refresh
+        self.checkpoint_manager = CheckpointManager()
+        self.bili_extractor = BiliExtractor()
 
     async def start(self):
         playwright_proxy_format, httpx_proxy_format = None, None
@@ -278,50 +282,130 @@ class BilibiliCrawler(AbstractCrawler):
         start_page = config.START_PAGE  # start page number
         for keyword in config.KEYWORDS.split(","):
             source_keyword_var.set(keyword)
+            import var
+            var.project_id_var.set(config.PROJECT_ID)
+            
             utils.logger.info(f"[BilibiliCrawler.search_by_keywords] Current search keyword: {keyword}")
             page = 1
+            total_crawled_count = 0
+            
+            # Pro Feature: Load or create checkpoint
+            checkpoint = await self.checkpoint_manager.find_matching_checkpoint(
+                platform="bilibili",
+                crawler_type="search",
+                project_id=config.PROJECT_ID,
+                keywords=keyword
+            )
+            
+            if checkpoint:
+                page = checkpoint.current_page
+                total_crawled_count = checkpoint.total_notes
+                utils.logger.info(f"🚩 [BilibiliCrawler.search] Resuming from checkpoint: Page {page}, Videos {total_crawled_count}")
+            else:
+                checkpoint = await self.checkpoint_manager.create_checkpoint(
+                    platform="bilibili",
+                    crawler_type="search",
+                    project_id=config.PROJECT_ID,
+                    keywords=keyword
+                )
+            
+            checkpoint.status = "running"
+            checkpoint.last_update = datetime.now()
+
             while (page - start_page + 1) * bili_limit_count <= config.CRAWLER_MAX_NOTES_COUNT:
                 if page < start_page:
                     utils.logger.info(f"[BilibiliCrawler.search_by_keywords] Skip page: {page}")
                     page += 1
                     continue
 
-                utils.logger.info(f"[BilibiliCrawler.search_by_keywords] search bilibili keyword: {keyword}, page: {page}")
-                video_id_list: List[str] = []
-                videos_res = await self.bili_client.search_video_by_keyword(
-                    keyword=keyword,
-                    page=page,
-                    page_size=bili_limit_count,
-                    order=SearchOrderType.DEFAULT,
-                    pubtime_begin_s=0,  # Publish date start timestamp
-                    pubtime_end_s=0,  # Publish date end timestamp
-                )
-                video_list: List[Dict] = videos_res.get("result")
+                try:
+                    utils.logger.info(f"[BilibiliCrawler.search_by_keywords] search bilibili keyword: {keyword}, page: {page}")
+                    video_id_list: List[str] = []
+                    videos_res = await self.bili_client.search_video_by_keyword(
+                        keyword=keyword,
+                        page=page,
+                        page_size=bili_limit_count,
+                        order=SearchOrderType.DEFAULT,
+                        pubtime_begin_s=0,  # Publish date start timestamp
+                        pubtime_end_s=0,  # Publish date end timestamp
+                    )
+                    
+                    if not videos_res:
+                        utils.logger.info(f"[BilibiliCrawler.search] No response for '{keyword}' page {page}")
+                        break
 
-                if not video_list:
-                    utils.logger.info(f"[BilibiliCrawler.search_by_keywords] No more videos for '{keyword}', moving to next keyword.")
+                    video_list: List[Dict] = videos_res.get("result") or []
+
+                    if not video_list:
+                        utils.logger.info(f"[BilibiliCrawler.search_by_keywords] No more videos for '{keyword}', moving to next keyword.")
+                        break
+
+                    # Pro Feature: Filter processed videos
+                    new_video_list = []
+                    for video_item in video_list:
+                        aid = str(video_item.get("aid"))
+                        if await self.checkpoint_manager.is_note_processed(aid, platform="bilibili"):
+                            # utils.logger.info(f"⏭️ [BilibiliCrawler] Video {aid} already processed, skipping.")
+                            continue
+                        new_video_list.append(video_item)
+
+                    if not new_video_list:
+                        utils.logger.info(f"⏭️ [BilibiliCrawler] All items on page {page} already processed.")
+                        page += 1
+                        continue
+
+                    semaphore = asyncio.Semaphore(config.MAX_CONCURRENCY_NUM)
+                    task_list = []
+                    try:
+                        task_list = [self.get_video_info_task(aid=video_item.get("aid"), bvid="", semaphore=semaphore) for video_item in new_video_list]
+                    except Exception as e:
+                        utils.logger.warning(f"[BilibiliCrawler.search_by_keywords] error in the task list. The video for this page will not be included. {e}")
+                    
+                    video_items = await asyncio.gather(*task_list)
+                    
+                    page_aid_list = []
+                    page_total_comments = 0
+                    for video_item in video_items:
+                        if video_item:
+                            aid = str(video_item.get("View").get("aid"))
+                            page_aid_list.append(aid)
+                            await bilibili_store.update_bilibili_video(video_item)
+                            await bilibili_store.update_up_info(video_item)
+                            await self.get_bilibili_video(video_item, semaphore)
+                            
+                            # Pro Feature: Mark as processed
+                            await self.checkpoint_manager.add_processed_note(aid, platform="bilibili")
+                            total_crawled_count += 1
+                    
+                    # Batch fetch comments
+                    if page_aid_list and config.ENABLE_GET_COMMENTS:
+                        # We don't have an easy way to get total comment count here without modifying batch_get_video_comments
+                        # but we can sum them up if we want. For now let's just run it.
+                        await self.batch_get_video_comments(page_aid_list)
+
+                    # Pro Feature: Update Checkpoint
+                    checkpoint.current_page = page
+                    checkpoint.total_notes = total_crawled_count
+                    checkpoint.last_update = datetime.now()
+                    await self.checkpoint_manager.save_checkpoint(checkpoint)
+
+                    page += 1
+                    utils.logger.info(f"[BilibiliCrawler.search_by_keywords] Saved {len(page_aid_list)} videos. Total: {total_crawled_count}")
+                    
+                    # Sleep after page navigation
+                    await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
+                    utils.logger.info(f"[BilibiliCrawler.search_by_keywords] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after page {page-1}")
+                except Exception as e:
+                    utils.logger.error(f"[BilibiliCrawler.search] Error in search loop: {e}")
+                    checkpoint.status = "error"
+                    checkpoint.error_msg = str(e)
+                    await self.checkpoint_manager.save_checkpoint(checkpoint)
                     break
 
-                semaphore = asyncio.Semaphore(config.MAX_CONCURRENCY_NUM)
-                task_list = []
-                try:
-                    task_list = [self.get_video_info_task(aid=video_item.get("aid"), bvid="", semaphore=semaphore) for video_item in video_list]
-                except Exception as e:
-                    utils.logger.warning(f"[BilibiliCrawler.search_by_keywords] error in the task list. The video for this page will not be included. {e}")
-                video_items = await asyncio.gather(*task_list)
-                for video_item in video_items:
-                    if video_item:
-                        video_id_list.append(video_item.get("View").get("aid"))
-                        await bilibili_store.update_bilibili_video(video_item)
-                        await bilibili_store.update_up_info(video_item)
-                        await self.get_bilibili_video(video_item, semaphore)
-                page += 1
-
-                # Sleep after page navigation
-                await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
-                utils.logger.info(f"[BilibiliCrawler.search_by_keywords] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after page {page-1}")
-
-                await self.batch_get_video_comments(video_id_list)
+            # Task finished
+            checkpoint.status = "finished"
+            checkpoint.last_update = datetime.now()
+            await self.checkpoint_manager.save_checkpoint(checkpoint)
 
     async def search_by_keywords_in_time_range(self, daily_limit: bool):
         """

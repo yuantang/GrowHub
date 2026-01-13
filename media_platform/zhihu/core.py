@@ -45,8 +45,10 @@ from var import crawler_type_var, source_keyword_var
 
 from .client import ZhiHuClient
 from .exception import DataFetchError
-from .help import ZhihuExtractor, judge_zhihu_url
+from .help import ZhihuExtractor as LegacyExtractor, judge_zhihu_url
 from .login import ZhiHuLogin
+from .extractor import ZhihuExtractor
+from checkpoint.manager import CheckpointManager
 
 
 class ZhihuCrawler(AbstractCrawler):
@@ -59,9 +61,10 @@ class ZhihuCrawler(AbstractCrawler):
         self.index_url = "https://www.zhihu.com"
         # self.user_agent = utils.get_user_agent()
         self.user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
-        self._extractor = ZhihuExtractor()
         self.cdp_manager = None
         self.ip_proxy_pool = None  # Proxy IP pool for automatic proxy refresh
+        self.checkpoint_manager = CheckpointManager()
+        self.zhihu_extractor = ZhihuExtractor()
 
     async def start(self) -> None:
         """
@@ -168,10 +171,38 @@ class ZhihuCrawler(AbstractCrawler):
         start_page = config.START_PAGE
         for keyword in config.KEYWORDS.split(","):
             source_keyword_var.set(keyword)
+            import var
+            var.project_id_var.set(config.PROJECT_ID)
+            
             utils.logger.info(
                 f"[ZhihuCrawler.search] Current search keyword: {keyword}"
             )
             page = 1
+            total_crawled_count = 0
+            
+            # Pro Feature: Load or create checkpoint
+            checkpoint = await self.checkpoint_manager.find_matching_checkpoint(
+                platform="zhihu",
+                crawler_type="search",
+                project_id=config.PROJECT_ID,
+                keywords=keyword
+            )
+            
+            if checkpoint:
+                page = checkpoint.current_page
+                total_crawled_count = checkpoint.total_notes
+                utils.logger.info(f"🚩 [ZhihuCrawler.search] Resuming from checkpoint: Page {page}, Notes {total_crawled_count}")
+            else:
+                checkpoint = await self.checkpoint_manager.create_checkpoint(
+                    platform="zhihu",
+                    crawler_type="search",
+                    project_id=config.PROJECT_ID,
+                    keywords=keyword
+                )
+            
+            checkpoint.status = "running"
+            checkpoint.last_update = datetime.now()
+
             while (
                 page - start_page + 1
             ) * zhihu_limit_count <= config.CRAWLER_MAX_NOTES_COUNT:
@@ -190,25 +221,57 @@ class ZhihuCrawler(AbstractCrawler):
                             page=page,
                         )
                     )
-                    utils.logger.info(
-                        f"[ZhihuCrawler.search] Search contents :{content_list}"
-                    )
+                    
                     if not content_list:
-                        utils.logger.info("No more content!")
+                        utils.logger.info("[ZhihuCrawler.search] No more content!")
                         break
+
+                    # Pro Feature: Filter processed notes
+                    new_content_list = []
+                    for content in content_list:
+                        if await self.checkpoint_manager.is_note_processed(content.content_id, platform="zhihu"):
+                            # utils.logger.info(f"⏭️ [ZhihuCrawler] Content {content.content_id} already processed, skipping.")
+                            continue
+                        new_content_list.append(content)
+
+                    if not new_content_list:
+                        utils.logger.info(f"⏭️ [ZhihuCrawler] All items on page {page} already processed.")
+                        page += 1
+                        continue
+
+                    for content in new_content_list:
+                        await zhihu_store.update_zhihu_content(content)
+                        # Pro Feature: Mark as processed
+                        await self.checkpoint_manager.add_processed_note(content.content_id, platform="zhihu")
+                        total_crawled_count += 1
+
+                    # Batch get comments
+                    if new_content_list and config.ENABLE_GET_COMMENTS:
+                        await self.batch_get_content_comments(new_content_list)
+
+                    # Pro Feature: Update Checkpoint
+                    checkpoint.current_page = page
+                    checkpoint.total_notes = total_crawled_count
+                    checkpoint.last_update = datetime.now()
+                    await self.checkpoint_manager.save_checkpoint(checkpoint)
+
+                    page += 1
+                    utils.logger.info(f"[ZhihuCrawler.search] Saved {len(new_content_list)} notes. Total: {total_crawled_count}")
 
                     # Sleep after page navigation
                     await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
                     utils.logger.info(f"[ZhihuCrawler.search] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after page {page-1}")
+                except Exception as e:
+                    utils.logger.error(f"[ZhihuCrawler.search] Error in search loop: {e}")
+                    checkpoint.status = "error"
+                    checkpoint.error_msg = str(e)
+                    await self.checkpoint_manager.save_checkpoint(checkpoint)
+                    break
 
-                    page += 1
-                    for content in content_list:
-                        await zhihu_store.update_zhihu_content(content)
-
-                    await self.batch_get_content_comments(content_list)
-                except DataFetchError:
-                    utils.logger.error("[ZhihuCrawler.search] Search content error")
-                    return
+            # Task finished
+            checkpoint.status = "finished"
+            checkpoint.last_update = datetime.now()
+            await self.checkpoint_manager.save_checkpoint(checkpoint)
 
     async def batch_get_content_comments(self, content_list: List[ZhihuContent]):
         """

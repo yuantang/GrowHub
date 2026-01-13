@@ -8,7 +8,6 @@
 
 ### [Warp is built for coding with multiple AI agents](https://go.warp.dev/MediaCrawler)
 
-
 </div>
 <hr>
 # 🔥 MediaCrawler - Social Media Platform Crawler 🕷️
@@ -31,10 +30,10 @@
 </div>
 
 > **Disclaimer:**
-> 
-> Please use this repository for learning purposes only ⚠️⚠️⚠️⚠️, [Web scraping illegal cases](https://github.com/HiddenStrawberry/Crawler_Illegal_Cases_In_China)  <br>
 >
->All content in this repository is for learning and reference purposes only, and commercial use is prohibited. No person or organization may use the content of this repository for illegal purposes or infringe upon the legitimate rights and interests of others. The web scraping technology involved in this repository is only for learning and research, and may not be used for large-scale crawling of other platforms or other illegal activities. This repository assumes no legal responsibility for any legal liability arising from the use of the content of this repository. By using the content of this repository, you agree to all terms and conditions of this disclaimer.
+> Please use this repository for learning purposes only ⚠️⚠️⚠️⚠️, [Web scraping illegal cases](https://github.com/HiddenStrawberry/Crawler_Illegal_Cases_In_China) <br>
+>
+> All content in this repository is for learning and reference purposes only, and commercial use is prohibited. No person or organization may use the content of this repository for illegal purposes or infringe upon the legitimate rights and interests of others. The web scraping technology involved in this repository is only for learning and research, and may not be used for large-scale crawling of other platforms or other illegal activities. This repository assumes no legal responsibility for any legal liability arising from the use of the content of this repository. By using the content of this repository, you agree to all terms and conditions of this disclaimer.
 >
 > Click to view a more detailed disclaimer. [Click to jump](#disclaimer)
 
@@ -49,16 +48,16 @@ A powerful **multi-platform social media data collection tool** that supports cr
 - **Advantages**: No need to reverse complex encryption algorithms, significantly lowering the technical barrier
 
 ## ✨ Features
-| Platform | Keyword Search | Specific Post ID Crawling | Secondary Comments | Specific Creator Homepage | Login State Cache | IP Proxy Pool | Generate Comment Word Cloud |
-| ------ | ---------- | -------------- | -------- | -------------- | ---------- | -------- | -------------- |
-| Xiaohongshu | ✅          | ✅              | ✅        | ✅              | ✅          | ✅        | ✅              |
-| Douyin   | ✅          | ✅              | ✅        | ✅              | ✅          | ✅        | ✅              |
-| Kuaishou   | ✅          | ✅              | ✅        | ✅              | ✅          | ✅        | ✅              |
-| Bilibili   | ✅          | ✅              | ✅        | ✅              | ✅          | ✅        | ✅              |
-| Weibo   | ✅          | ✅              | ✅        | ✅              | ✅          | ✅        | ✅              |
-| Tieba   | ✅          | ✅              | ✅        | ✅              | ✅          | ✅        | ✅              |
-| Zhihu   | ✅          | ✅              | ✅        | ✅              | ✅          | ✅        | ✅              |
 
+| Platform    | Keyword Search | Specific Post ID Crawling | Secondary Comments | Specific Creator Homepage | Login State Cache | IP Proxy Pool | Generate Comment Word Cloud |
+| ----------- | -------------- | ------------------------- | ------------------ | ------------------------- | ----------------- | ------------- | --------------------------- |
+| Xiaohongshu | ✅             | ✅                        | ✅                 | ✅                        | ✅                | ✅            | ✅                          |
+| Douyin      | ✅             | ✅                        | ✅                 | ✅                        | ✅                | ✅            | ✅                          |
+| Kuaishou    | ✅             | ✅                        | ✅                 | ✅                        | ✅                | ✅            | ✅                          |
+| Bilibili    | ✅             | ✅                        | ✅                 | ✅                        | ✅                | ✅            | ✅                          |
+| Weibo       | ✅             | ✅                        | ✅                 | ✅                        | ✅                | ✅            | ✅                          |
+| Tieba       | ✅             | ✅                        | ✅                 | ✅                        | ✅                | ✅            | ✅                          |
+| Zhihu       | ✅             | ✅                        | ✅                 | ✅                        | ✅                | ✅            | ✅                          |
 
 <details id="pro-version">
 <summary>🔗 <strong>🚀 MediaCrawlerPro Major Release! More features, better architectural design!</strong></summary>
@@ -70,22 +69,26 @@ A powerful **multi-platform social media data collection tool** that supports cr
 [MediaCrawlerPro](https://github.com/MediaCrawlerPro) core advantages over the open-source version:
 
 #### 🎯 Core Feature Upgrades
+
 - ✅ **Resume crawling functionality** (Key feature)
 - ✅ **Multi-account + IP proxy pool support** (Key feature)
 - ✅ **Remove Playwright dependency**, easier to use
 - ✅ **Complete Linux environment support**
 
 #### 🏗️ Architectural Design Optimization
+
 - ✅ **Code refactoring optimization**, more readable and maintainable (decoupled JS signature logic)
 - ✅ **Enterprise-level code quality**, suitable for building large-scale crawler projects
 - ✅ **Perfect architectural design**, high scalability, greater source code learning value
 
 #### 🎁 Additional Features
+
 - ✅ **Social media video downloader desktop app** (suitable for learning full-stack development)
 - ✅ **Multi-platform homepage feed recommendations** (HomeFeed)
 - [ ] **AI Agent based on social media platforms is under development 🚀🚀**
 
 Click to view: [MediaCrawlerPro Project Homepage](https://github.com/MediaCrawlerPro) for more information
+
 </details>
 
 ## 🚀 Quick Start
@@ -158,14 +161,21 @@ MediaCrawler provides a web-based visual operation interface, allowing you to ea
 #### Start WebUI Service
 
 ```shell
-# Start API server (default port 8080)
-uv run uvicorn api.main:app --port 8080 --reload
+# Start API server (default port 8040)
+uv run uvicorn api.main:app --port 8040 --reload
 
 # Or start using module method
 uv run python -m api.main
 ```
 
-After successful startup, visit `http://localhost:8080` to open the WebUI interface.
+```shell
+# Start Web Client
+cd web-client
+npm install
+npm run dev
+```
+
+After successful startup, visit `http://localhost:8040` to open the WebUI interface.
 
 #### WebUI Features
 
@@ -234,7 +244,6 @@ python main.py --help
 
 </details>
 
-
 ## 💾 Data Storage
 
 MediaCrawler supports multiple data storage methods, including CSV, JSON, Excel, SQLite, and MySQL databases.
@@ -246,9 +255,9 @@ MediaCrawler supports multiple data storage methods, including CSV, JSON, Excel,
 [🚀 MediaCrawlerPro Major Release 🚀! More features, better architectural design!](https://github.com/MediaCrawlerPro)
 
 ### 💬 Discussion Groups
+
 - **WeChat Discussion Group**: [Click to join](https://nanmicoder.github.io/MediaCrawler/%E5%BE%AE%E4%BF%A1%E4%BA%A4%E6%B5%81%E7%BE%A4.html)
 - **Bilibili Account**: [Follow me](https://space.bilibili.com/434377496), sharing AI and crawler technology knowledge
-
 
 ### 💰 Sponsor Display
 
@@ -276,28 +285,28 @@ Thordata: Reliable and cost-effective proxy service provider. Provides stable, e
 <br>
 <a href="https://www.thordata.com/products/residential-proxies/?ls=github&lk=mediacrawler">【Residential Proxies】</a> | <a href="https://www.thordata.com/products/web-scraper/?ls=github&lk=mediacrawler">【serp-api】</a>
 
-
 ### 🤝 Become a Sponsor
 
 Become a sponsor and showcase your product here, getting massive exposure daily!
 
 **Contact Information**:
+
 - WeChat: `relakkes`
 - Email: `relakkes@gmail.com`
+
 ---
 
 ### 📚 Other
+
 - **FAQ**: [MediaCrawler Complete Documentation](https://nanmicoder.github.io/MediaCrawler/)
 - **Crawler Beginner Tutorial**: [CrawlerTutorial Free Tutorial](https://github.com/NanmiCoder/CrawlerTutorial)
 - **News Crawler Open Source Project**: [NewsCrawlerCollection](https://github.com/NanmiCoder/NewsCrawlerCollection)
-
 
 ## ⭐ Star Trend Chart
 
 If this project helps you, please give a ⭐ Star to support and let more people see MediaCrawler!
 
 [![Star History Chart](https://api.star-history.com/svg?repos=NanmiCoder/MediaCrawler&type=Date)](https://star-history.com/#NanmiCoder/MediaCrawler&Date)
-
 
 ## 📚 References
 
@@ -306,29 +315,35 @@ If this project helps you, please give a ⭐ Star to support and let more people
 - **SMS Forwarding**: [SmsForwarder reference repository](https://github.com/pppscn/SmsForwarder)
 - **Intranet Penetration Tool**: [ngrok official documentation](https://ngrok.com/docs/)
 
-
 # Disclaimer
+
 <div id="disclaimer">
 
 ## 1. Project Purpose and Nature
+
 This project (hereinafter referred to as "this project") was created as a technical research and learning tool, aimed at exploring and learning network data collection technologies. This project focuses on research of data crawling technologies for social media platforms, intended to provide learners and researchers with technical exchange purposes.
 
 ## 2. Legal Compliance Statement
+
 The project developer (hereinafter referred to as "developer") solemnly reminds users to strictly comply with relevant laws and regulations of the People's Republic of China when downloading, installing and using this project, including but not limited to the "Cybersecurity Law of the People's Republic of China", "Counter-Espionage Law of the People's Republic of China" and all applicable national laws and policies. Users shall bear all legal responsibilities that may arise from using this project.
 
 ## 3. Usage Purpose Restrictions
+
 This project is strictly prohibited from being used for any illegal purposes or non-learning, non-research commercial activities. This project may not be used for any form of illegal intrusion into other people's computer systems, nor may it be used for any activities that infringe upon others' intellectual property rights or other legitimate rights and interests. Users should ensure that their use of this project is purely for personal learning and technical research, and may not be used for any form of illegal activities.
 
 ## 4. Disclaimer
+
 The developer has made every effort to ensure the legitimacy and security of this project, but assumes no responsibility for any form of direct or indirect losses that may arise from users' use of this project. Including but not limited to any data loss, equipment damage, legal litigation, etc. caused by using this project.
 
 ## 5. Intellectual Property Statement
+
 The intellectual property rights of this project belong to the developer. This project is protected by copyright law and international copyright treaties as well as other intellectual property laws and treaties. Users may download and use this project under the premise of complying with this statement and relevant laws and regulations.
 
 ## 6. Final Interpretation Rights
-The developer has the final interpretation rights regarding this project. The developer reserves the right to change or update this disclaimer at any time without further notice.
-</div>
 
+The developer has the final interpretation rights regarding this project. The developer reserves the right to change or update this disclaimer at any time without further notice.
+
+</div>
 
 ## 🙏 Acknowledgments
 

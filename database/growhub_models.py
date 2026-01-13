@@ -249,6 +249,7 @@ class GrowHubProject(Base):
     crawl_date_range = Column(Integer, default=7)  # 爬取时间范围（最近N天），0表示不限
     enable_comments = Column(Boolean, default=True)  # 是否抓取评论
     deduplicate_authors = Column(Boolean, default=False)  # 是否博主去重（只保留最新一条）
+    max_concurrency = Column(Integer, default=3)  # 最大并发数 (Pro 版特性)
     
     # 高级过滤配置
     min_likes = Column(Integer, default=0)
@@ -306,6 +307,7 @@ class GrowHubAccount(Base):
     use_count = Column(Integer, default=0)
     success_count = Column(Integer, default=0)
     fail_count = Column(Integer, default=0)
+    consecutive_fails = Column(Integer, default=0)  # 连续失败次数，用于指数退避
     last_used = Column(DateTime, nullable=True)
     last_check = Column(DateTime, nullable=True)
     
@@ -316,9 +318,63 @@ class GrowHubAccount(Base):
     group_name = Column(String(50), default='default')
     tags = Column(JSON)
     
+    # IP 绑定与项目路由 (Pro 版特性)
+    last_proxy_id = Column(String(255), nullable=True)
+    proxy_config = Column(JSON, nullable=True)
+    last_project_id = Column(Integer, nullable=True)  # 最后一次使用该账号的项目 ID，用于 Sticky Sessions
+    
     # 备注
     notes = Column(Text, nullable=True)
     
     # 时间戳
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class GrowHubCheckpoint(Base):
+    """GrowHub 爬虫断点续爬表"""
+    __tablename__ = 'growhub_checkpoints'
+    
+    id = Column(String(50), primary_key=True)  # task_id (UUID)
+    project_id = Column(Integer, nullable=True, index=True) # 关联的项目 ID
+    platform = Column(String(50), nullable=False)
+
+    crawler_type = Column(String(50), nullable=False)
+    
+    # 进度标记
+    keywords = Column(Text, nullable=True)
+    current_keyword_index = Column(Integer, default=0)
+    current_page = Column(Integer, default=1)
+    cursor = Column(String(255), nullable=True)
+    
+    # 详情/创作者模式
+    specified_ids = Column(Text, nullable=True)
+    current_id_index = Column(Integer, default=0)
+    
+    # 统计
+    total_notes_fetched = Column(Integer, default=0)
+    total_comments_fetched = Column(Integer, default=0)
+    total_errors = Column(Integer, default=0)
+    
+    # 状态
+    status = Column(SQLEnum('running', 'paused', 'completed', 'failed', name='checkpoint_status'), default='running')
+    error_message = Column(Text, nullable=True)
+    metadata_json = Column(JSON, nullable=True)  # Avoid name conflict with metadata
+    
+    # 时间戳
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    completed_at = Column(DateTime, nullable=True)
+
+
+class GrowHubCheckpointNote(Base):
+    """GrowHub 检查点处理记录表 - 用于超大规模去重"""
+    __tablename__ = 'growhub_checkpoint_notes'
+    
+    id = Column(Integer, primary_key=True)
+    checkpoint_id = Column(String(50), ForeignKey('growhub_checkpoints.id'), index=True)
+    note_id = Column(String(255), nullable=False, index=True)
+    note_type = Column(String(20), default='aweme') # aweme/comment/creator
+    
+    created_at = Column(DateTime, server_default=func.now())
+

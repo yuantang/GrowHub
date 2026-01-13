@@ -66,7 +66,9 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
         self.cookie_dict = cookie_dict
         self._extractor = XiaoHongShuExtractor()
         # Initialize proxy pool (from ProxyRefreshMixin)
-        self.init_proxy_pool(proxy_ip_pool)
+        # Pro Feature: Pass ACCOUNT_ID for IP-Account affinity
+        import config
+        self.init_proxy_pool(proxy_ip_pool, account_id=config.ACCOUNT_ID)
 
     async def _pre_headers(self, url: str, params: Optional[Dict] = None, payload: Optional[Dict] = None) -> Dict:
         """Request header parameter signing (using playwright injection method)
@@ -114,6 +116,32 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
         self.headers.update(headers)
         return self.headers
 
+    async def update_account_status(self, status: str):
+        """Update account status in DB so API process can see it (Shared Pro Logic)"""
+        import config
+        account_id = getattr(config, "ACCOUNT_ID", None)
+        if not account_id:
+            return
+            
+        try:
+            from database.db_session import get_session
+            from database.growhub_models import GrowHubAccount
+            from sqlalchemy import update
+            
+            async with get_session() as session:
+                await session.execute(
+                    update(GrowHubAccount)
+                    .where(GrowHubAccount.id == account_id)
+                    .values(
+                        status=status,
+                        updated_at=utils.get_current_datetime()
+                    )
+                )
+                await session.commit()
+                utils.logger.warning(f"🚨 [XiaoHongShuClient] Account {account_id} status updated to: {status}")
+        except Exception as e:
+            utils.logger.error(f"[XiaoHongShuClient] Failed to update account status in DB: {e}")
+
     @retry(stop=stop_after_attempt(3), wait=wait_fixed(1))
     async def request(self, method, url, **kwargs) -> Union[str, Any]:
         """
@@ -140,6 +168,8 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
             verify_uuid = response.headers["Verifyuuid"]
             msg = f"CAPTCHA appeared, request failed, Verifytype: {verify_type}, Verifyuuid: {verify_uuid}, Response: {response}"
             utils.logger.error(msg)
+            # Notify account pool that this account triggered captcha
+            await self.update_account_status("cooldown")
             raise Exception(msg)
 
         if return_response:
@@ -148,6 +178,8 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
         if data["success"]:
             return data.get("data", data.get("success", {}))
         elif data["code"] == self.IP_ERROR_CODE:
+            # IP Bloacked usually means the account is also flagged or needs a break
+            await self.update_account_status("cooldown")
             raise IPBlockError(self.IP_ERROR_STR)
         else:
             # Enhanced error logging for debugging
@@ -227,7 +259,9 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
         utils.logger.info("[XiaoHongShuClient.pong] Begin to pong xhs...")
         ping_flag = False
         try:
-            note_card: Dict = await self.get_note_by_keyword(keyword="Xiaohongshu")
+            # Use homefeed instead of search to check login status
+            # Searching is more likely to trigger captcha/risk control
+            note_card: Dict = await self.get_homefeed(num=1)
             if note_card.get("items"):
                 ping_flag = True
         except Exception as e:

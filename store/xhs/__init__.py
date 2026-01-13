@@ -23,6 +23,7 @@
 # @Desc    :
 from typing import List, Optional
 import re
+import random
 
 import config
 from var import source_keyword_var, project_id_var
@@ -105,7 +106,7 @@ def extract_contact_info(content: str) -> str:
     return " | ".join(contacts)
 
 
-async def update_xhs_note(note_item: Dict):
+async def update_xhs_note(note_item: Dict, client=None):
     """
     Update Xiaohongshu note
     Args:
@@ -128,9 +129,65 @@ async def update_xhs_note(note_item: Dict):
     
     desc = note_item.get("desc", "")
     contact_info = extract_contact_info(desc)
-    # Contact info is now stored in a separate field, no longer appended to desc
-    # if contact_info:
-    #     desc += f"\n\n[Contact Info]: {contact_info}"
+    
+    user_id = user_info.get("user_id")
+    xsec_token = note_item.get("xsec_token")
+    
+    # Try to get author stats from note_item first (some APIs might provide them)
+    author_fans = user_info.get("fans_count") or user_info.get("fans") or 0
+    author_likes = user_info.get("liked_count") or user_info.get("total_favorited") or 0
+    author_follows = user_info.get("follows_count") or user_info.get("follows") or 0
+
+    # If stats are missing and client is available, fetch them
+    if (author_fans == 0 or author_likes == 0) and client and user_id:
+        try:
+            utils.logger.info(f"[store.xhs.update_xhs_note] Fetching creator info for user_id: {user_id}")
+            # Use small random delay to avoid rate limiting
+            await asyncio.sleep(random.uniform(1.0, 2.0))
+            creator_info = await client.get_creator_info(user_id=user_id, xsec_token="")
+            if creator_info:
+                utils.logger.info(f"[store.xhs.update_xhs_note] Creator info keys: {list(creator_info.keys())}")
+                # Determine the base object for stats - could be direct or nested
+                stats_base = creator_info
+                if 'userPageData' in creator_info:
+                    stats_base = creator_info.get('userPageData', {})
+                elif 'user' in creator_info and isinstance(creator_info['user'], dict) and 'userPageData' in creator_info['user']:
+                    stats_base = creator_info['user']['userPageData']
+                
+                # Format 1: interactions list
+                interactions = stats_base.get('interactions', [])
+                if not interactions and isinstance(creator_info.get('user'), dict):
+                    interactions = creator_info.get('user', {}).get('interactions', [])
+                
+                for i in interactions:
+                    count = i.get('count', 0)
+                    if isinstance(count, str):
+                        count = utils.convert_str_number_to_int(count)
+                    
+                    if i.get('type') == 'fans':
+                        author_fans = count
+                    elif i.get('type') in ['interaction', 'liked', 'total_favorited']:
+                        author_likes = count
+                    elif i.get('type') == 'follows':
+                        author_follows = count
+                
+                # Format 2: direct fields fallback
+                if author_fans == 0:
+                    author_fans = (stats_base.get("fansCount") or 
+                                   stats_base.get("fans") or 
+                                   stats_base.get("fans_count") or 0)
+                if author_likes == 0:
+                    author_likes = (stats_base.get("likedCount") or 
+                                    stats_base.get("total_favorited") or 
+                                    stats_base.get("liked_count") or 0)
+                if author_follows == 0:
+                    author_follows = (stats_base.get("followsCount") or 
+                                      stats_base.get("follows") or 
+                                      stats_base.get("follows_count") or 0)
+                
+                utils.logger.info(f"[store.xhs.update_xhs_note] Extracted stats: fans={author_fans}, likes={author_likes}, follows={author_follows}")
+        except Exception as e:
+            utils.logger.warning(f"[store.xhs.update_xhs_note] Failed to fetch creator info: {e}")
 
     local_db_item = {
         "note_id": note_item.get("note_id"),  # Note ID
@@ -157,6 +214,9 @@ async def update_xhs_note(note_item: Dict):
         "source_keyword": source_keyword_var.get(),  # Search keyword
         "project_id": project_id_var.get() or None,  # 关联的项目 ID
         "xsec_token": note_item.get("xsec_token"),  # xsec_token
+        "user_fans": author_fans,
+        "user_likes": author_likes,
+        "user_follows": author_follows
     }
     utils.logger.info(f"[store.xhs.update_xhs_note] xhs note: {local_db_item}")
     await XhsStoreFactory.create_store().store_content(local_db_item)

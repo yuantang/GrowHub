@@ -24,7 +24,7 @@
 from typing import List
 
 import config
-from var import source_keyword_var
+from var import source_keyword_var, project_id_var
 
 from ._store_impl import *
 from .douyin_store_media import *
@@ -152,14 +152,43 @@ def _extract_music_download_url(aweme_detail: Dict) -> str:
     return music_url
 
 
-async def update_douyin_aweme(aweme_item: Dict):
+async def update_douyin_aweme(aweme_item: Dict, client=None):
+    from media_platform.douyin.extractor import DouyinExtractor
+    extractor = DouyinExtractor()
+    
     aweme_id = aweme_item.get("aweme_id")
-    user_info = aweme_item.get("author", {})
-    interact_info = aweme_item.get("statistics", {})
+    # Use robust extraction for author and statistics
+    user_info = extractor.get_user_info(aweme_item)
+    
+    # 修复：如果粉丝数为0且有sec_uid，且提供了client，尝试获取用户详情补充数据
+    fans_count = user_info.get("fans", 0)
+    if (not fans_count or fans_count == 0) and user_info.get("sec_uid") and client:
+        try:
+            sec_uid = user_info.get("sec_uid")
+            utils.logger.info(f"[store.douyin] Author fans=0, fetching profile for sec_uid={sec_uid}...")
+            # 增加随机延迟避免被风控
+            import random
+            await asyncio.sleep(random.uniform(0.5, 1.5))
+            
+            profile_res = await client.get_user_info(sec_uid)
+            if profile_res and "user" in profile_res:
+                user_obj = profile_res["user"]
+                # Update user_info with profile data
+                user_info["fans"] = user_obj.get("follower_count") or user_obj.get("m_stats", {}).get("follower_count") or 0
+                user_info["follows"] = user_obj.get("following_count") or 0
+                user_info["likes"] = user_obj.get("total_favorited") or 0
+                # Could also refresh nickname, avatar
+                user_info["nickname"] = user_obj.get("nickname") or user_info.get("nickname")
+                user_info["avatar"] = user_obj.get("avatar_thumb", {}).get("url_list", [""])[0] or user_info.get("avatar")
+                utils.logger.info(f"[store.douyin] Fetched profile: fans={user_info['fans']}")
+        except Exception as e:
+            utils.logger.error(f"[store.douyin] Failed to fetch user profile fallback: {e}")
+
+    interact_info = extractor.get_item_statistics(aweme_item)
+    
     # Determine content type
-    # If images exist, it's an image note (mixed/image), otherwise it's a video
-    is_video = not bool(aweme_item.get("images"))
-    content_type = "video" if is_video else "image"
+    # For Douyin, both regular videos and graphic notes (Slides) are conceptually videos
+    content_type = "video"
 
     save_content_item = {
         "aweme_id": aweme_id,
@@ -170,15 +199,12 @@ async def update_douyin_aweme(aweme_item: Dict):
         "create_time": aweme_item.get("create_time"),
         "user_id": user_info.get("uid"),
         "sec_uid": user_info.get("sec_uid"),
-        "short_user_id": user_info.get("short_id"),
-        "user_unique_id": user_info.get("unique_id"),
-        "user_signature": user_info.get("signature"),
         "nickname": user_info.get("nickname"),
-        "avatar": user_info.get("avatar_thumb", {}).get("url_list", [""])[0],
-        "liked_count": str(interact_info.get("digg_count")),
-        "collected_count": str(interact_info.get("collect_count")),
-        "comment_count": str(interact_info.get("comment_count")),
-        "share_count": str(interact_info.get("share_count")),
+        "avatar": user_info.get("avatar"),
+        "liked_count": str(interact_info.get("likes", 0)),
+        "collected_count": str(interact_info.get("favorites", 0)),
+        "comment_count": str(interact_info.get("comments", 0)),
+        "share_count": str(interact_info.get("shares", 0)),
         "ip_location": aweme_item.get("ip_label", ""),
         "last_modify_ts": utils.get_current_timestamp(),
         "aweme_url": f"https://www.douyin.com/video/{aweme_id}",
@@ -187,9 +213,10 @@ async def update_douyin_aweme(aweme_item: Dict):
         "music_download_url": _extract_music_download_url(aweme_item),
         "note_download_url": ",".join(_extract_note_image_list(aweme_item)),
         "source_keyword": source_keyword_var.get(),
-        "user_fans": str(user_info.get("follower_count", 0)),
-        "user_follows": str(user_info.get("following_count", 0)),
-        "user_likes": str(user_info.get("total_favorited", 0)),
+        "project_id": project_id_var.get(),
+        "user_fans": str(user_info.get("fans", 0)),
+        "user_follows": str(user_info.get("follows", 0)),
+        "user_likes": str(user_info.get("likes", 0)),
     }
     utils.logger.info(f"[store.douyin.update_douyin_aweme] douyin aweme id:{aweme_id}, title:{save_content_item.get('title')}")
     await DouyinStoreFactory.create_store().store_content(content_item=save_content_item)

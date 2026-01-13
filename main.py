@@ -117,8 +117,18 @@ async def main() -> None:
     config.END_TIME = getattr(args, 'end_time', "")
     config.PROJECT_ID = getattr(args, 'project_id', 0)
     config.DEDUPLICATE_AUTHORS = getattr(args, 'deduplicate_authors', "false").lower() == "true"
+    config.MAX_LIKES_COUNT = getattr(args, 'max_likes', 0)
+    config.MAX_SHARES_COUNT = getattr(args, 'max_shares', 0)
+    config.MAX_COMMENTS_COUNT = getattr(args, 'max_comments', 0)
+    config.MAX_FAVORITES_COUNT = getattr(args, 'max_favorites', 0)
+    config.MAX_CONCURRENCY_NUM = getattr(args, 'concurrency_num', 3)
     
-    print(f"[Debug] Config loaded - Start Time: {config.START_TIME}, End Time: {config.END_TIME}, Keywords: {config.KEYWORDS}, Project ID: {config.PROJECT_ID}, Dedup Authors: {config.DEDUPLICATE_AUTHORS}")
+    print(f"[Debug] Config loaded - Start Time: {config.START_TIME}, End Time: {config.END_TIME}, Keywords: {config.KEYWORDS}, Project ID: {config.PROJECT_ID}, Dedup Authors: {config.DEDUPLICATE_AUTHORS}, Max Likes: {config.MAX_LIKES_COUNT}, Concurrency: {config.MAX_CONCURRENCY_NUM}")
+
+    # Set context variables
+    from var import project_id_var
+    if config.PROJECT_ID:
+        project_id_var.set(int(config.PROJECT_ID))
 
     if args.init_db:
         await db.init_db(args.init_db)

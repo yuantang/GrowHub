@@ -82,10 +82,17 @@ class CrawlerStartRequest(BaseModel):
     min_shares: int = 0
     min_comments: int = 0
     min_favorites: int = 0
+    max_likes: int = 0
+    max_shares: int = 0
+    max_comments: int = 0
+    max_favorites: int = 0
     
     # Project association
     project_id: int = 0  # 关联的项目 ID
     deduplicate_authors: bool = False  # 博主去重
+    concurrency_num: int = 3  # 并发数 (Pro 版特性)
+    account_id: Optional[str] = None  # 账号唯一标识 (用于 IP 池绑定)
+
 
 
 class CrawlerStatusResponse(BaseModel):

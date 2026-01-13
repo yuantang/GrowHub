@@ -6,7 +6,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 
-const API_BASE = 'http://localhost:8080/api';
+const API_BASE = '/api';
 
 interface ScheduledTask {
     id: string;

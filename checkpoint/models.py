@@ -29,6 +29,8 @@ class CrawlerCheckpoint(BaseModel):
     
     # Unique identifier for this checkpoint
     task_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    project_id: Optional[int] = None # Pro Feature: Associated project ID
+
     
     # Basic crawler configuration
     platform: str

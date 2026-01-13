@@ -27,8 +27,9 @@ from playwright.async_api import BrowserContext, Page
 from tenacity import RetryError, retry, stop_after_attempt, wait_fixed
 
 import config
-from base.base_crawler import AbstractApiClient
 from model.m_baidu_tieba import TiebaComment, TiebaCreator, TiebaNote
+from base.base_crawler import AbstractApiClient
+from proxy.proxy_mixin import ProxyRefreshMixin
 from proxy.proxy_ip_pool import ProxyIpPool
 from tools import utils
 
@@ -36,7 +37,7 @@ from .field import SearchNoteType, SearchSortType
 from .help import TieBaExtractor
 
 
-class BaiduTieBaClient(AbstractApiClient):
+class BaiduTieBaClient(AbstractApiClient, ProxyRefreshMixin):
 
     def __init__(
         self,
@@ -53,10 +54,13 @@ class BaiduTieBaClient(AbstractApiClient):
             "User-Agent": utils.get_user_agent(),
             "Cookie": "",
         }
-        self._host = "https://tieba.baidu.com"
         self._page_extractor = TieBaExtractor()
         self.default_ip_proxy = default_ip_proxy
         self.playwright_page = playwright_page  # Playwright page object
+        # Initialize proxy pool (from ProxyRefreshMixin)
+        # Pro Feature: Pass ACCOUNT_ID for IP-Account affinity
+        import config
+        self.init_proxy_pool(ip_pool, account_id=config.ACCOUNT_ID)
 
     def _sync_request(self, method, url, proxy=None, **kwargs):
         """
@@ -102,6 +106,9 @@ class BaiduTieBaClient(AbstractApiClient):
             )
             new_proxy = await self.ip_pool.get_or_refresh_proxy()
             # Update proxy URL
+            # Update proxy URL
+            # Note: Using the ProxyRefreshMixin's get_proxy if available or this one
+            new_proxy = await self.ip_pool.get_or_refresh_proxy()
             _, self.default_ip_proxy = utils.format_proxy_info(new_proxy)
             utils.logger.info(
                 f"[BaiduTieBaClient._refresh_proxy_if_expired] New proxy: {new_proxy.ip}:{new_proxy.port}"
@@ -138,16 +145,50 @@ class BaiduTieBaClient(AbstractApiClient):
         if response.status_code != 200:
             utils.logger.error(f"Request failed, method: {method}, url: {url}, status code: {response.status_code}")
             utils.logger.error(f"Request failed, response: {response.text}")
+            
+            # Risk control / Ban
+            if response.status_code in [403, 412]:
+                await self.update_account_status("cooldown")
+            elif response.status_code == 401:
+                await self.update_account_status("expired")
+                
             raise Exception(f"Request failed, method: {method}, url: {url}, status code: {response.status_code}")
 
         if response.text == "" or response.text == "blocked":
             utils.logger.error(f"request params incorrect, response.text: {response.text}")
+            await self.update_account_status("cooldown")
             raise Exception("account blocked")
 
         if return_ori_content:
             return response.text
 
         return response.json()
+
+    async def update_account_status(self, status: str):
+        """Update account status in DB so API process can see it (Shared Pro Logic)"""
+        import config
+        account_id = getattr(config, "ACCOUNT_ID", None)
+        if not account_id:
+            return
+            
+        try:
+            from database.db_session import get_session
+            from database.growhub_models import GrowHubAccount
+            from sqlalchemy import update
+            
+            async with get_session() as session:
+                await session.execute(
+                    update(GrowHubAccount)
+                    .where(GrowHubAccount.id == account_id)
+                    .values(
+                        status=status,
+                        updated_at=utils.get_current_datetime()
+                    )
+                )
+                await session.commit()
+                utils.logger.warning(f"🚨 [BaiduTieBaClient] Account {account_id} status updated to: {status}")
+        except Exception as e:
+            utils.logger.error(f"[BaiduTieBaClient] Failed to update account status in DB: {e}")
 
     async def get(self, uri: str, params=None, return_ori_content=False, **kwargs) -> Any:
         """

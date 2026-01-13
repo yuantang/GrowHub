@@ -121,7 +121,7 @@ async def _call_openrouter(prompt: str, model: str, temperature: float, max_toke
     
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-        "HTTP-Referer": "http://localhost:8080",
+        "HTTP-Referer": "http://localhost:8040",
         "X-Title": "GrowHub",
         "Content-Type": "application/json"
     }

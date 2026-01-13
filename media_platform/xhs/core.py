@@ -48,6 +48,9 @@ from .exception import DataFetchError
 from .field import SearchSortType
 from .help import parse_note_info_from_note_url, parse_creator_info_from_url, get_search_id
 from .login import XiaoHongShuLogin
+from .extractor import XiaoHongShuExtractor
+from checkpoint.models import CheckpointStatus, CrawlerCheckpoint
+from checkpoint.manager import CheckpointManager
 
 
 class XiaoHongShuCrawler(AbstractCrawler):
@@ -62,6 +65,8 @@ class XiaoHongShuCrawler(AbstractCrawler):
         self.user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
         self.cdp_manager = None
         self.ip_proxy_pool = None  # Proxy IP pool for automatic proxy refresh
+        self.checkpoint_manager = CheckpointManager()
+        self.xhs_extractor = XiaoHongShuExtractor()
 
     def is_note_qualified(self, note_detail: Dict) -> bool:
         """Check if note meets the filtering criteria"""
@@ -84,7 +89,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
                         start_dt = datetime.strptime(config.START_TIME, fmt)
                         start_ts = start_dt.timestamp() * 1000
                         if note_ts < start_ts:
-                            # utils.logger.info(f"[Filter] Note {note_detail.get('note_id')} ignored. Time {datetime.fromtimestamp(note_ts/1000)} < {start_dt}")
+                            utils.logger.info(f"⏭️ [Filter] Note {note_detail.get('note_id')} ignored. Time {datetime.fromtimestamp(note_ts/1000)} < {config.START_TIME}")
                             return False
 
                     if config.END_TIME:
@@ -110,19 +115,19 @@ class XiaoHongShuCrawler(AbstractCrawler):
         favorites = utils.convert_str_number_to_int(interact_info.get("collected_count", "0"))
         
         if config.MIN_LIKES_COUNT > 0 and likes < config.MIN_LIKES_COUNT:
-            # utils.logger.info(f"[Filter] Skip note {note_detail.get('note_id')} due to low likes: {likes} < {config.MIN_LIKES_COUNT}")
+            utils.logger.info(f"⏭️ [Filter] Skip note {note_detail.get('note_id')} due to low likes: {likes} < {config.MIN_LIKES_COUNT}")
             return False
             
         if config.MIN_SHARES_COUNT > 0 and shares < config.MIN_SHARES_COUNT:
-            # utils.logger.info(f"[Filter] Skip note {note_detail.get('note_id')} due to low shares: {shares} < {config.MIN_SHARES_COUNT}")
+            utils.logger.info(f"⏭️ [Filter] Skip note {note_detail.get('note_id')} due to low shares: {shares} < {config.MIN_SHARES_COUNT}")
             return False
             
         if config.MIN_COMMENTS_COUNT > 0 and comments < config.MIN_COMMENTS_COUNT:
-            # utils.logger.info(f"[Filter] Skip note {note_detail.get('note_id')} due to low comments: {comments} < {config.MIN_COMMENTS_COUNT}")
+            utils.logger.info(f"⏭️ [Filter] Skip note {note_detail.get('note_id')} due to low comments: {comments} < {config.MIN_COMMENTS_COUNT}")
             return False
             
         if config.MIN_FAVORITES_COUNT > 0 and favorites < config.MIN_FAVORITES_COUNT:
-            # utils.logger.info(f"[Filter] Skip note {note_detail.get('note_id')} due to low favorites: {favorites} < {config.MIN_FAVORITES_COUNT}")
+            utils.logger.info(f"⏭️ [Filter] Skip note {note_detail.get('note_id')} due to low favorites: {favorites} < {config.MIN_FAVORITES_COUNT}")
             return False
             
         return True
@@ -227,31 +232,81 @@ class XiaoHongShuCrawler(AbstractCrawler):
             page = 1
             search_id = get_search_id()
             total_crawled_count = 0
+            
+            # Pro Feature: Load or create checkpoint
+            checkpoint = await self.checkpoint_manager.find_matching_checkpoint(
+                platform="xhs",
+                crawler_type="search",
+                project_id=config.PROJECT_ID,
+                keywords=keyword
+            )
+            
+            if checkpoint:
+                page = checkpoint.current_page
+                total_crawled_count = checkpoint.total_notes_fetched
+                utils.logger.info(f"🚩 [XiaoHongShuCrawler.search] Resuming from checkpoint: Page {page}, Notes {total_crawled_count}")
+            else:
+                checkpoint = await self.checkpoint_manager.create_checkpoint(
+                    platform="xhs",
+                    crawler_type="search",
+                    project_id=config.PROJECT_ID,
+                    keywords=keyword
+                )
+            
+            checkpoint.status = CheckpointStatus.RUNNING
+            checkpoint.last_update = datetime.now()
+
             while True:
                 # Check limit
                 if config.CRAWLER_MAX_NOTES_COUNT > 0 and total_crawled_count >= config.CRAWLER_MAX_NOTES_COUNT:
                     utils.logger.info(f"[XiaoHongShuCrawler.search] Reached max notes count: {config.CRAWLER_MAX_NOTES_COUNT}")
                     break
-                    
-                # Safety break for pages to avoid infinite loop on low yield filters
-                if page - start_page > config.CRAWLER_MAX_NOTES_COUNT: # Assuming worst case 1 valid note per page.
-                     # utils.logger.info(f"[XiaoHongShuCrawler.search] Max page safety break")
-                     pass 
 
                 try:
                     utils.logger.info(f"[XiaoHongShuCrawler.search] search Xiaohongshu keyword: {keyword}, page: {page}")
-                    note_ids: List[str] = []
-                    xsec_tokens: List[str] = []
+                    # Handle sort type safely
+                    sort_type = SearchSortType.GENERAL
+                    try:
+                        if config.SORT_TYPE and str(config.SORT_TYPE) not in ["0", "", "None"]:
+                            sort_type = SearchSortType(config.SORT_TYPE)
+                    except ValueError:
+                        utils.logger.warning(f"[XiaoHongShuCrawler] Invalid sort type '{config.SORT_TYPE}', using default.")
+
                     notes_res = await self.xhs_client.get_note_by_keyword(
                         keyword=keyword,
                         search_id=search_id,
                         page=page,
-                        sort=(SearchSortType(config.SORT_TYPE) if config.SORT_TYPE != "" else SearchSortType.GENERAL),
+                        sort=sort_type,
                     )
-                    utils.logger.info(f"[XiaoHongShuCrawler.search] Search notes response: {notes_res}")
-                    if not notes_res or not notes_res.get("has_more", False):
-                        utils.logger.info("[XiaoHongShuCrawler.search] No more content!")
+                    
+                    if not notes_res:
+                        utils.logger.info("[XiaoHongShuCrawler.search] No response from API!")
                         break
+
+                    has_more = notes_res.get("has_more", False)
+                    items = notes_res.get("items", [])
+                    
+                    if not items:
+                        utils.logger.info("[XiaoHongShuCrawler.search] No more items!")
+                        break
+
+                    # Pro Feature: Filter processed notes
+                    new_items = []
+                    for item in items:
+                        if item.get("model_type") in ("rec_query", "hot_query"):
+                            continue
+                        note_id = item.get("id")
+                        if await self.checkpoint_manager.is_note_processed(checkpoint.task_id, note_id):
+                            utils.logger.info(f"[XiaoHongShuCrawler.search] Note {note_id} already processed, skipping.")
+                            continue
+                        new_items.append(item)
+
+                    if not new_items:
+                        utils.logger.info(f"⏭️ [XiaoHongShuCrawler] All {len(items)} items on page {page} already processed.")
+                        if not has_more: break
+                        page += 1
+                        continue
+
                     semaphore = asyncio.Semaphore(config.MAX_CONCURRENCY_NUM)
                     task_list = [
                         self.get_note_detail_async_task(
@@ -259,7 +314,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
                             xsec_source=post_item.get("xsec_source"),
                             xsec_token=post_item.get("xsec_token"),
                             semaphore=semaphore,
-                        ) for post_item in notes_res.get("items", {}) if post_item.get("model_type") not in ("rec_query", "hot_query")
+                        ) for post_item in new_items
                     ]
                     note_details = await asyncio.gather(*task_list)
                     
@@ -279,18 +334,35 @@ class XiaoHongShuCrawler(AbstractCrawler):
 
                     # Save notes with comments
                     saved_count_in_this_batch = 0
+                    total_comments_in_batch = 0
                     for note_detail in qualified_notes:
                         note_id = note_detail.get("note_id")
-                        if note_id in comments_map:
-                            note_detail["comments"] = comments_map[note_id]
+                        note_comments = comments_map.get(note_id, [])
+                        note_detail["comments"] = note_comments
                         
-                        await xhs_store.update_xhs_note(note_detail)
+                        await xhs_store.update_xhs_note(note_detail, client=self.xhs_client)
                         await self.get_notice_media(note_detail)
+                        
+                        # Pro Feature: Mark as processed
+                        await self.checkpoint_manager.add_processed_note(checkpoint.task_id, note_id)
                         
                         saved_count_in_this_batch += 1
                         total_crawled_count += 1
+                        total_comments_in_batch += len(note_comments)
+                        
                         if config.CRAWLER_MAX_NOTES_COUNT > 0 and total_crawled_count >= config.CRAWLER_MAX_NOTES_COUNT:
                             break
+
+                    # Pro Feature: Update Checkpoint
+                    checkpoint.current_page = page
+                    checkpoint.total_notes_fetched = total_crawled_count
+                    checkpoint.total_comments_fetched += total_comments_in_batch
+                    checkpoint.last_update = datetime.now()
+                    await self.checkpoint_manager.save(checkpoint)
+
+                    if not has_more:
+                        utils.logger.info("[XiaoHongShuCrawler.search] No more content!")
+                        break
 
                     page += 1
                     utils.logger.info(f"[XiaoHongShuCrawler.search] Saved {saved_count_in_this_batch} notes. Total: {total_crawled_count}")
@@ -298,9 +370,17 @@ class XiaoHongShuCrawler(AbstractCrawler):
                     # Sleep after each page navigation
                     await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
                     utils.logger.info(f"[XiaoHongShuCrawler.search] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after page {page-1}")
-                except DataFetchError:
-                    utils.logger.error("[XiaoHongShuCrawler.search] Get note detail error")
+                except Exception as e:
+                    utils.logger.error(f"[XiaoHongShuCrawler.search] Error in search loop: {e}")
+                    checkpoint.status = CheckpointStatus.FAILED
+                    checkpoint.error_message = str(e)
+                    await self.checkpoint_manager.save(checkpoint)
                     break
+            
+            # Task finished for this keyword
+            checkpoint.status = CheckpointStatus.COMPLETED
+            checkpoint.last_update = datetime.now()
+            await self.checkpoint_manager.save(checkpoint)
 
     async def get_homefeed(self) -> None:
         """Get homepage feed recommendations and retrieve their comment information."""
@@ -358,7 +438,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
                 
                 for note_detail in note_details:
                     if note_detail:
-                        await xhs_store.update_xhs_note(note_detail)
+                        await xhs_store.update_xhs_note(note_detail, client=self.xhs_client)
                         await self.get_notice_media(note_detail)
                         note_ids.append(note_detail.get("note_id"))
                         xsec_tokens.append(note_detail.get("xsec_token"))
@@ -440,7 +520,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
         note_details = await asyncio.gather(*task_list)
         for note_detail in note_details:
             if note_detail:
-                await xhs_store.update_xhs_note(note_detail)
+                await xhs_store.update_xhs_note(note_detail, client=self.xhs_client)
                 await self.get_notice_media(note_detail)
 
     async def get_specified_notes(self):
@@ -467,7 +547,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
             if note_detail:
                 need_get_comment_note_ids.append(note_detail.get("note_id", ""))
                 xsec_tokens.append(note_detail.get("xsec_token", ""))
-                await xhs_store.update_xhs_note(note_detail)
+                await xhs_store.update_xhs_note(note_detail, client=self.xhs_client)
                 await self.get_notice_media(note_detail)
         await self.batch_get_note_comments(need_get_comment_note_ids, xsec_tokens)
 

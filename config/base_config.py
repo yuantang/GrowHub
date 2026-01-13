@@ -36,6 +36,11 @@ IP_PROXY_POOL_COUNT = 2
 # 代理IP提供商名称
 IP_PROXY_PROVIDER_NAME = "kuaidaili"  # kuaidaili | wandouhttp
 
+# Sign Server Configuration (Ref MediaCrawlerPro)
+SIGN_SERVER_HOST: str = "127.0.0.1"
+SIGN_SERVER_PORT: int = 8045
+ENABLE_SIGN_SERVER: bool = False
+
 # ==================== System & Browser Fingerprint Constants ====================
 # Centralized source of truth for Anti-Bot Fingerprinting
 # MUST match exactly between Browser Context and API Headers
@@ -109,9 +114,13 @@ CRAWLER_MAX_NOTES_COUNT = 15
 # ==================== 互动筛选配置 ====================
 # 互动量筛选阈值 (0 表示不限制)
 MIN_LIKES_COUNT = 0       # 最小点赞数
+MAX_LIKES_COUNT = 0       # 最大点赞数
 MIN_SHARES_COUNT = 0      # 最小分享数
+MAX_SHARES_COUNT = 0      # 最大分享数
 MIN_COMMENTS_COUNT = 0    # 最小评论数
+MAX_COMMENTS_COUNT = 0    # 最大评论数
 MIN_FAVORITES_COUNT = 0   # 最小收藏数
+MAX_FAVORITES_COUNT = 0   # 最大收藏数
 DEDUPLICATE_AUTHORS = False  # 博主去重：每个博主只保留一条内容
 
 # ==================== 时间筛选配置 ====================

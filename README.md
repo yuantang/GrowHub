@@ -10,7 +10,6 @@
 
 ### [Warp is built for coding with multiple AI agents](https://go.warp.dev/MediaCrawler)
 
-
 </div>
 <hr>
 
@@ -28,44 +27,38 @@
 [![中文](https://img.shields.io/badge/🇨🇳_中文-当前-blue)](README.md)
 [![English](https://img.shields.io/badge/🇺🇸_English-Available-green)](README_en.md)
 [![Español](https://img.shields.io/badge/🇪🇸_Español-Available-green)](README_es.md)
+
 </div>
 
-
-
 > **免责声明：**
-> 
-> 大家请以学习为目的使用本仓库⚠️⚠️⚠️⚠️，[爬虫违法违规的案件](https://github.com/HiddenStrawberry/Crawler_Illegal_Cases_In_China)  <br>
 >
->本仓库的所有内容仅供学习和参考之用，禁止用于商业用途。任何人或组织不得将本仓库的内容用于非法用途或侵犯他人合法权益。本仓库所涉及的爬虫技术仅用于学习和研究，不得用于对其他平台进行大规模爬虫或其他非法行为。对于因使用本仓库内容而引起的任何法律责任，本仓库不承担任何责任。使用本仓库的内容即表示您同意本免责声明的所有条款和条件。
+> 大家请以学习为目的使用本仓库 ⚠️⚠️⚠️⚠️，[爬虫违法违规的案件](https://github.com/HiddenStrawberry/Crawler_Illegal_Cases_In_China) <br>
+>
+> 本仓库的所有内容仅供学习和参考之用，禁止用于商业用途。任何人或组织不得将本仓库的内容用于非法用途或侵犯他人合法权益。本仓库所涉及的爬虫技术仅用于学习和研究，不得用于对其他平台进行大规模爬虫或其他非法行为。对于因使用本仓库内容而引起的任何法律责任，本仓库不承担任何责任。使用本仓库的内容即表示您同意本免责声明的所有条款和条件。
 >
 > 点击查看更为详细的免责声明。[点击跳转](#disclaimer)
 
-
-
-
 ## 📖 项目简介
 
-一个功能强大的**多平台自媒体数据采集工具**，支持小红书、抖音、快手、B站、微博、贴吧、知乎等主流平台的公开信息抓取。
+一个功能强大的**多平台自媒体数据采集工具**，支持小红书、抖音、快手、B 站、微博、贴吧、知乎等主流平台的公开信息抓取。
 
 ### 🔧 技术原理
 
 - **核心技术**：基于 [Playwright](https://playwright.dev/) 浏览器自动化框架登录保存登录态
-- **无需JS逆向**：利用保留登录态的浏览器上下文环境，通过 JS 表达式获取签名参数
+- **无需 JS 逆向**：利用保留登录态的浏览器上下文环境，通过 JS 表达式获取签名参数
 - **优势特点**：无需逆向复杂的加密算法，大幅降低技术门槛
 
-
 ## ✨ 功能特性
-| 平台   | 关键词搜索 | 指定帖子ID爬取 | 二级评论 | 指定创作者主页 | 登录态缓存 | IP代理池 | 生成评论词云图 |
-| ------ | ---------- | -------------- | -------- | -------------- | ---------- | -------- | -------------- |
-| 小红书 | ✅          | ✅              | ✅        | ✅              | ✅          | ✅        | ✅              |
-| 抖音   | ✅          | ✅              | ✅        | ✅              | ✅          | ✅        | ✅              |
-| 快手   | ✅          | ✅              | ✅        | ✅              | ✅          | ✅        | ✅              |
-| B 站   | ✅          | ✅              | ✅        | ✅              | ✅          | ✅        | ✅              |
-| 微博   | ✅          | ✅              | ✅        | ✅              | ✅          | ✅        | ✅              |
-| 贴吧   | ✅          | ✅              | ✅        | ✅              | ✅          | ✅        | ✅              |
-| 知乎   | ✅          | ✅              | ✅        | ✅              | ✅          | ✅        | ✅              |
 
-
+| 平台   | 关键词搜索 | 指定帖子 ID 爬取 | 二级评论 | 指定创作者主页 | 登录态缓存 | IP 代理池 | 生成评论词云图 |
+| ------ | ---------- | ---------------- | -------- | -------------- | ---------- | --------- | -------------- |
+| 小红书 | ✅         | ✅               | ✅       | ✅             | ✅         | ✅        | ✅             |
+| 抖音   | ✅         | ✅               | ✅       | ✅             | ✅         | ✅        | ✅             |
+| 快手   | ✅         | ✅               | ✅       | ✅             | ✅         | ✅        | ✅             |
+| B 站   | ✅         | ✅               | ✅       | ✅             | ✅         | ✅        | ✅             |
+| 微博   | ✅         | ✅               | ✅       | ✅             | ✅         | ✅        | ✅             |
+| 贴吧   | ✅         | ✅               | ✅       | ✅             | ✅         | ✅        | ✅             |
+| 知乎   | ✅         | ✅               | ✅       | ✅             | ✅         | ✅        | ✅             |
 
 <details>
 <summary>🚀 <strong>MediaCrawlerPro 重磅发布！开源不易，欢迎订阅支持</strong></summary>
@@ -75,25 +68,27 @@
 [MediaCrawlerPro](https://github.com/MediaCrawlerPro) 相较于开源版本的核心优势：
 
 #### 🎯 核心功能升级
+
 - ✅ **断点续爬功能**（重点特性）
-- ✅ **多账号 + IP代理池支持**（重点特性）
+- ✅ **多账号 + IP 代理池支持**（重点特性）
 - ✅ **去除 Playwright 依赖**，使用更简单
 - ✅ **完整 Linux 环境支持**
 
 #### 🏗️ 架构设计优化
+
 - ✅ **代码重构优化**，更易读易维护（解耦 JS 签名逻辑）
 - ✅ **企业级代码质量**，适合构建大型爬虫项目
 - ✅ **完美架构设计**，高扩展性，源码学习价值更大
 
 #### 🎁 额外功能
+
 - ✅ **自媒体视频下载器桌面端**（适合学习全栈开发）
 - ✅ **多平台首页信息流推荐**（HomeFeed）
-- [ ] **基于自媒体平台的AI Agent正在开发中 🚀🚀**
+- [ ] **基于自媒体平台的 AI Agent 正在开发中 🚀🚀**
 
 点击查看：[MediaCrawlerPro 项目主页](https://github.com/MediaCrawlerPro) 更多介绍
 
 </details>
-
 
 ## 🚀 快速开始
 
@@ -150,7 +145,7 @@ uv run main.py --platform xhs --lt qrcode --type detail
 uv run main.py --help
 ```
 
-## WebUI支持
+## WebUI 支持
 
 <details>
 <summary>🖥️ <strong>WebUI 可视化操作界面</strong></summary>
@@ -160,14 +155,14 @@ MediaCrawler 提供了基于 Web 的可视化操作界面，无需命令行也�
 #### 启动 WebUI 服务
 
 ```shell
-# 启动 API 服务器（默认端口 8080）
-uv run uvicorn api.main:app --port 8080 --reload
+# 启动 API 服务器（默认端口 8040）
+uv run uvicorn api.main:app --port 8040 --reload
 
 # 或者使用模块方式启动
 uv run python -m api.main
 ```
 
-启动成功后，访问 `http://localhost:8080` 即可打开 WebUI 界面。
+启动成功后，访问 `http://localhost:8040` 即可打开 WebUI 界面。
 
 #### WebUI 功能特性
 
@@ -236,21 +231,18 @@ python main.py --help
 
 </details>
 
-
 ## 💾 数据保存
 
 MediaCrawler 支持多种数据存储方式，包括 CSV、JSON、Excel、SQLite 和 MySQL 数据库。
 
 📖 **详细使用说明请查看：[数据存储指南](docs/data_storage_guide.md)**
 
-
 [🚀 MediaCrawlerPro 重磅发布 🚀！更多的功能，更好的架构设计！开源不易，欢迎订阅支持！](https://github.com/MediaCrawlerPro)
 
-
 ### 💬 交流群组
-- **微信交流群**：[点击加入](https://nanmicoder.github.io/MediaCrawler/%E5%BE%AE%E4%BF%A1%E4%BA%A4%E6%B5%81%E7%BE%A4.html)
-- **B站账号**：[关注我](https://space.bilibili.com/434377496)，分享AI与爬虫技术知识
 
+- **微信交流群**：[点击加入](https://nanmicoder.github.io/MediaCrawler/%E5%BE%AE%E4%BF%A1%E4%BA%A4%E6%B5%81%E7%BE%A4.html)
+- **B 站账号**：[关注我](https://space.bilibili.com/434377496)，分享 AI 与爬虫技术知识
 
 ### 💰 赞助商展示
 
@@ -278,28 +270,28 @@ Thordata：可靠且经济高效的代理服务提供商。为企业和开发者
 <br>
 <a href="https://www.thordata.com/products/residential-proxies/?ls=github&lk=mediacrawler">【住宅代理】</a> | <a href="https://www.thordata.com/products/web-scraper/?ls=github&lk=mediacrawler">【serp-api】</a>
 
-
 ### 🤝 成为赞助者
 
 成为赞助者，可以将您的产品展示在这里，每天获得大量曝光！
 
 **联系方式**：
+
 - 微信：`relakkes`
 - 邮箱：`relakkes@gmail.com`
+
 ---
 
 ### 📚 其他
+
 - **常见问题**：[MediaCrawler 完整文档](https://nanmicoder.github.io/MediaCrawler/)
 - **爬虫入门教程**：[CrawlerTutorial 免费教程](https://github.com/NanmiCoder/CrawlerTutorial)
 - **新闻爬虫开源项目**：[NewsCrawlerCollection](https://github.com/NanmiCoder/NewsCrawlerCollection)
-
 
 ## ⭐ Star 趋势图
 
 如果这个项目对您有帮助，请给个 ⭐ Star 支持一下，让更多的人看到 MediaCrawler！
 
 [![Star History Chart](https://api.star-history.com/svg?repos=NanmiCoder/MediaCrawler&type=Date)](https://star-history.com/#NanmiCoder/MediaCrawler&Date)
-
 
 ## 📚 参考
 
@@ -308,25 +300,32 @@ Thordata：可靠且经济高效的代理服务提供商。为企业和开发者
 - **短信转发**：[SmsForwarder 参考仓库](https://github.com/pppscn/SmsForwarder)
 - **内网穿透工具**：[ngrok 官方文档](https://ngrok.com/docs/)
 
-
 # 免责声明
-<div id="disclaimer"> 
+
+<div id="disclaimer">
 
 ## 1. 项目目的与性质
+
 本项目（以下简称“本项目”）是作为一个技术研究与学习工具而创建的，旨在探索和学习网络数据采集技术。本项目专注于自媒体平台的数据爬取技术研究，旨在提供给学习者和研究者作为技术交流之用。
 
 ## 2. 法律合规性声明
+
 本项目开发者（以下简称“开发者”）郑重提醒用户在下载、安装和使用本项目时，严格遵守中华人民共和国相关法律法规，包括但不限于《中华人民共和国网络安全法》、《中华人民共和国反间谍法》等所有适用的国家法律和政策。用户应自行承担一切因使用本项目而可能引起的法律责任。
 
 ## 3. 使用目的限制
+
 本项目严禁用于任何非法目的或非学习、非研究的商业行为。本项目不得用于任何形式的非法侵入他人计算机系统，不得用于任何侵犯他人知识产权或其他合法权益的行为。用户应保证其使用本项目的目的纯属个人学习和技术研究，不得用于任何形式的非法活动。
 
 ## 4. 免责声明
+
 开发者已尽最大努力确保本项目的正当性及安全性，但不对用户使用本项目可能引起的任何形式的直接或间接损失承担责任。包括但不限于由于使用本项目而导致的任何数据丢失、设备损坏、法律诉讼等。
 
 ## 5. 知识产权声明
+
 本项目的知识产权归开发者所有。本项目受到著作权法和国际著作权条约以及其他知识产权法律和条约的保护。用户在遵守本声明及相关法律法规的前提下，可以下载和使用本项目。
 
 ## 6. 最终解释权
+
 关于本项目的最终解释权归开发者所有。开发者保留随时更改或更新本免责声明的权利，恕不另行通知。
+
 </div>

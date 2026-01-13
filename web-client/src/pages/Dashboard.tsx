@@ -10,7 +10,7 @@ import {
     LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend
 } from 'recharts';
 
-const API_BASE = 'http://localhost:8080/api';
+const API_BASE = '/api';
 
 interface DashboardStats {
     running_projects: number;

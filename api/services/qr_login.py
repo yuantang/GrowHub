@@ -40,7 +40,8 @@ class QRLoginSession:
         self.account_name: Optional[str] = None
         self.error_message: Optional[str] = None
         self.created_at = datetime.now()
-        self.expires_at = datetime.now() + timedelta(minutes=3)
+        # 延长到 15 分钟
+        self.expires_at = datetime.now() + timedelta(minutes=15)
         self.browser_context: Optional[BrowserContext] = None
         self.page: Optional[Page] = None
     
@@ -109,10 +110,11 @@ class QRLoginService:
         if self.browser is None:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
-                headless=True,
+                headless=False,
                 args=[
                     '--disable-blink-features=AutomationControlled',
-                    '--disable-features=IsolateOrigins,site-per-process',
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
                 ]
             )
     
@@ -159,8 +161,11 @@ class QRLoginService:
             # 等待并触发登录弹窗（某些平台需要点击登录按钮）
             await self._trigger_login_dialog(page, platform)
             
-            # 等待二维码加载
-            await asyncio.sleep(2)
+            # 等待二维码加载 (Wait for QR specifically)
+            try:
+                await page.wait_for_selector(config["qr_selector"], timeout=10000)
+            except:
+                utils.logger.warning(f"[QRLogin] Timeout waiting for QR selector: {config['qr_selector']}")
             
             # 截取二维码图片
             qr_image = await self._capture_qr_code(page, config["qr_selector"])
@@ -198,10 +203,16 @@ class QRLoginService:
             utils.logger.info(f"[QRLogin] Triggering login dialog for {platform}...")
             if platform == "xhs":
                 # 小红书：点击右上角登录按钮
-                login_btn = await page.query_selector("text=登录")
+                await asyncio.sleep(2) # Wait for page stability
+
+                # Check if QR code is already visible
+                if await page.query_selector(self.platform_configs["xhs"]["qr_selector"]):
+                    return
+
+                login_btn = await page.query_selector(".login-btn, .side-bar .login-btn, text=登录")
                 if login_btn:
                     await login_btn.click()
-                    await asyncio.sleep(1)
+                    await asyncio.sleep(2)
             elif platform == "douyin":
                 # 抖音：优先使用精确选择器，减少超时等待
                 login_selectors = [
@@ -269,7 +280,7 @@ class QRLoginService:
             return
         
         poll_interval = 2  # 每2秒检查一次
-        max_polls = 90  # 最多检查90次（3分钟）
+        max_polls = 450  # 最多检查450次（15分钟）
         
         utils.logger.info(f"[QRLogin] Starting poll for session {session_id} (platform: {session.platform})")
         
@@ -294,7 +305,7 @@ class QRLoginService:
                     # Log all cookies for debugging
                     utils.logger.info(f"[QRLogin] Poll {i} Cookies: {list(cookie_dict.keys())}")
                     
-                    critical_keys = ["sessionid"] 
+                    critical_keys = config.get("key_cookies", [])
                     
                     for key in critical_keys:
                         if key not in cookie_dict:

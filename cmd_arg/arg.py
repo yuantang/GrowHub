@@ -290,6 +290,38 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
                 rich_help_panel="Filter Configuration",
             ),
         ] = config.MIN_FAVORITES_COUNT,
+        max_likes: Annotated[
+            int,
+            typer.Option(
+                "--max_likes",
+                help="Maximum number of likes",
+                rich_help_panel="Filter Configuration",
+            ),
+        ] = config.MAX_LIKES_COUNT,
+        max_shares: Annotated[
+            int,
+            typer.Option(
+                "--max_shares",
+                help="Maximum number of shares",
+                rich_help_panel="Filter Configuration",
+            ),
+        ] = config.MAX_SHARES_COUNT,
+        max_comments: Annotated[
+            int,
+            typer.Option(
+                "--max_comments",
+                help="Maximum number of comments",
+                rich_help_panel="Filter Configuration",
+            ),
+        ] = config.MAX_COMMENTS_COUNT,
+        max_favorites: Annotated[
+            int,
+            typer.Option(
+                "--max_favorites",
+                help="Maximum number of favorites",
+                rich_help_panel="Filter Configuration",
+            ),
+        ] = config.MAX_FAVORITES_COUNT,
         start_time: Annotated[
             str,
             typer.Option(
@@ -322,6 +354,22 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
                 rich_help_panel="Filter Configuration",
             ),
         ] = "false",
+        concurrency_num: Annotated[
+            int,
+            typer.Option(
+                "--concurrency_num",
+                help="Maximum concurrency for async tasks",
+                rich_help_panel="Runtime Configuration",
+            ),
+        ] = 3,
+        account_id: Annotated[
+            Optional[str],
+            typer.Option(
+                "--account_id",
+                help="Account ID for IP affinity",
+                rich_help_panel="Account Configuration",
+            ),
+        ] = None,
     ) -> SimpleNamespace:
         """MediaCrawler 命令行入口"""
 
@@ -353,9 +401,16 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
         config.MIN_SHARES_COUNT = min_shares
         config.MIN_COMMENTS_COUNT = min_comments
         config.MIN_FAVORITES_COUNT = min_favorites
+        config.MAX_LIKES_COUNT = max_likes
+        config.MAX_SHARES_COUNT = max_shares
+        config.MAX_COMMENTS_COUNT = max_comments
+        config.MAX_FAVORITES_COUNT = max_favorites
         config.START_TIME = start_time
         config.END_TIME = end_time
         config.PROJECT_ID = project_id
+        config.MAX_CONCURRENCY_NUM = concurrency_num
+        config.CONCURRENCY_NUM = concurrency_num
+        config.ACCOUNT_ID = account_id
 
         # Set platform-specific ID lists for detail/creator mode
         if specified_id_list:
@@ -400,6 +455,11 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
             end_time=end_time,
             project_id=project_id,
             deduplicate_authors=deduplicate_authors,
+            max_likes=max_likes,
+            max_shares=max_shares,
+            max_comments=max_comments,
+            max_favorites=max_favorites,
+            concurrency_num=concurrency_num,
         )
 
     command = typer.main.get_command(app)

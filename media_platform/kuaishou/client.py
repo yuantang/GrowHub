@@ -58,7 +58,9 @@ class KuaiShouClient(AbstractApiClient, ProxyRefreshMixin):
         self.cookie_dict = cookie_dict
         self.graphql = KuaiShouGraphQL()
         # Initialize proxy pool (from ProxyRefreshMixin)
-        self.init_proxy_pool(proxy_ip_pool)
+        # Pro Feature: Pass ACCOUNT_ID for IP-Account affinity
+        import config
+        self.init_proxy_pool(proxy_ip_pool, account_id=config.ACCOUNT_ID)
 
     async def request(self, method, url, **kwargs) -> Any:
         # Check if proxy is expired before each request
@@ -68,9 +70,48 @@ class KuaiShouClient(AbstractApiClient, ProxyRefreshMixin):
             response = await client.request(method, url, timeout=self.timeout, **kwargs)
         data: Dict = response.json()
         if data.get("errors"):
-            raise DataFetchError(data.get("errors", "unkonw error"))
+            errors = data.get("errors", [])
+            err_msg = str(errors)
+            
+            # Check for risk control / blocked
+            # KuaiShou often returns specific error codes in GraphQL errors
+            for err in errors:
+                if isinstance(err, dict):
+                    message = err.get("message", "")
+                    if "频率过快" in message or "RiskControl" in message or "风控" in message:
+                        await self.update_account_status("cooldown")
+                    elif "登录" in message or "token" in message.lower():
+                        await self.update_account_status("expired")
+            
+            raise DataFetchError(err_msg)
         else:
             return data.get("data", {})
+
+    async def update_account_status(self, status: str):
+        """Update account status in DB so API process can see it (Shared Pro Logic)"""
+        import config
+        account_id = getattr(config, "ACCOUNT_ID", None)
+        if not account_id:
+            return
+            
+        try:
+            from database.db_session import get_session
+            from database.growhub_models import GrowHubAccount
+            from sqlalchemy import update
+            
+            async with get_session() as session:
+                await session.execute(
+                    update(GrowHubAccount)
+                    .where(GrowHubAccount.id == account_id)
+                    .values(
+                        status=status,
+                        updated_at=utils.get_current_datetime()
+                    )
+                )
+                await session.commit()
+                utils.logger.warning(f"🚨 [KuaiShouClient] Account {account_id} status updated to: {status}")
+        except Exception as e:
+            utils.logger.error(f"[KuaiShouClient] Failed to update account status in DB: {e}")
 
     async def get(self, uri: str, params=None) -> Dict:
         final_uri = uri

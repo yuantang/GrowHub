@@ -3,7 +3,7 @@
 # 统一管理关键词、调度和通知
 
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Any
 from pydantic import BaseModel
 from ..services.account_pool import AccountStatus
@@ -25,8 +25,20 @@ class ProjectConfig(BaseModel):
     # 爬虫配置
     crawler_type: str = "search"
     crawl_limit: int = 20
+    crawl_date_range: int = 7
     enable_comments: bool = True
     deduplicate_authors: bool = False
+    max_concurrency: int = 3  # 最大并发数 (Pro 版特性)
+    
+    # 高级过滤器
+    min_likes: int = 0
+    max_likes: int = 0
+    min_comments: int = 0
+    max_comments: int = 0
+    min_shares: int = 0
+    max_shares: int = 0
+    min_favorites: int = 0
+    max_favorites: int = 0
     
     # 调度配置
     schedule_type: str = "interval"  # interval / cron
@@ -51,6 +63,7 @@ class ProjectInfo(BaseModel):
     crawl_limit: int
     enable_comments: bool
     deduplicate_authors: bool
+    max_concurrency: int
     schedule_type: str
     schedule_value: str
     is_active: bool
@@ -143,8 +156,17 @@ class ProjectService:
                 platforms=config.platforms,
                 crawler_type=config.crawler_type,
                 crawl_limit=config.crawl_limit,
+                crawl_date_range=config.crawl_date_range,
                 enable_comments=config.enable_comments,
                 deduplicate_authors=config.deduplicate_authors,
+                min_likes=config.min_likes,
+                max_likes=config.max_likes,
+                min_comments=config.min_comments,
+                max_comments=config.max_comments,
+                min_shares=config.min_shares,
+                max_shares=config.max_shares,
+                min_favorites=config.min_favorites,
+                max_favorites=config.max_favorites,
                 schedule_type=config.schedule_type,
                 schedule_value=config.schedule_value,
                 is_active=False,  # 创建时默认不启动
@@ -180,11 +202,38 @@ class ProjectService:
                 select(GrowHubProject).where(GrowHubProject.id == project_id)
             )
             project = result.scalar()
-            
             if not project:
                 return None
             
-            return self._to_dict(project)
+            # Fetch latest checkpoint info
+            from checkpoint.manager import get_checkpoint_manager
+            from database.growhub_models import GrowHubCheckpoint
+            from sqlalchemy import desc
+            
+            cp_result = await session.execute(
+                select(GrowHubCheckpoint)
+                .where(GrowHubCheckpoint.project_id == project_id)
+                .order_by(desc(GrowHubCheckpoint.updated_at))
+                .limit(1)
+            )
+            latest_cp = cp_result.scalar()
+            
+            project_dict = self._to_dict(project)
+            if latest_cp:
+                project_dict["latest_checkpoint"] = {
+                    "task_id": latest_cp.id,
+                    "status": latest_cp.status.value if hasattr(latest_cp.status, 'value') else latest_cp.status,
+                    "total_notes": latest_cp.total_notes_fetched,
+                    "total_comments": latest_cp.total_comments_fetched,
+                    "total_errors": latest_cp.total_errors,
+                    "current_page": latest_cp.current_page,
+                    "last_update": latest_cp.updated_at.isoformat() if latest_cp.updated_at else None
+                }
+            else:
+                project_dict["latest_checkpoint"] = None
+                
+            return project_dict
+
     
     async def list_projects(self) -> List[Dict[str, Any]]:
         """获取所有项目列表"""
@@ -356,11 +405,13 @@ class ProjectService:
             self.append_log(project_id, f"开始执行任务: {project.name}")
             self.append_log(project_id, f"关键词: {project.keywords}")
             
-            keywords_str = " ".join(project.keywords or [])
+            keywords_str = ",".join(project.keywords or [])
             platforms = project.platforms or ["xhs"]
             
-            total_crawled = 0
-            start_time = datetime.now()
+            total_crawled_items = 0
+            # start_time_utc for DB queries, start_time_local for duration logging
+            start_time_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+            start_time_local = datetime.now()
             
             
             MAX_ACCOUNT_RETRIES = 3  # 最大账号切换次数
@@ -389,8 +440,22 @@ class ProjectService:
                         plat_enum = AccountPlatform(platform)
                         self.append_log(project_id, f"正在获取 {display_platform} 平台账号 (尝试 {retry_num + 1}/{MAX_ACCOUNT_RETRIES})...")
                         
-                        # 获取所有可用账号中未尝试过的
-                        account = await pool.get_available_account(plat_enum, exclude_ids=tried_accounts)
+                        # 获取所有可用账号中未尝试过的 (Sticky Sessions: 传入 project_id)
+                        account = await pool.get_available_account(plat_enum, exclude_ids=tried_accounts, project_id=project_id)
+                        
+                        if not account and retry_num == 0:
+                            # 如果是第一次尝试且没有可用账号，检查是否有账号即将结束冷却 (Wait up to 15s if an account is almost ready)
+                            all_accounts = await pool.get_all_accounts(plat_enum)
+                            now = datetime.now()
+                            soon_available = [a for a in all_accounts if a.id not in tried_accounts and a.status == AccountStatus.ACTIVE and a.cooldown_until and now < a.cooldown_until < now + timedelta(seconds=20)]
+                            
+                            if soon_available:
+                                next_ready = min(soon_available, key=lambda a: a.cooldown_until)
+                                wait_sec = (next_ready.cooldown_until - now).total_seconds() + 1
+                                self.append_log(project_id, f"⏳ 账号 {next_ready.account_name} 冷却中，等待 {wait_sec:.1f} 秒...")
+                                await asyncio.sleep(wait_sec)
+                                account = next_ready
+
                         if not account:
                             if retry_num == 0:
                                 self.append_log(project_id, f"❌ 平台 {display_platform} 没有可用账号，跳过")
@@ -427,11 +492,15 @@ class ProjectService:
                         
                         # 计算动态时间范围 (Dynamically calculate time range)
                         start_time_str = ""
+                        start_time_str = ""
+                        end_time_str = ""
                         if getattr(project, 'crawl_date_range', 0) > 0:
                             range_days = project.crawl_date_range
-                            start_date = datetime.now() - timedelta(days=range_days)
-                            start_time_str = start_date.strftime("%Y-%m-%d")
-                            self.append_log(project_id, f"📅 爬取时间范围: 最近 {range_days} 天 (从 {start_time_str} 开始)")
+                            now = datetime.now()
+                            start_date = now - timedelta(days=range_days)
+                            start_time_str = start_date.strftime("%Y-%m-%d %H:%M:%S")
+                            end_time_str = now.strftime("%Y-%m-%d %H:%M:%S")
+                            self.append_log(project_id, f"📅 爬取时间窗口: {start_time_str} 至 {end_time_str} (最近 {range_days} 天)")
                         
                         config = CrawlerStartRequest(
                             platform=mc_platform,
@@ -440,26 +509,36 @@ class ProjectService:
                             save_option="sqlite",
                             keywords=keywords_str,
                             cookies=cookies,
-                            headless=True,
+                            headless=False,
                             crawl_limit_count=project.crawl_limit or 20,
-                            start_time=start_time_str,  # Pass dynamic start time
-                            enable_comments=project.enable_comments or True,
+                            start_time=start_time_str,
+                            end_time=end_time_str,
+                            enable_comments=project.enable_comments if project.enable_comments is not None else True,
                             project_id=project.id,  # 关联项目 ID
                             # Pass interaction filters from project settings
                             min_likes=getattr(project, 'min_likes', 0) or 0,
                             min_comments=getattr(project, 'min_comments', 0) or 0,
                             min_shares=getattr(project, 'min_shares', 0) or 0,
                             min_favorites=getattr(project, 'min_favorites', 0) or 0,
+                            max_likes=getattr(project, 'max_likes', 0) or 0,
+                            max_comments=getattr(project, 'max_comments', 0) or 0,
+                            max_shares=getattr(project, 'max_shares', 0) or 0,
+                            max_favorites=getattr(project, 'max_favorites', 0) or 0,
                             deduplicate_authors=getattr(project, 'deduplicate_authors', False) or False,
+                            concurrency_num=getattr(project, 'max_concurrency', 3) or 3,
+                            account_id=str(account.id),
                         )
+
                         
                         # Log all config values before execution
                         self.append_log(project_id, f"📋 爬虫配置参数:")
                         self.append_log(project_id, f"   - 平台: {mc_platform}, 类型: {config.crawler_type}")
                         self.append_log(project_id, f"   - 抓取数量: {config.crawl_limit_count}")
                         self.append_log(project_id, f"   - 开始时间: {config.start_time or '不限'}")
-                        self.append_log(project_id, f"   - 最小点赞: {config.min_likes}, 最小评论: {config.min_comments}")
-                        self.append_log(project_id, f"   - 最小分享: {config.min_shares}, 最小收藏: {config.min_favorites}")
+                        self.append_log(project_id, f"   - 点赞范围: {config.min_likes} ~ {config.max_likes if config.max_likes > 0 else '不限'}")
+                        self.append_log(project_id, f"   - 评论范围: {config.min_comments} ~ {config.max_comments if config.max_comments > 0 else '不限'}")
+                        self.append_log(project_id, f"   - 分享范围: {config.min_shares} ~ {config.max_shares if config.max_shares > 0 else '不限'}")
+                        self.append_log(project_id, f"   - 收藏范围: {config.min_favorites} ~ {config.max_favorites if config.max_favorites > 0 else '不限'}")
                         self.append_log(project_id, f"   - 博主去重: {'是' if config.deduplicate_authors else '否'}")
                         
                         success = await crawler_manager.start(config)
@@ -496,13 +575,30 @@ class ProjectService:
                             # 检查最终状态
                             final_status = crawler_manager.status
                             if final_status == "completed":
-                                self.append_log(project_id, f"✅ 平台 {display_platform} 爬取任务成功完成")
-                                total_crawled += 1
-                                success_this_platform = True
-                                
-                                # 更新账号成功次数
-                                await pool.record_account_usage(account.id, success=True)
-                                break  # 成功，跳出重试循环
+                                 # 获取本次任务抓取到的内容数量
+                                 platform_new_items = 0
+                                 try:
+                                     from database.growhub_models import GrowHubContent
+                                     from sqlalchemy import func
+                                     async with get_session() as session:
+                                         # 统计该项目该平台自任务启动以来的新内容 (Count new contents for this project & platform since task start)
+                                         count_result = await session.execute(
+                                             select(func.count(GrowHubContent.id))
+                                             .where(GrowHubContent.project_id == project_id)
+                                             .where(GrowHubContent.platform == platform)
+                                             .where(GrowHubContent.crawl_time >= start_time_utc)
+                                         )
+                                         platform_new_items = count_result.scalar() or 0
+                                         total_crawled_items += platform_new_items
+                                 except Exception as e:
+                                     self.append_log(project_id, f"⚠️ 统计数据失败: {e}")
+
+                                 self.append_log(project_id, f"✅ 平台 {display_platform} 爬取任务成功完成，抓取 {platform_new_items} 条新内容")
+                                 success_this_platform = True
+                                 
+                                 # 更新账号成功次数 (Sticky Sessions)
+                                 await pool.record_account_usage(account.id, success=True, project_id=project_id)
+                                 break  # 成功，跳出重试循环
                             else:
                                 # 爬虫失败
                                 self.append_log(project_id, f"⚠️ 爬虫状态异常: {final_status}，尝试切换账号...")
@@ -521,17 +617,16 @@ class ProjectService:
                                     await pool.update_account(account.id, {"status": AccountStatus.BANNED})
                                 else:
                                     self.append_log(project_id, "🔍 未发现权限相关错误")
-                                
-                                await pool.record_account_usage(account.id, success=False)
+                                await pool.record_account_usage(account.id, success=False, project_id=project_id)
                                 # 继续下一次重试
                                 
                     except Exception as e:
                         error_msg = str(e)
-                        self.append_log(project_id, f"❌ 爬虫执行异常: {error_msg}")
+                        self.append_log(project_id, f"❌ 平台 {display_platform} 爬虫执行异常: {error_msg}")
                         
                         # 标记账号失败
                         try:
-                            await pool.record_account_usage(account.id, success=False)
+                            await pool.record_account_usage(account.id, success=False, project_id=project_id)
                         except:
                             pass
                         
@@ -549,13 +644,26 @@ class ProjectService:
                     self.append_log(project_id, f"❌ 平台 {display_platform} 所有账号均失败")
 
             
-            # 更新统计
-            self.append_log(project_id, f"📊 任务统计: 新增抓取 {total_crawled} 次")
-            project.total_crawled = (project.total_crawled or 0) + total_crawled
-            project.today_crawled = (project.today_crawled or 0) + total_crawled
+            # 更新统计 (Final Statistics Update)
+            try:
+                async with get_session() as session:
+                    # 我们需要重新获取 project 对象，因为它可能已经过期
+                    refresh_proj = await session.get(GrowHubProject, project_id)
+                    if refresh_proj:
+                        refresh_proj.total_crawled = (refresh_proj.total_crawled or 0) + total_crawled_items
+                        refresh_proj.today_crawled = (refresh_proj.today_crawled or 0) + total_crawled_items
+                        await session.commit()
+            except Exception as e:
+                print(f"Update stats error: {e}")
+
+            self.append_log(project_id, "========================================")
+            self.append_log(project_id, f"📊 任务汇总报告:")
+            self.append_log(project_id, f"   - 项目名称: {project.name}")
+            self.append_log(project_id, f"   - 总计抓取: {total_crawled_items} 条新内容")
+            self.append_log(project_id, f"   - 运行耗时: {(datetime.now() - start_time_local).total_seconds():.1f} 秒")
             
             # --- Alert Processing ---
-            if total_crawled > 0:
+            if total_crawled_items > 0:
                 try:
                     from api.services.alert import get_alert_service
                     from database.growhub_models import GrowHubContent
@@ -573,7 +681,7 @@ class ProjectService:
                             result = await session.execute(
                                 select(GrowHubContent).where(
                                     and_(
-                                        GrowHubContent.created_at >= start_time,
+                                        GrowHubContent.created_at >= start_time_utc,
                                         GrowHubContent.source_keyword.in_(project.keywords)
                                     )
                                 )
@@ -584,15 +692,21 @@ class ProjectService:
                                 self.append_log(project_id, f"🔔 发现 {len(new_contents)} 条新内容，正在分析舆情...")
                                 alerts_count = await alert_service.process_project_alerts(project, new_contents)
                                 
-                                project.total_alerts = (project.total_alerts or 0) + alerts_count
-                                project.today_alerts = (project.today_alerts or 0) + alerts_count
+                                # Fetch project in this session to update counts
+                                refresh_proj = await session.get(GrowHubProject, project_id)
+                                if refresh_proj:
+                                    refresh_proj.total_alerts = (refresh_proj.total_alerts or 0) + alerts_count
+                                    refresh_proj.today_alerts = (refresh_proj.today_alerts or 0) + alerts_count
+                                    await session.commit()
+                                
                                 self.append_log(project_id, f"📩 触发 {alerts_count} 条预警通知")
                             else:
                                 self.append_log(project_id, "没有符合条件的新内容，跳过预警")
                 except Exception as e:
                     self.append_log(project_id, f"❌ 预警处理失败: {e}")
             
-            self.append_log(project_id, "🏁 本次任务执行结束")
+            self.append_log(project_id, "🏁 本次自动化监控任务全部执行结束")
+            self.append_log(project_id, "========================================")
             
             # 计算下次运行时间
             if project.is_active and project.schedule_type == "interval":
@@ -819,10 +933,13 @@ class ProjectService:
                 "description": (c.description[:200] + "...") if c.description and len(c.description) > 200 else c.description,
                 "url": c.content_url,
                 "author": c.author_name,
+                "author_id": c.author_id,
                 "author_avatar": c.author_avatar,
+                "author_fans": c.author_fans_count,
+                "author_likes": c.author_likes_count,
                 "cover_url": c.cover_url,
-                "publish_time": c.publish_time.isoformat() if c.publish_time else None,
-                "crawl_time": c.crawl_time.isoformat() if c.crawl_time else None,  # Fix: add missing crawl_time
+                "publish_time": (c.publish_time.replace(tzinfo=timezone.utc).isoformat() if c.publish_time else None),
+                "crawl_time": (c.crawl_time.replace(tzinfo=timezone.utc).isoformat() if c.crawl_time else None),  # Fix: add missing crawl_time
                 "sentiment": c.sentiment,
                 "view_count": c.view_count,
                 "like_count": c.like_count,

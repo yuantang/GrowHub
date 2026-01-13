@@ -343,7 +343,7 @@ class SchedulerService:
         platform = params.get("platform", "xhs")
         keywords = params.get("keywords", "")
         if isinstance(keywords, list):
-            keywords = " ".join(keywords)  # 转换为字符串
+            keywords = ",".join(keywords)  # 转换为字符串
             
         # 1. 准备 Cookie
         cookies = params.get("cookies")

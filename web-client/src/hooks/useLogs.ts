@@ -3,7 +3,7 @@ import type { LogEntry } from '@/api';
 
 // WebSocket API base URL - use API server not Vite dev server
 const WS_BASE = import.meta.env.DEV
-    ? 'ws://localhost:8080'
+    ? 'ws://localhost:8040'
     : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`;
 
 export function useLogs() {

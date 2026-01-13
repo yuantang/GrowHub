@@ -21,6 +21,7 @@ import asyncio
 import copy
 import json
 import urllib.parse
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Callable, Dict, Union, Optional
 
 import httpx
@@ -58,7 +59,10 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
         self.playwright_page = playwright_page
         self.cookie_dict = cookie_dict
         # 初始化代理池（来自 ProxyRefreshMixin）
-        self.init_proxy_pool(proxy_ip_pool)
+        # Pro Feature: Pass ACCOUNT_ID for IP-Account affinity
+        import config
+        self.init_proxy_pool(proxy_ip_pool, account_id=config.ACCOUNT_ID)
+
 
     async def __process_req_params(
         self,
@@ -77,27 +81,29 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
             "device_platform": "webapp",
             "aid": "6383",
             "channel": "channel_pc_web",
+            "publish_video_strategy_type": 2,
+            "update_version_code": 170400,
+            "pc_client_type": 1,
             "version_code": "190600",
             "version_name": "19.6.0",
-            "update_version_code": "170400",
-            "pc_client_type": "1",
             "cookie_enabled": "true",
+            "screen_width": 2560,
+            "screen_height": 1440,
             "browser_language": "zh-CN",
             "browser_platform": "MacIntel",
-            "browser_name": config.BROWSER_NAME,
-            "browser_version": config.BROWSER_VERSION,
+            "browser_name": "Chrome",
+            "browser_version": "135.0.0.0",
             "browser_online": "true",
             "engine_name": "Blink",
-            "os_name": config.OS_NAME,
-            "os_version": config.OS_VERSION,
-            "cpu_core_num": "8",
-            "device_memory": "8",
-            "engine_version": "109.0",
+            "engine_version": "135.0.0.0",
+            "os_name": "Mac OS",
+            "os_version": "10.15.7",
+            "cpu_core_num": 8,
+            "device_memory": 8,
             "platform": "PC",
-            "screen_width": "2560",
-            "screen_height": "1440",
-            'effective_type': '4g',
-            "round_trip_time": "50",
+            "downlink": 4.45,
+            "effective_type": "4g",
+            "round_trip_time": 100,
             "webid": get_web_id(),
             "msToken": local_storage.get("xmst"),
         }
@@ -109,17 +115,48 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
         if request_method == "POST":
             post_data = params
 
-        # Reference MediaCrawler logic: Search API does NOT use a_bogus
-        # This matches the working open-source implementation
-        if "/v1/web/general/search" not in uri:
-            a_bogus = await get_a_bogus(
-                url=uri,
-                params=query_string,
-                post_data=post_data,
-                user_agent=headers.get("User-Agent"),
-                page=self.playwright_page
-            )
+        # 202410: Enable signatures for ALL endpoints including search to avoid verify_check
+        a_bogus = await get_a_bogus(
+            url=uri,
+            params=query_string,
+            post_data=post_data,
+            user_agent=headers.get("User-Agent"),
+            page=self.playwright_page
+        )
+        if a_bogus:
             params["a_bogus"] = a_bogus
+        else:
+            # Fallback to playwright evaluation if JS signature fails
+            utils.logger.debug(f"[DouYinClient] JS signature failed for {uri}, trying playwright...")
+            a_bogus = await get_a_bogus_from_playright(query_string, post_data, headers.get("User-Agent"), self.playwright_page)
+            if a_bogus:
+                params["a_bogus"] = a_bogus
+
+    async def update_account_status(self, status: str):
+        """Update account status in DB so API process can see it"""
+        import config
+        account_id = getattr(config, "ACCOUNT_ID", None)
+        if not account_id:
+            return
+            
+        try:
+            from database.db_session import get_session
+            from database.growhub_models import GrowHubAccount
+            from sqlalchemy import update
+            
+            async with get_session() as session:
+                await session.execute(
+                    update(GrowHubAccount)
+                    .where(GrowHubAccount.id == account_id)
+                    .values(
+                        status=status,
+                        updated_at=datetime.now()
+                    )
+                )
+                await session.commit()
+                utils.logger.warning(f"🚨 [DouYinClient] Account {account_id} status updated to: {status}")
+        except Exception as e:
+            utils.logger.error(f"[DouYinClient] Failed to update account status in DB: {e}")
 
     @retry(stop=stop_after_attempt(3), wait=wait_fixed(1))
     async def request(self, method, url, **kwargs):
@@ -130,11 +167,16 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
             response = await client.request(method, url, timeout=self.timeout, **kwargs)
         try:
             if response.text == "" or response.text == "blocked":
-                utils.logger.error(f"request params incrr, response.text: {response.text}")
-                raise Exception("account blocked")
+                utils.logger.warning(f"[DouYinClient] Response text is empty or 'blocked'. URL: {url}")
+                # 暂时移除自动封禁逻辑，过于激进会导致账号池耗尽
+                # await self.update_account_status("banned")
+                raise Exception("account blocked or empty response")
             return response.json()
         except Exception as e:
+            if "account blocked" in str(e):
+                raise e
             raise DataFetchError(f"{e}, {response.text}")
+
 
     async def get(self, uri: str, params: Optional[Dict] = None, headers: Optional[Dict] = None):
         """
@@ -190,7 +232,7 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
             'is_filter_search': '0',
             'from_group_id': '7378810571505847586',
             'offset': offset,
-            'count': '15',
+            'count': '20',
             'need_filter_settings': '1',
             'list_type': 'multi',
             'search_id': search_id,
@@ -337,7 +379,9 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
             "publish_video_strategy_type": 2,
             "personal_center_strategy": 1,
         }
-        return await self.get(uri, params)
+        headers = copy.copy(self.headers)
+        headers["Referer"] = f"https://www.douyin.com/user/{sec_user_id}"
+        return await self.get(uri, params, headers)
 
     async def get_user_aweme_posts(self, sec_user_id: str, max_cursor: str = "") -> Dict:
         uri = "/aweme/v1/web/aweme/post/"

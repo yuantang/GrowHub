@@ -82,6 +82,37 @@ class SignServiceClient:
         except httpx.RequestError as e:
             raise Exception(f"Sign service connection error: {e}")
 
+    async def douyin_sign(
+        self,
+        uri: str,
+        params: str,
+        user_agent: str,
+        post_data: Dict = None
+    ) -> str:
+        """
+        RPC 签名借鉴：向签名服务器请求 Douyin a_bogus
+        """
+        client = await self._get_client()
+        try:
+            response = await client.post(
+                f"{self.base_url}/sign/douyin",
+                json={
+                    "uri": uri,
+                    "params": params,
+                    "user_agent": user_agent,
+                    "post_data": post_data or {}
+                }
+            )
+            response.raise_for_status()
+            result = response.json()
+            if result.get("success"):
+                return result.get("a_bogus", "")
+            return ""
+        except Exception as e:
+            # RPC 失败时不抛出异常，允许降级到本地 JS
+            print(f"⚠️ [RPC] Douyin sign failed: {e}")
+            return ""
+
     async def health_check(self) -> bool:
         """
         Check if sign service is healthy

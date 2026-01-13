@@ -65,7 +65,9 @@ class WeiboClient(ProxyRefreshMixin):
         self.cookie_dict = cookie_dict
         self._image_agent_host = "https://i1.wp.com/"
         # Initialize proxy pool (from ProxyRefreshMixin)
-        self.init_proxy_pool(proxy_ip_pool)
+        # Pro Feature: Pass ACCOUNT_ID for IP-Account affinity
+        import config
+        self.init_proxy_pool(proxy_ip_pool, account_id=config.ACCOUNT_ID)
 
     @retry(stop=stop_after_attempt(5), wait=wait_fixed(3))
     async def request(self, method, url, **kwargs) -> Union[Response, Dict]:
@@ -84,6 +86,14 @@ class WeiboClient(ProxyRefreshMixin):
         except json.decoder.JSONDecodeError:
             # issue: #771 Search API returns error 432, retry multiple times + update h5 cookies
             utils.logger.error(f"[WeiboClient.request] request {method}:{url} err code: {response.status_code} res:{response.text}")
+            
+            # Risk control 432 / 403
+            if response.status_code in [432, 403]:
+                await self.update_account_status("cooldown")
+            # Unauthorized
+            elif response.status_code == 401:
+                await self.update_account_status("expired")
+                
             await self.playwright_page.goto(self._host)
             await asyncio.sleep(2)
             await self.update_cookies(browser_context=self.playwright_page.context)
@@ -112,6 +122,32 @@ class WeiboClient(ProxyRefreshMixin):
     async def post(self, uri: str, data: dict) -> Dict:
         json_str = json.dumps(data, separators=(',', ':'), ensure_ascii=False)
         return await self.request(method="POST", url=f"{self._host}{uri}", data=json_str, headers=self.headers)
+
+    async def update_account_status(self, status: str):
+        """Update account status in DB so API process can see it (Shared Pro Logic)"""
+        import config
+        account_id = getattr(config, "ACCOUNT_ID", None)
+        if not account_id:
+            return
+            
+        try:
+            from database.db_session import get_session
+            from database.growhub_models import GrowHubAccount
+            from sqlalchemy import update
+            
+            async with get_session() as session:
+                await session.execute(
+                    update(GrowHubAccount)
+                    .where(GrowHubAccount.id == account_id)
+                    .values(
+                        status=status,
+                        updated_at=utils.get_current_datetime()
+                    )
+                )
+                await session.commit()
+                utils.logger.warning(f"🚨 [WeiboClient] Account {account_id} status updated to: {status}")
+        except Exception as e:
+            utils.logger.error(f"[WeiboClient] Failed to update account status in DB: {e}")
 
     async def pong(self) -> bool:
         """get a note to check if login state is ok"""

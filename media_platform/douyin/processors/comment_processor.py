@@ -137,9 +137,15 @@ class CommentProcessor:
             if not comments:
                 continue
                 
+            # DB-backed granular deduplication for comments (Pro Feature)
+            for comment in comments:
+                comment_id = comment.get("cid")
+                if comment_id:
+                    await self.checkpoint_manager.add_processed_note(checkpoint.task_id, comment_id, note_type="comment")
+                    
             result.extend(comments)
             # Save to Store
-            await douyin_store.batch_update_dy_aweme_comments(aweme_id, comments) # ensure store accepts objects
+            await douyin_store.batch_update_dy_aweme_comments(aweme_id, comments) 
             
             if config.PER_NOTE_MAX_COMMENTS_COUNT > 0 and len(result) >= config.PER_NOTE_MAX_COMMENTS_COUNT:
                 break

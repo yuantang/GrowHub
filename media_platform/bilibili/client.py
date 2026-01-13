@@ -62,7 +62,9 @@ class BilibiliClient(AbstractApiClient, ProxyRefreshMixin):
         self.playwright_page = playwright_page
         self.cookie_dict = cookie_dict
         # Initialize proxy pool (from ProxyRefreshMixin)
-        self.init_proxy_pool(proxy_ip_pool)
+        # Pro Feature: Pass ACCOUNT_ID for IP-Account affinity
+        import config
+        self.init_proxy_pool(proxy_ip_pool, account_id=config.ACCOUNT_ID)
 
     async def request(self, method, url, **kwargs) -> Any:
         # Check if proxy has expired before each request
@@ -76,7 +78,17 @@ class BilibiliClient(AbstractApiClient, ProxyRefreshMixin):
             utils.logger.error(f"[BilibiliClient.request] Failed to decode JSON from response. status_code: {response.status_code}, response_text: {response.text}")
             raise DataFetchError(f"Failed to decode JSON, content: {response.text}")
         if data.get("code") != 0:
-            raise DataFetchError(data.get("message", "unkonw error"))
+            err_code = data.get("code")
+            err_msg = data.get("message", "unknown error")
+            
+            # Risk control / Blocked
+            if err_code in [-412, -352]:
+                await self.update_account_status("cooldown")
+            # Cookie expired
+            elif err_code == -101:
+                await self.update_account_status("expired")
+                
+            raise DataFetchError(err_msg)
         else:
             return data.get("data", {})
 
@@ -111,9 +123,34 @@ class BilibiliClient(AbstractApiClient, ProxyRefreshMixin):
             resp = await self.request(method="GET", url=self._host + "/x/web-interface/nav")
             img_url: str = resp['wbi_img']['img_url']
             sub_url: str = resp['wbi_img']['sub_url']
-        img_key = img_url.rsplit('/', 1)[1].split('.')[0]
         sub_key = sub_url.rsplit('/', 1)[1].split('.')[0]
         return img_key, sub_key
+
+    async def update_account_status(self, status: str):
+        """Update account status in DB so API process can see it (Shared Pro Logic)"""
+        import config
+        account_id = getattr(config, "ACCOUNT_ID", None)
+        if not account_id:
+            return
+            
+        try:
+            from database.db_session import get_session
+            from database.growhub_models import GrowHubAccount
+            from sqlalchemy import update
+            
+            async with get_session() as session:
+                await session.execute(
+                    update(GrowHubAccount)
+                    .where(GrowHubAccount.id == account_id)
+                    .values(
+                        status=status,
+                        updated_at=utils.get_current_datetime()
+                    )
+                )
+                await session.commit()
+                utils.logger.warning(f"🚨 [BilibiliClient] Account {account_id} status updated to: {status}")
+        except Exception as e:
+            utils.logger.error(f"[BilibiliClient] Failed to update account status in DB: {e}")
 
     async def get(self, uri: str, params=None, enable_params_sign: bool = True) -> Dict:
         final_uri = uri

@@ -3,7 +3,7 @@
 # 将各平台抓取的原始数据映射并同步到 GrowHubContent 统一表中
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 import re
 from typing import Dict, Any, List, Optional
 from sqlalchemy import select, update, and_
@@ -25,6 +25,16 @@ class GrowHubStoreService:
         :param platform: 平台标识 (xhs/dy/wb/bili/ks/tieba/zhihu)
         :param raw_data: 对应平台的 local_db_item
         """
+        # 0. 规范化平台标识 (统一使用短名称)
+        platform_map = {
+            "douyin": "dy",
+            "bilibili": "bili",
+            "weibo": "wb",
+            "xiaohongshu": "xhs",
+            "kuaishou": "ks"
+        }
+        platform = platform_map.get(platform, platform)
+
         try:
             # 1. 字段映射
             content_id = self._get_platform_content_id(platform, raw_data)
@@ -70,13 +80,19 @@ class GrowHubStoreService:
                     raw_data.get("video_download_url") or 
                     raw_data.get("video_play_url")
                 )
-                # 排除页面链接，只保留视频文件链接
-                if video_url and ("bilibili.com" in video_url or "weibo.cn" in video_url) and not video_url.endswith(".mp4"):
-                    video_url = None
+                # 排除页面链接和非视频文件链接
+                if video_url:
+                    video_url_lower = video_url.lower()
+                    if (("bilibili.com" in video_url_lower or "weibo.cn" in video_url_lower) and not video_url_lower.endswith(".mp4")) or \
+                       (video_url_lower.endswith(".mp3") or video_url_lower.endswith(".m4a")):
+                        video_url = None
                 
                 # 提取IP归属地
                 ip_location = raw_data.get("ip_location")
 
+                # 提取作者 ID (抖音优先使用 sec_uid 用于主页跳转)
+                author_id = str(raw_data.get("sec_uid") or raw_data.get("user_id") or "")
+                
                 # 构造/更新数据
                 content_data = {
                     "platform": platform,
@@ -88,7 +104,7 @@ class GrowHubStoreService:
                     "cover_url": media_urls[0] if media_urls else raw_data.get("cover_url") or raw_data.get("video_cover"),
                     "video_url": video_url,  # 可播放的视频URL
                     "media_urls": media_urls,
-                    "author_id": str(raw_data.get("user_id")),
+                    "author_id": author_id,
                     "author_name": raw_data.get("nickname") or raw_data.get("author_name"),
                     "author_avatar": raw_data.get("avatar") or raw_data.get("user_avatar"),
                     "author_contact": self._extract_contact_info(text_content),
@@ -106,7 +122,8 @@ class GrowHubStoreService:
                     "source_keyword": raw_data.get("source_keyword"),
                     "project_id": raw_data.get("project_id"),  # 关联的项目 ID
                     "publish_time": publish_time,
-                    "updated_at": datetime.now()
+                    "crawl_time": datetime.now(timezone.utc).replace(tzinfo=None),
+                    "updated_at": datetime.now(timezone.utc).replace(tzinfo=None)
                 }
 
                 if existing_content:
@@ -115,7 +132,7 @@ class GrowHubStoreService:
                         setattr(existing_content, key, value)
                 else:
                     # 新增
-                    content_data["created_at"] = datetime.now()
+                    content_data["created_at"] = datetime.now(timezone.utc).replace(tzinfo=None)
                     new_content = GrowHubContent(**content_data)
                     session.add(new_content)
 
@@ -176,7 +193,7 @@ class GrowHubStoreService:
                 # 如果是毫秒级时间戳
                 if ts > 10**11:
                     ts = ts / 1000
-                return datetime.fromtimestamp(ts)
+                return datetime.fromtimestamp(ts, tz=timezone.utc).replace(tzinfo=None) # Store as naive UTC
             elif isinstance(ts, str):
                 # 尝试解析 ISO 格式或其他
                 return datetime.fromisoformat(ts.replace('Z', '+00:00'))

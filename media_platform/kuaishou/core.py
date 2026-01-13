@@ -46,6 +46,8 @@ from .client import KuaiShouClient
 from .exception import DataFetchError
 from .help import parse_video_info_from_url, parse_creator_info_from_url
 from .login import KuaishouLogin
+from .extractor import KuaiShouExtractor
+from checkpoint.manager import CheckpointManager
 
 
 class KuaishouCrawler(AbstractCrawler):
@@ -59,6 +61,8 @@ class KuaishouCrawler(AbstractCrawler):
         self.user_agent = utils.get_user_agent()
         self.cdp_manager = None
         self.ip_proxy_pool = None  # Proxy IP pool, used for automatic proxy refresh
+        self.checkpoint_manager = CheckpointManager()
+        self.ks_extractor = KuaiShouExtractor()
 
     async def start(self):
         playwright_proxy_format, httpx_proxy_format = None, None
@@ -151,10 +155,38 @@ class KuaishouCrawler(AbstractCrawler):
         for keyword in config.KEYWORDS.split(","):
             search_session_id = ""
             source_keyword_var.set(keyword)
+            import var
+            var.project_id_var.set(config.PROJECT_ID)
+            
             utils.logger.info(
                 f"[KuaishouCrawler.search] Current search keyword: {keyword}"
             )
             page = 1
+            total_crawled_count = 0
+            
+            # Pro Feature: Load or create checkpoint
+            checkpoint = await self.checkpoint_manager.find_matching_checkpoint(
+                platform="kuaishou",
+                crawler_type="search",
+                project_id=config.PROJECT_ID,
+                keywords=keyword
+            )
+            
+            if checkpoint:
+                page = checkpoint.current_page
+                total_crawled_count = checkpoint.total_notes
+                utils.logger.info(f"🚩 [KuaishouCrawler.search] Resuming from checkpoint: Page {page}, Videos {total_crawled_count}")
+            else:
+                checkpoint = await self.checkpoint_manager.create_checkpoint(
+                    platform="kuaishou",
+                    crawler_type="search",
+                    project_id=config.PROJECT_ID,
+                    keywords=keyword
+                )
+            
+            checkpoint.status = "running"
+            checkpoint.last_update = datetime.now()
+
             while (
                 page - start_page + 1
             ) * ks_limit_count <= config.CRAWLER_MAX_NOTES_COUNT:
@@ -162,40 +194,89 @@ class KuaishouCrawler(AbstractCrawler):
                     utils.logger.info(f"[KuaishouCrawler.search] Skip page: {page}")
                     page += 1
                     continue
-                utils.logger.info(
-                    f"[KuaishouCrawler.search] search kuaishou keyword: {keyword}, page: {page}"
-                )
-                video_id_list: List[str] = []
-                videos_res = await self.ks_client.search_info_by_keyword(
-                    keyword=keyword,
-                    pcursor=str(page),
-                    search_session_id=search_session_id,
-                )
-                if not videos_res:
-                    utils.logger.error(
-                        f"[KuaishouCrawler.search] search info by keyword:{keyword} not found data"
+                
+                try:
+                    utils.logger.info(
+                        f"[KuaishouCrawler.search] search kuaishou keyword: {keyword}, page: {page}"
                     )
-                    continue
-
-                vision_search_photo: Dict = videos_res.get("visionSearchPhoto")
-                if vision_search_photo.get("result") != 1:
-                    utils.logger.error(
-                        f"[KuaishouCrawler.search] search info by keyword:{keyword} not found data "
+                    videos_res = await self.ks_client.search_info_by_keyword(
+                        keyword=keyword,
+                        pcursor=str(page),
+                        search_session_id=search_session_id,
                     )
-                    continue
-                search_session_id = vision_search_photo.get("searchSessionId", "")
-                for video_detail in vision_search_photo.get("feeds"):
-                    video_id_list.append(video_detail.get("photo", {}).get("id"))
-                    await kuaishou_store.update_kuaishou_video(video_item=video_detail)
+                    
+                    if not videos_res:
+                        utils.logger.error(
+                            f"[KuaishouCrawler.search] search info by keyword:{keyword} not found data"
+                        )
+                        break
 
-                # batch fetch video comments
-                page += 1
+                    vision_search_photo: Dict = videos_res.get("visionSearchPhoto")
+                    if vision_search_photo.get("result") != 1:
+                        utils.logger.error(
+                            f"[KuaishouCrawler.search] search info by keyword:{keyword} result not 1: {vision_search_photo}"
+                        )
+                        break
 
-                # Sleep after page navigation
-                await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
-                utils.logger.info(f"[KuaishouCrawler.search] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after page {page-1}")
+                    search_session_id = vision_search_photo.get("searchSessionId", "")
+                    feeds = vision_search_photo.get("feeds") or []
+                    
+                    if not feeds:
+                        utils.logger.info(f"[KuaishouCrawler.search] No more content for {keyword}")
+                        break
 
-                await self.batch_get_video_comments(video_id_list)
+                    # Pro Feature: Filter processed videos
+                    note_id_list: List[str] = []
+                    new_feeds = []
+                    for video_detail in feeds:
+                        video_id = str(video_detail.get("photo", {}).get("id"))
+                        if await self.checkpoint_manager.is_note_processed(video_id, platform="kuaishou"):
+                            # utils.logger.info(f"⏭️ [KuaishouCrawler] Video {video_id} already processed, skipping.")
+                            continue
+                        new_feeds.append(video_detail)
+
+                    if not new_feeds:
+                        utils.logger.info(f"⏭️ [KuaishouCrawler] All items on page {page} already processed.")
+                        page += 1
+                        continue
+
+                    # Process and save
+                    for video_detail in new_feeds:
+                        video_id = str(video_detail.get("photo", {}).get("id"))
+                        note_id_list.append(video_id)
+                        await kuaishou_store.update_kuaishou_video(video_item=video_detail)
+                        
+                        # Pro Feature: Mark as processed
+                        await self.checkpoint_manager.add_processed_note(video_id, platform="kuaishou")
+                        total_crawled_count += 1
+
+                    # Batch fetch video comments
+                    if note_id_list and config.ENABLE_GET_COMMENTS:
+                        await self.batch_get_video_comments(note_id_list)
+
+                    # Pro Feature: Update Checkpoint
+                    checkpoint.current_page = page
+                    checkpoint.total_notes = total_crawled_count
+                    checkpoint.last_update = datetime.now()
+                    await self.checkpoint_manager.save_checkpoint(checkpoint)
+
+                    page += 1
+                    utils.logger.info(f"[KuaishouCrawler.search] Saved {len(note_id_list)} videos. Total: {total_crawled_count}")
+
+                    # Sleep after page navigation
+                    await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
+                    utils.logger.info(f"[KuaishouCrawler.search] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after page {page-1}")
+                except Exception as e:
+                    utils.logger.error(f"[KuaishouCrawler.search] Error in search loop: {e}")
+                    checkpoint.status = "error"
+                    checkpoint.error_msg = str(e)
+                    await self.checkpoint_manager.save_checkpoint(checkpoint)
+                    break
+            
+            # Task finished
+            checkpoint.status = "finished"
+            checkpoint.last_update = datetime.now()
+            await self.checkpoint_manager.save_checkpoint(checkpoint)
 
     async def get_specified_videos(self):
         """Get the information and comments of the specified post"""

@@ -12,7 +12,8 @@ services:
     container_name: growhub-api
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "8040:8040"
+
     environment:
       - SAVE_DATA_OPTION=sqlite
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
@@ -22,7 +23,7 @@ services:
       - ./data:/app/data
       - ./config:/app/config
     healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:8080/health" ]
+      test: [ "CMD", "curl", "-f", "http://localhost:8040/health" ]
       interval: 30s
       timeout: 10s
       retries: 3

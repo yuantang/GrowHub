@@ -72,6 +72,7 @@ export interface CrawlerStartRequest {
     min_shares?: number;
     min_comments?: number;
     min_favorites?: number;
+    concurrency_num?: number;
 }
 
 export interface CrawlerStatus {
@@ -227,6 +228,7 @@ export interface Project {
     deduplicate_authors: boolean;
     schedule_type: string;
     schedule_value: string;
+    max_concurrency: number;
     is_active: boolean;
     alert_on_negative: boolean;
     alert_on_hotspot: boolean;
@@ -248,7 +250,18 @@ export interface Project {
     max_shares: number;
     min_favorites: number;
     max_favorites: number;
+    // 断点信息
+    latest_checkpoint?: {
+        task_id: string;
+        status: string;
+        total_notes: number;
+        total_comments: number;
+        total_errors: number;
+        current_page: number;
+        last_update: string;
+    } | null;
 }
+
 
 export const fetchProject = (id: number) =>
     api.get<Project>(`/growhub/projects/${id}`).then(res => res.data);
@@ -270,7 +283,10 @@ export interface ProjectContentItem {
     description: string;
     url: string;
     author: string;
+    author_id?: string;
     author_avatar?: string;
+    author_fans?: number;
+    author_likes?: number;
     cover_url?: string;
     publish_time: string;
     crawl_time?: string;  // Fix: add missing crawl_time

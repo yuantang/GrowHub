@@ -49,6 +49,54 @@ import { Select } from '@/components/ui/Select';
 import { AiKeywordDialog } from '@/components/business/AiKeywordDialog';
 
 
+// Custom helper for array inputs (strings separated by comma)
+const ArrayInput = ({ value, onChange, placeholder, className }: { 
+    value: string[]; 
+    onChange: (val: string[]) => void; 
+    placeholder?: string;
+    className?: string; 
+}) => {
+    const [tempValue, setTempValue] = useState('');
+    const [isEditing, setIsEditing] = useState(false);
+
+    // Sync state only when not editing
+    useEffect(() => {
+        if (!isEditing) {
+            setTempValue(value?.join(', ') || '');
+        }
+    }, [value, isEditing]);
+
+    const handleBlur = () => {
+        setIsEditing(false);
+        const newValue = tempValue.split(/[,，]/) // Support both comma types
+            .map(k => k.trim())
+            .filter(Boolean);
+        
+        // Remove duplicates
+        const uniqueValues = Array.from(new Set(newValue));
+        
+        // Only update if changed
+        if (JSON.stringify(uniqueValues) !== JSON.stringify(value)) {
+            onChange(uniqueValues);
+        }
+    };
+
+    const handleFocus = () => {
+        setIsEditing(true);
+    };
+
+    return (
+        <Input
+            className={className}
+            value={tempValue}
+            onChange={e => setTempValue(e.target.value)}
+            onBlur={handleBlur}
+            onFocus={handleFocus}
+            placeholder={placeholder}
+        />
+    );
+};
+
 // Custom helper for clean number inputs (handles 0 as empty, fixes leading zeros)
 const CleanNumberInput = ({ value, onChange, placeholder, className }: { 
     value: number | string; 
@@ -155,7 +203,7 @@ const ProjectDetailPage: React.FC = () => {
 
     const loadLogs = async () => {
         try {
-            const res = await fetch(`http://localhost:8080/api/growhub/projects/${projectId}/logs`);
+            const res = await fetch(`/api/growhub/projects/${projectId}/logs`);
             const data = await res.json();
             if (data.logs) {
                 setLogs(data.logs);
@@ -310,7 +358,7 @@ const ProjectDetailPage: React.FC = () => {
                         size="sm"
                         onClick={async () => {
                             try {
-                                await fetch(`http://localhost:8080/api/growhub/projects/${projectId}/run`, { method: 'POST' });
+                                await fetch(`/api/growhub/projects/${projectId}/run`, { method: 'POST' });
                                 alert('任务已启动！可在"内容列表"中查看新抓取的内容。');
                                 loadProjectData();
                             } catch (e) { console.error(e); }
@@ -367,13 +415,48 @@ const ProjectDetailPage: React.FC = () => {
                             </CardContent>
                         </Card>
                         <Card>
-                            <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-muted-foreground">互动总量</CardTitle></CardHeader>
+                            <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-muted-foreground">任务配置概要</CardTitle></CardHeader>
                             <CardContent>
-                                <div className="text-2xl font-bold">-</div>
-                                <p className="text-xs text-muted-foreground mt-1">需计算</p>
+                                <div className="text-lg font-bold truncate">{project.crawler_type === 'search' ? '综合搜索' : project.crawler_type === 'detail' ? '详情抓取' : '博主主页'}</div>
+                                <p className="text-xs text-muted-foreground mt-1">
+                                    限量: {project.crawl_limit}条 | 范围: {project.crawl_date_range || '不限'}天
+                                </p>
                             </CardContent>
                         </Card>
+                        {project.latest_checkpoint && (
+                            <Card className="border-primary/20 bg-primary/5">
+                                <CardHeader className="pb-2">
+                                    <div className="flex justify-between items-center">
+                                        <CardTitle className="text-sm font-medium text-primary">当前任务进度</CardTitle>
+                                        <span className={cn(
+                                            "text-[10px] px-1.5 py-0.5 rounded-full",
+                                            project.latest_checkpoint.status === 'running' ? "bg-blue-100 text-blue-700 animate-pulse" : 
+                                            project.latest_checkpoint.status === 'completed' ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-700"
+                                        )}>
+                                            {project.latest_checkpoint.status === 'running' ? '运行中' : 
+                                             project.latest_checkpoint.status === 'completed' ? '已完成' : '已暂停'}
+                                        </span>
+                                    </div>
+                                </CardHeader>
+                                <CardContent>
+                                    <div className="flex justify-between items-end">
+                                        <div>
+                                            <div className="text-2xl font-bold text-primary">{project.latest_checkpoint.total_notes} <span className="text-xs font-normal text-muted-foreground">条内容</span></div>
+                                            <p className="text-xs text-muted-foreground mt-1">
+                                                页码: {project.latest_checkpoint.current_page} | 评论: {project.latest_checkpoint.total_comments}
+                                            </p>
+                                        </div>
+                                        {project.latest_checkpoint.total_errors > 0 && (
+                                            <div className="text-xs text-rose-500 font-medium flex items-center gap-1">
+                                                <AlertTriangle className="w-3 h-3" /> {project.latest_checkpoint.total_errors} 错误
+                                            </div>
+                                        )}
+                                    </div>
+                                </CardContent>
+                            </Card>
+                        )}
                     </div>
+
                     <div className="grid gap-4 md:grid-cols-3">
                         <Card className="col-span-2">
                             <CardHeader><CardTitle className="flex items-center gap-2"><TrendingUp className="h-4 w-4" /> 7日情感趋势</CardTitle></CardHeader>
@@ -435,7 +518,15 @@ const ProjectDetailPage: React.FC = () => {
                                     return {
                                         id: item.id || Math.random().toString(),
                                         platform: item.platform,
-                                        author: { name: item.author || '未知作者', avatar: item.author_avatar },
+                                        author: { 
+                                            name: item.author || '未知作者', 
+                                            avatar: item.author_avatar,
+                                            id: item.author_id,
+                                            stats: {
+                                                fans: item.author_fans,
+                                                liked: item.author_likes
+                                            }
+                                        },
                                         content: { title: item.title || '(无标题)', desc: item.description || '', url: item.url, tags: item.source_keyword ? [item.source_keyword] : [] },
                                         media: { cover: item.cover_url || (validImages.length > 0 ? validImages[0] : undefined), type: isVideo ? 'video' : 'image', video_url: item.video_url, image_list: validImages },
                                         stats: { liked: item.like_count || 0, comments: item.comment_count || 0, collected: item.collect_count || 0, share: item.share_count || 0, view: item.view_count || 0 },
@@ -466,13 +557,24 @@ const ProjectDetailPage: React.FC = () => {
                             </div>
                         </CardHeader>
                         <CardContent className="p-0">
-                            <div className="h-[500px] overflow-y-auto p-4 font-mono text-xs space-y-1">
+                            <div className="h-[500px] overflow-y-auto p-4 font-mono text-[11px] space-y-1 bg-slate-950">
                                 {logs.length === 0 ? (
                                     <div className="text-slate-500 italic">暂无日志数据 / 等待任务启动...</div>
                                 ) : logs.map((log, i) => (
-                                    <div key={i} className="break-all border-b border-white/5 pb-0.5 mb-0.5 last:border-0 hover:bg-white/5">
-                                        <span className="text-slate-500 mr-2">{log.substring(0, 21)}</span>
-                                        <span className={cn(log.includes("❌") ? "text-red-400" : log.includes("✅") ? "text-green-400" : log.includes("⚠️") ? "text-yellow-400" : log.includes("🚀") ? "text-blue-400" : "text-slate-300")}>{log.substring(21)}</span>
+                                    <div key={i} className="whitespace-pre-wrap break-words border-b border-white/5 pb-1 mb-1 last:border-0 hover:bg-white/10 leading-relaxed transition-colors">
+                                        <span className="text-slate-500 mr-2 shrink-0">{log.substring(0, 21)}</span>
+                                        <span className={cn(
+                                            "inline-block",
+                                            log.includes("❌") ? "text-red-400" : 
+                                            log.includes("✅") ? "text-green-400" : 
+                                            log.includes("⚠️") ? "text-yellow-400" : 
+                                            log.includes("🚀") ? "text-blue-400" : 
+                                            log.includes("📊") ? "text-cyan-400 font-bold" :
+                                            log.includes("🏁") ? "text-emerald-400 font-bold" :
+                                            "text-slate-300"
+                                        )}>
+                                            {log.substring(21)}
+                                        </span>
                                     </div>
                                 ))}
                             </div>
@@ -490,7 +592,7 @@ const ProjectDetailPage: React.FC = () => {
                                     <FileText className="w-4 h-4" /> <span>基础信息</span>
                                 </TabsTrigger>
                                 <TabsTrigger value="crawl" className="flex items-center gap-2 text-muted-foreground hover:text-foreground data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm rounded-md transition-all">
-                                    <Target className="w-4 h-4" /> <span>抓取配置</span>
+                                    <Target className="w-4 h-4" /> <span>任务设置</span>
                                 </TabsTrigger>
                                 <TabsTrigger value="schedule" className="flex items-center gap-2 text-muted-foreground hover:text-foreground data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm rounded-md transition-all">
                                     <Clock className="w-4 h-4" /> <span>调度配置</span>
@@ -523,14 +625,14 @@ const ProjectDetailPage: React.FC = () => {
 
                             {/* Tab 2: Crawl Config */}
                             <TabsContent value="crawl" className="mt-6 space-y-6">
-                                <SettingCard title="监控关键词" icon={<Target className="w-4 h-4" />} gradient="from-violet-600 to-purple-600">
+                                <SettingCard title="任务策略与关键词" icon={<Target className="w-4 h-4" />} gradient="from-violet-600 to-purple-600">
                                     <FormRow label="监控关键词" hint="多个关键词用逗号分隔，每个关键词会独立搜索">
                                         <div className="flex gap-2">
-                                            <Input
+                                            <ArrayInput
                                                 className="flex-1"
-                                                value={project.keywords?.join(', ') || ''}
-                                                onChange={(e) => updateSettings({ keywords: e.target.value.split(',').map(k => k.trim()).filter(Boolean) })}
-                                                placeholder="例如: 深度学习, AI绘画, ChatGPT"
+                                                value={project.keywords || []}
+                                                onChange={(keywords) => updateSettings({ keywords })}
+                                                placeholder="例如: 深度学习, AI绘画, ChatGPT (支持中英文逗号)"
                                             />
                                             <Button variant="outline" size="sm" className="shrink-0 text-violet-600 border-violet-200 hover:bg-violet-50" onClick={() => openAiDialog('trend')}>
                                                 <Sparkles className="w-4 h-4 mr-1" /> AI 推荐
@@ -599,6 +701,18 @@ const ProjectDetailPage: React.FC = () => {
                                             <input type="checkbox" className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary" checked={project.deduplicate_authors} onChange={(e) => updateSettings({ deduplicate_authors: e.target.checked })} />
                                             <span className="text-sm">博主去重 (每个博主只保留最新一条)</span>
                                         </label>
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-sm">并发数量:</span>
+                                            <Input 
+                                                type="number" 
+                                                className="w-20 h-8" 
+                                                value={project.max_concurrency} 
+                                                onChange={(e) => updateSettings({ max_concurrency: parseInt(e.target.value) || 1 })} 
+                                                min={1} 
+                                                max={10} 
+                                            />
+                                            <span className="text-xs text-muted-foreground">(建议 1-5)</span>
+                                        </div>
                                     </div>
                                 </SettingCard>
 

@@ -69,7 +69,7 @@ async def list_checkpoints(
             notes_fetched=c.total_notes_fetched,
             current_page=c.current_page,
             created_at=c.created_at.isoformat(),
-            last_update=c.last_update.isoformat(),
+            last_update=c.updated_at.isoformat(),
         )
         for c in checkpoints
     ]

@@ -48,23 +48,53 @@ class XiaoHongShuLogin(AbstractLogin):
         self.login_phone = login_phone
         self.cookie_str = cookie_str
 
-    @retry(stop=stop_after_attempt(600), wait=wait_fixed(1), retry=retry_if_result(lambda value: value is False))
-    async def check_login_state(self, no_logged_in_session: str) -> bool:
+    async def is_login_success(self, no_logged_in_session: str = "") -> bool:
         """
-            Check if the current login status is successful and return True otherwise return False
-            retry decorator will retry 20 times if the return value is False, and the retry interval is 1 second
-            if max retry times reached, raise RetryError
+            Check if the current login status is successful.
+            Returns True if logged in, False otherwise.
         """
+        # 1. Check for logged-in UI element (Most reliable)
+        try:
+            # Try to find avatar or user menu
+            await self.context_page.wait_for_selector(
+                ".user-side-content, .reds-avatar, .user-avatar, .avatar-wrapper, .side-bar .user", 
+                timeout=1000
+            )
+            utils.logger.info("[XiaoHongShuLogin] Logged-in element found! Login success.")
+            return True
+        except:
+            pass
 
+        # 2. Check for CAPTCHA
         if "请通过验证" in await self.context_page.content():
-            utils.logger.info("[XiaoHongShuLogin.check_login_state] CAPTCHA appeared during login, please verify manually")
+            utils.logger.info("[XiaoHongShuLogin] CAPTCHA appeared, please verify manually.")
 
+        # 3. Check for QR Code Expiry and Auto-Refresh (UI only)
+        try:
+            refresh_mask = await self.context_page.query_selector(".qrcode-img-mask, .code-overlay")
+            if refresh_mask and await refresh_mask.is_visible():
+                utils.logger.info("[XiaoHongShuLogin] QR Code expired, clicking to refresh...")
+                await refresh_mask.click()
+                await asyncio.sleep(2)
+        except:
+            pass
+
+        # 4. Check Cookie Change (Fallback)
         current_cookie = await self.browser_context.cookies()
         _, cookie_dict = utils.convert_cookies(current_cookie)
         current_web_session = cookie_dict.get("web_session")
-        if current_web_session != no_logged_in_session:
+        
+        # Only consider it a success if session CHANGED and is NOT EMPTY
+        if no_logged_in_session and current_web_session and current_web_session != no_logged_in_session:
+            utils.logger.info(f"[XiaoHongShuLogin] Web session changed: {current_web_session[:10]}...")
             return True
+        
         return False
+
+    @retry(stop=stop_after_attempt(600), wait=wait_fixed(2), retry=retry_if_result(lambda value: value is False))
+    async def wait_for_login(self, no_logged_in_session: str) -> bool:
+        """Wait for login success with long timeout."""
+        return await self.is_login_success(no_logged_in_session)
 
     async def begin(self):
         """Start login xiaohongshu"""
@@ -137,7 +167,7 @@ class XiaoHongShuLogin(AbstractLogin):
             break
 
         try:
-            await self.check_login_state(no_logged_in_session)
+            await self.wait_for_login(no_logged_in_session)
         except RetryError:
             utils.logger.info("[XiaoHongShuLogin.login_by_mobile] Login xiaohongshu failed by mobile login method ...")
             sys.exit()
@@ -169,7 +199,9 @@ class XiaoHongShuLogin(AbstractLogin):
                 timeout=60 * 1000
             )
             if not base64_qrcode_img:
-                sys.exit()
+                utils.logger.warning("[XiaoHongShuLogin.login_by_qrcode] Failed to find QR code automatically. Please scan the code manually on the screen.")
+                # Don't exit, just continue to wait loop
+                # sys.exit()
 
         # get not logged session
         current_cookie = await self.browser_context.cookies()
@@ -183,12 +215,13 @@ class XiaoHongShuLogin(AbstractLogin):
         partial_show_qrcode = functools.partial(utils.show_qrcode, base64_qrcode_img)
         asyncio.get_running_loop().run_in_executor(executor=None, func=partial_show_qrcode)
 
-        utils.logger.info(f"[XiaoHongShuLogin.login_by_qrcode] waiting for scan code login, remaining time is 120s")
+        utils.logger.info(f"[XiaoHongShuLogin.login_by_qrcode] Waiting for scan code login, remaining time is 1200s...")
         try:
-            await self.check_login_state(no_logged_in_session)
+            await self.wait_for_login(no_logged_in_session)
         except RetryError:
             utils.logger.info("[XiaoHongShuLogin.login_by_qrcode] Login xiaohongshu failed by qrcode login method ...")
-            sys.exit()
+            # Don't exit, maybe user closed the window or timeout
+            # sys.exit()
 
         wait_redirect_seconds = 5
         utils.logger.info(f"[XiaoHongShuLogin.login_by_qrcode] Login successful then wait for {wait_redirect_seconds} seconds redirect ...")
@@ -274,5 +307,18 @@ class XiaoHongShuLogin(AbstractLogin):
         except Exception as e:
             utils.logger.error(f"[XiaoHongShuLogin.login_by_cookies] Error during page navigation: {e}")
         
-        utils.logger.info("[XiaoHongShuLogin.login_by_cookies] Cookie login completed")
+        # Verify if cookies worked (Quick check)
+        is_logged_in = False
+        utils.logger.info("[XiaoHongShuLogin.login_by_cookies] Verifying session (max 10s)...")
+        for _ in range(5):
+            if await self.is_login_success(no_logged_in_session=""):
+                is_logged_in = True
+                break
+            await asyncio.sleep(2)
+
+        if is_logged_in:
+            utils.logger.info("[XiaoHongShuLogin.login_by_cookies] Cookie login VERIFIED SUCCESS.")
+        else:
+            utils.logger.warning("[XiaoHongShuLogin.login_by_cookies] Cookie injection failed (expired/invalid). Falling back to QR code login...")
+            await self.login_by_qrcode()
 

@@ -6,7 +6,7 @@ import {
 import { Card, CardContent } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 
-const API_BASE = 'http://localhost:8080/api';
+const API_BASE = '/api';
 
 interface Account {
     id: string;
@@ -111,8 +111,10 @@ const AccountPoolPage: React.FC = () => {
     const fetchStatistics = async () => {
         try {
             const response = await fetch(`${API_BASE}/growhub/accounts/statistics`);
-            const data = await response.json();
-            setStatistics(data);
+            if (response.ok) {
+                const data = await response.json();
+                setStatistics(data);
+            }
         } catch (error) {
             console.error('Failed to fetch statistics:', error);
         }
@@ -403,7 +405,7 @@ const AccountPoolPage: React.FC = () => {
                     <Card className="bg-card/50">
                         <CardContent className="pt-6">
                             <div className="text-2xl font-bold text-green-500">
-                                {statistics.by_status.active || 0}
+                                {statistics.by_status?.active || 0}
                             </div>
                             <div className="text-sm text-muted-foreground">正常可用</div>
                         </CardContent>
@@ -411,7 +413,7 @@ const AccountPoolPage: React.FC = () => {
                     <Card className="bg-card/50">
                         <CardContent className="pt-6">
                             <div className="text-2xl font-bold text-red-500">
-                                {(statistics.by_status.expired || 0) + (statistics.by_status.banned || 0)}
+                                {(statistics.by_status?.expired || 0) + (statistics.by_status?.banned || 0)}
                             </div>
                             <div className="text-sm text-muted-foreground">异常账号</div>
                         </CardContent>

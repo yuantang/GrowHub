@@ -61,7 +61,9 @@ class ZhiHuClient(AbstractApiClient, ProxyRefreshMixin):
         self.cookie_dict = cookie_dict
         self._extractor = ZhihuExtractor()
         # Initialize proxy pool (from ProxyRefreshMixin)
-        self.init_proxy_pool(proxy_ip_pool)
+        # Pro Feature: Pass ACCOUNT_ID for IP-Account affinity
+        import config
+        self.init_proxy_pool(proxy_ip_pool, account_id=config.ACCOUNT_ID)
 
     async def _pre_headers(self, url: str) -> Dict:
         """
@@ -104,7 +106,10 @@ class ZhiHuClient(AbstractApiClient, ProxyRefreshMixin):
         if response.status_code != 200:
             utils.logger.error(f"[ZhiHuClient.request] Requset Url: {url}, Request error: {response.text}")
             if response.status_code == 403:
+                await self.update_account_status("cooldown")
                 raise ForbiddenError(response.text)
+            elif response.status_code == 401:
+                await self.update_account_status("expired")
             elif response.status_code == 404:  # Content without comments also returns 404
                 return {}
 
@@ -121,6 +126,32 @@ class ZhiHuClient(AbstractApiClient, ProxyRefreshMixin):
         except json.JSONDecodeError:
             utils.logger.error(f"[ZhiHuClient.request] Request error: {response.text}")
             raise DataFetchError(response.text)
+
+    async def update_account_status(self, status: str):
+        """Update account status in DB so API process can see it (Shared Pro Logic)"""
+        import config
+        account_id = getattr(config, "ACCOUNT_ID", None)
+        if not account_id:
+            return
+            
+        try:
+            from database.db_session import get_session
+            from database.growhub_models import GrowHubAccount
+            from sqlalchemy import update
+            
+            async with get_session() as session:
+                await session.execute(
+                    update(GrowHubAccount)
+                    .where(GrowHubAccount.id == account_id)
+                    .values(
+                        status=status,
+                        updated_at=utils.get_current_datetime()
+                    )
+                )
+                await session.commit()
+                utils.logger.warning(f"🚨 [ZhiHuClient] Account {account_id} status updated to: {status}")
+        except Exception as e:
+            utils.logger.error(f"[ZhiHuClient] Failed to update account status in DB: {e}")
 
     async def get(self, uri: str, params=None, **kwargs) -> Union[Response, Dict, str]:
         """

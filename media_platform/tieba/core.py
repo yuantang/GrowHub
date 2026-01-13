@@ -42,8 +42,10 @@ from var import crawler_type_var, source_keyword_var
 
 from .client import BaiduTieBaClient
 from .field import SearchNoteType, SearchSortType
-from .help import TieBaExtractor
+from .help import TieBaExtractor as LegacyExtractor
 from .login import BaiduTieBaLogin
+from .extractor import TiebaExtractor
+from checkpoint.manager import CheckpointManager
 
 
 class TieBaCrawler(AbstractCrawler):
@@ -55,7 +57,8 @@ class TieBaCrawler(AbstractCrawler):
     def __init__(self) -> None:
         self.index_url = "https://tieba.baidu.com"
         self.user_agent = utils.get_user_agent()
-        self._page_extractor = TieBaExtractor()
+        self.checkpoint_manager = CheckpointManager()
+        self.tieba_extractor = TiebaExtractor()
         self.cdp_manager = None
 
     async def start(self) -> None:
@@ -173,10 +176,38 @@ class TieBaCrawler(AbstractCrawler):
         start_page = config.START_PAGE
         for keyword in config.KEYWORDS.split(","):
             source_keyword_var.set(keyword)
+            import var
+            var.project_id_var.set(config.PROJECT_ID)
+            
             utils.logger.info(
                 f"[BaiduTieBaCrawler.search] Current search keyword: {keyword}"
             )
             page = 1
+            total_crawled_count = 0
+            
+            # Pro Feature: Load or create checkpoint
+            checkpoint = await self.checkpoint_manager.find_matching_checkpoint(
+                platform="tieba",
+                crawler_type="search",
+                project_id=config.PROJECT_ID,
+                keywords=keyword
+            )
+            
+            if checkpoint:
+                page = checkpoint.current_page
+                total_crawled_count = checkpoint.total_notes
+                utils.logger.info(f"🚩 [BaiduTieBaCrawler.search] Resuming from checkpoint: Page {page}, Notes {total_crawled_count}")
+            else:
+                checkpoint = await self.checkpoint_manager.create_checkpoint(
+                    platform="tieba",
+                    crawler_type="search",
+                    project_id=config.PROJECT_ID,
+                    keywords=keyword
+                )
+            
+            checkpoint.status = "running"
+            checkpoint.last_update = datetime.now()
+
             while (
                 page - start_page + 1
             ) * tieba_limit_count <= config.CRAWLER_MAX_NOTES_COUNT:
@@ -202,23 +233,55 @@ class TieBaCrawler(AbstractCrawler):
                             f"[BaiduTieBaCrawler.search] Search note list is empty"
                         )
                         break
-                    utils.logger.info(
-                        f"[BaiduTieBaCrawler.search] Note list len: {len(notes_list)}"
-                    )
+                    
+                    # Pro Feature: Filter processed notes
+                    new_notes_list = []
+                    for note_detail in notes_list:
+                        if await self.checkpoint_manager.is_note_processed(note_detail.note_id, platform="tieba"):
+                            # utils.logger.info(f"⏭️ [BaiduTieBaCrawler] Note {note_detail.note_id} already processed, skipping.")
+                            continue
+                        new_notes_list.append(note_detail)
+
+                    if not new_notes_list:
+                        utils.logger.info(f"⏭️ [BaiduTieBaCrawler] All items on page {page} already processed.")
+                        page += 1
+                        continue
+
+                    # Process and Save
                     await self.get_specified_notes(
-                        note_id_list=[note_detail.note_id for note_detail in notes_list]
+                        note_id_list=[note_detail.note_id for note_detail in new_notes_list]
                     )
+                    
+                    for note_detail in new_notes_list:
+                        # Pro Feature: Mark as processed
+                        await self.checkpoint_manager.add_processed_note(note_detail.note_id, platform="tieba")
+                        total_crawled_count += 1
+
+                    # Pro Feature: Update Checkpoint
+                    checkpoint.current_page = page
+                    checkpoint.total_notes = total_crawled_count
+                    checkpoint.last_update = datetime.now()
+                    await self.checkpoint_manager.save_checkpoint(checkpoint)
+
+                    page += 1
+                    utils.logger.info(f"[BaiduTieBaCrawler.search] Saved {len(new_notes_list)} notes. Total: {total_crawled_count}")
 
                     # Sleep after page navigation
                     await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
-                    utils.logger.info(f"[TieBaCrawler.search] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after page {page}")
-
-                    page += 1
+                    utils.logger.info(f"[TieBaCrawler.search] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after page {page-1}")
                 except Exception as ex:
                     utils.logger.error(
                         f"[BaiduTieBaCrawler.search] Search keywords error, current page: {page}, current keyword: {keyword}, err: {ex}"
                     )
+                    checkpoint.status = "error"
+                    checkpoint.error_msg = str(ex)
+                    await self.checkpoint_manager.save_checkpoint(checkpoint)
                     break
+
+            # Task finished
+            checkpoint.status = "finished"
+            checkpoint.last_update = datetime.now()
+            await self.checkpoint_manager.save_checkpoint(checkpoint)
 
     async def get_specified_tieba_notes(self):
         """

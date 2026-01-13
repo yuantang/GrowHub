@@ -12,6 +12,7 @@ from pydantic import BaseModel
 import random
 import httpx
 from .account_verification import AccountVerifier
+from tools import utils
 
 
 class AccountStatus(str, Enum):
@@ -24,11 +25,15 @@ class AccountStatus(str, Enum):
 
 class AccountPlatform(str, Enum):
     XHS = "xhs"
-    DOUYIN = "douyin"
-    BILIBILI = "bilibili"
-    WEIBO = "weibo"
+    DOUYIN = "dy"  # 统一使用短名称
+    DY = "dy"
+    BILIBILI = "bili"
+    BILI = "bili"
+    WEIBO = "wb"
+    WB = "wb"
     ZHIHU = "zhihu"
-    KUAISHOU = "kuaishou"
+    KUAISHOU = "ks"
+    KS = "ks"
     TIEBA = "tieba"
 
 
@@ -47,6 +52,7 @@ class AccountInfo(BaseModel):
     use_count: int = 0
     success_count: int = 0
     fail_count: int = 0
+    consecutive_fails: int = 0  # 连续失败次数
     last_used: Optional[datetime] = None
     last_check: Optional[datetime] = None
     
@@ -56,6 +62,11 @@ class AccountInfo(BaseModel):
     # 分组
     group: str = "default"
     tags: List[str] = []
+    
+    # IP 绑定与项目路由 (Pro 版特性)
+    last_proxy_id: Optional[str] = None
+    proxy_config: Optional[Dict[str, Any]] = None
+    last_project_id: Optional[int] = None
     
     # 时间戳
     created_at: datetime = datetime.now()
@@ -82,7 +93,13 @@ class AccountPoolService:
         
         self.accounts: Dict[str, AccountInfo] = {}
         self._lock = asyncio.Lock()
+        self._last_sync = datetime.min
         self._initialized = True
+        
+        # Panic Switch Stats: {platform: [timestamp1, timestamp2, ...]}
+        self._failure_window: Dict[str, List[datetime]] = {}
+        self._panic_threshold = 5 # 10分钟内失败5次即触发熔断
+        self._panic_window_seconds = 600
         
         # 配置
         self.config = {
@@ -129,15 +146,50 @@ class AccountPoolService:
             use_count=model.use_count or 0,
             success_count=model.success_count or 0,
             fail_count=model.fail_count or 0,
+            consecutive_fails=getattr(model, 'consecutive_fails', 0) or 0,
             last_used=model.last_used,
             last_check=model.last_check,
             cooldown_until=model.cooldown_until,
             group=model.group_name or "default",
             tags=model.tags or [],
+            last_proxy_id=model.last_proxy_id,
+            proxy_config=model.proxy_config,
+            last_project_id=getattr(model, 'last_project_id', None),
             created_at=model.created_at or datetime.now(),
             updated_at=model.updated_at or datetime.now(),
             notes=model.notes
         )
+
+
+    async def sync_from_db(self, force_full: bool = False):
+        """Sync memory cache with DB (Incremental/Full)"""
+        from database.db_session import get_session
+        from database.growhub_models import GrowHubAccount
+        from sqlalchemy import select
+        
+        async with get_session() as session:
+            if force_full or self._last_sync == datetime.min:
+                query = select(GrowHubAccount)
+            else:
+                # Incremental sync: only accounts updated since last sync
+                # Buffer 1 second to avoid clock sync issues
+                since = self._last_sync - timedelta(seconds=1)
+                query = select(GrowHubAccount).where(GrowHubAccount.updated_at >= since)
+                
+            result = await session.execute(query)
+            rows = result.scalars().all()
+            
+            async with self._lock:
+                if force_full:
+                    self.accounts.clear()
+                
+                for row in rows:
+                    # Update or Add
+                    self.accounts[row.id] = self._model_to_info(row)
+                
+                self._last_sync = datetime.now()
+                if rows:
+                    print(f"[AccountPool] Sync complete. Processed {len(rows)} accounts.")
 
     def _info_to_model(self, info: AccountInfo):
         from database.growhub_models import GrowHubAccount
@@ -151,11 +203,15 @@ class AccountPoolService:
             use_count=info.use_count,
             success_count=info.success_count,
             fail_count=info.fail_count,
+            consecutive_fails=info.consecutive_fails,
             last_used=info.last_used,
             last_check=info.last_check,
             cooldown_until=info.cooldown_until,
             group_name=info.group,
             tags=info.tags,
+            last_proxy_id=info.last_proxy_id,
+            proxy_config=info.proxy_config,
+            last_project_id=info.last_project_id,
             notes=info.notes,
             created_at=info.created_at,
             updated_at=datetime.now()
@@ -185,41 +241,45 @@ class AccountPoolService:
     
     async def update_account(self, account_id: str, updates: Dict[str, Any]) -> Optional[AccountInfo]:
         """更新账号"""
-        from database.db_session import get_session
-        from database.growhub_models import GrowHubAccount
-        from sqlalchemy import select
-        
         if account_id not in self.accounts:
             return None
             
         async with self._lock:
-            account = self.accounts[account_id]
-            
-            # Apply updates to memory object
-            for key, value in updates.items():
-                if hasattr(account, key):
-                    setattr(account, key, value)
-            account.updated_at = datetime.now()
-            
-            # DB Update
-            async with get_session() as session:
-                result = await session.execute(select(GrowHubAccount).where(GrowHubAccount.id == account_id))
-                model = result.scalar_one_or_none() # Use scalar_one_or_none for single result
-                if model:
-                    # Update model fields
-                    for key, value in updates.items():
-                        # Map AccountInfo keys to Model keys
-                        if key == 'group': db_key = 'group_name'
-                        elif key == 'platform': db_key = 'platform'; value = value.value if hasattr(value, 'value') else value
-                        elif key == 'status': db_key = 'status'; value = value.value if hasattr(value, 'value') else value
-                        else: db_key = key
-                        
-                        if hasattr(model, db_key):
-                            setattr(model, db_key, value)
-                    model.updated_at = datetime.now()
-                    await session.commit() # Commit the changes
+            return await self._update_account_internal(account_id, updates)
+
+    async def _update_account_internal(self, account_id: str, updates: Dict[str, Any]) -> Optional[AccountInfo]:
+        """更新账号 (无锁版，供内部调用)"""
+        from database.db_session import get_session
+        from database.growhub_models import GrowHubAccount
+        from sqlalchemy import select
+
+        account = self.accounts[account_id]
+        
+        # Apply updates to memory object
+        for key, value in updates.items():
+            if hasattr(account, key):
+                setattr(account, key, value)
+        account.updated_at = datetime.now()
+        
+        # DB Update
+        async with get_session() as session:
+            result = await session.execute(select(GrowHubAccount).where(GrowHubAccount.id == account_id))
+            model = result.scalar_one_or_none()
+            if model:
+                # Update model fields
+                for key, value in updates.items():
+                    # Map AccountInfo keys to Model keys
+                    if key == 'group': db_key = 'group_name'
+                    elif key == 'platform': db_key = 'platform'; value = value.value if hasattr(value, 'value') else value
+                    elif key == 'status': db_key = 'status'; value = value.value if hasattr(value, 'value') else value
+                    else: db_key = key
                     
-            return account
+                    if hasattr(model, db_key):
+                        setattr(model, db_key, value)
+                model.updated_at = datetime.now()
+                await session.commit()
+                
+        return account
     
     async def delete_account(self, account_id: str) -> bool:
         """删除账号"""
@@ -261,45 +321,62 @@ class AccountPoolService:
         """获取单个账号 (Read from Memory)"""
         return self.accounts.get(account_id)
     
-    def get_all_accounts(self, platform: Optional[AccountPlatform] = None) -> List[AccountInfo]:
-        """获取所有账号 (Read from Memory)"""
+    async def get_all_accounts(self, platform: Optional[AccountPlatform] = None) -> List[AccountInfo]:
+        """获取所有账号 (Async version to allow sync)"""
+        if (datetime.now() - self._last_sync).total_seconds() > 30:
+            await self.sync_from_db()
+            
         accounts = list(self.accounts.values())
         if platform:
             accounts = [a for a in accounts if a.platform == platform]
         return accounts
     
-    async def get_available_account(self, platform: AccountPlatform, exclude_ids: List[str] = None) -> Optional[AccountInfo]:
-        """获取可用账号
-        
-        Args:
-            platform: 平台类型
-            exclude_ids: 要排除的账号ID列表（用于重试时跳过已失败的账号）
-        """
-        # Read from memory is fine, as memory is the truth for status
+    async def get_available_account(self, platform: AccountPlatform, exclude_ids: List[str] = None, project_id: Optional[int] = None) -> Optional[AccountInfo]:
+        """获取可用账号"""
+        if await self.is_platform_panicked(platform):
+            utils.logger.error(f"⚠️ [AccountPool] Platform {platform.value} is in PANIC mode due to high failure rate. No accounts will be assigned.")
+            return None
+            
+        if (datetime.now() - self._last_sync).total_seconds() > 10:
+            await self.sync_from_db()
+            
         now = datetime.now()
         exclude_ids = exclude_ids or []
         
-        candidates = [
-            a for a in self.accounts.values()
-            if a.platform == platform
-            and a.id not in exclude_ids
-            and a.status == AccountStatus.ACTIVE
-            and a.health_score >= self.config["min_health_for_use"]
-            and (a.cooldown_until is None or a.cooldown_until < now)
-        ]
+        candidates = []
+        for a in self.accounts.values():
+            if a.platform != platform: 
+                continue
+            if a.id in exclude_ids: continue
+            
+            # Check conditions
+            is_active = (a.status == AccountStatus.ACTIVE)
+            health_ok = (a.health_score >= self.config["min_health_for_use"])
+            cd_ok = (a.cooldown_until is None or a.cooldown_until < now)
+            
+            if is_active and health_ok and cd_ok:
+                candidates.append(a)
         
         if not candidates:
             return None
         
-        candidates.sort(key=lambda x: (-x.health_score, x.last_used or datetime.min))
+        # Sticky Sessions 排序权重
+        # 1. 符合该项目的账号优先 (last_project_id == project_id)
+        # 2. 健康分从高到低
+        # 3. 最后使用时间从早到晚
+        def sort_key(acc):
+            sticky_weight = 1 if (project_id and acc.last_project_id == project_id) else 0
+            return (sticky_weight, acc.health_score, -(acc.last_used.timestamp() if acc.last_used else 0))
+            
+        candidates.sort(key=sort_key, reverse=True)
         return candidates[0]
     
-    async def record_account_usage(self, account_id: str, success: bool, cooldown_seconds: Optional[int] = None):
-        """记录账号使用（mark_account_used 的别名，更清晰的 API）"""
-        await self.mark_account_used(account_id, success, cooldown_seconds)
+    async def record_account_usage(self, account_id: str, success: bool, cooldown_seconds: Optional[int] = None, project_id: Optional[int] = None):
+        """记录账号使用"""
+        await self.mark_account_used(account_id, success, cooldown_seconds, project_id)
 
     
-    async def mark_account_used(self, account_id: str, success: bool, cooldown_seconds: Optional[int] = None):
+    async def mark_account_used(self, account_id: str, success: bool, cooldown_seconds: Optional[int] = None, project_id: Optional[int] = None):
         """标记使用"""
         if account_id not in self.accounts:
             return
@@ -313,28 +390,41 @@ class AccountPoolService:
             
             if success:
                 account.success_count += 1
+                account.consecutive_fails = 0  # 重置连续失败
                 account.health_score = min(100, account.health_score + self.config["health_recovery_on_success"])
+                
+                cd = cooldown_seconds or self.config["default_cooldown_seconds"]
             else:
                 account.fail_count += 1
+                account.consecutive_fails += 1  # 增加连续失败
                 account.health_score = max(0, account.health_score - self.config["health_decay_on_fail"])
+                
+                # Panic Switch: Record Failure
+                await self._record_platform_failure_internal(account.platform)
+                
+                # 指数退避逻辑: 基础冷却 * (2 ^ 连续失败次数)
+                # 示例: 60s -> 120s -> 240s -> 480s ...
+                base_cd = cooldown_seconds or self.config["default_cooldown_seconds"]
+                multiplier = min(32, 2 ** (account.consecutive_fails - 1)) # 最高限制在 32倍
+                cd = base_cd * multiplier
+                
                 if account.health_score < self.config["min_health_for_use"]:
                     account.status = AccountStatus.COOLDOWN
             
-            cd = cooldown_seconds or self.config["default_cooldown_seconds"]
             account.cooldown_until = now + timedelta(seconds=cd)
             account.updated_at = now
             
-            # Update DB (Async background or direct)
-            # For simplicity, we fire and forget the update to DB or await it?
-            # Awaiting is safer.
-            await self.update_account(account_id, {
+            # Update DB (使用内部无锁方法)
+            await self._update_account_internal(account_id, {
                 "use_count": account.use_count,
                 "success_count": account.success_count,
                 "fail_count": account.fail_count,
+                "consecutive_fails": account.consecutive_fails,
                 "last_used": account.last_used,
                 "health_score": account.health_score,
                 "status": account.status,
-                "cooldown_until": account.cooldown_until
+                "cooldown_until": account.cooldown_until,
+                "last_project_id": project_id or account.last_project_id
             })
     
     async def check_account_health(self, account_id: str) -> Dict[str, Any]:
@@ -370,29 +460,45 @@ class AccountPoolService:
         # Maybe optional feature. For now just verify.
         return result
     
-    async def batch_check_health(self, platform: Optional[AccountPlatform] = None) -> Dict[str, Any]:
-        """批量检查"""
-        # 注意：get_all_accounts 现在是 Sync 的，这里还可以直接调用
-        accounts = self.get_all_accounts(platform)
+    async def batch_check_health(self, platform: Optional[AccountPlatform] = None, max_concurrency: int = 5) -> Dict[str, Any]:
+        """批量检查 (Parallel Implementation)"""
+        accounts = await self.get_all_accounts(platform)
         
         results = {
             "total": len(accounts), "checked": 0, "active": 0, 
             "expired": 0, "banned": 0, "unknown": 0
         }
         
-        for account in accounts:
-            check_result = await self.check_account_health(account.id)
+        if not accounts:
+            return results
+            
+        semaphore = asyncio.Semaphore(max_concurrency)
+        
+        async def _check_one(account_info: AccountInfo):
+            async with semaphore:
+                try:
+                    check_result = await self.check_account_health(account_info.id)
+                    return check_result
+                except Exception as e:
+                    print(f"[AccountPool] Error checking {account_info.id}: {e}")
+                    return {"valid": False, "error": str(e)}
+
+        # Run checks in parallel
+        tasks = [_check_one(a) for a in accounts]
+        check_results = await asyncio.gather(*tasks)
+        
+        for res in check_results:
             results["checked"] += 1
-            if check_result.get("valid"): results["active"] += 1
-            elif check_result.get("expired"): results["expired"] += 1
-            elif check_result.get("banned"): results["banned"] += 1
+            if res.get("valid"): results["active"] += 1
+            elif res.get("expired"): results["expired"] += 1
+            elif res.get("banned"): results["banned"] += 1
             else: results["unknown"] += 1
         
         return results
     
-    def get_statistics(self, platform: Optional[AccountPlatform] = None) -> Dict[str, Any]:
+    async def get_statistics(self, platform: Optional[AccountPlatform] = None) -> Dict[str, Any]:
         """统计信息"""
-        accounts = self.get_all_accounts(platform)
+        accounts = await self.get_all_accounts(platform)
         
         if not accounts:
             return {
@@ -439,6 +545,39 @@ class AccountPoolService:
                 # omit privacy
             })
         return result
+
+    async def _record_platform_failure(self, platform: AccountPlatform):
+        """记录平台级失败 (用于熔断)"""
+        async with self._lock:
+            await self._record_platform_failure_internal(platform)
+
+    async def _record_platform_failure_internal(self, platform: AccountPlatform):
+        """记录平台级失败 (无锁版)"""
+        plat = platform.value
+        now = datetime.now()
+        
+        if plat not in self._failure_window:
+            self._failure_window[plat] = []
+        self._failure_window[plat].append(now)
+        
+        # 清理旧记录
+        cutoff = now - timedelta(seconds=self._panic_window_seconds)
+        self._failure_window[plat] = [t for t in self._failure_window[plat] if t > cutoff]
+
+    async def is_platform_panicked(self, platform: AccountPlatform) -> bool:
+        """检查平台是否处于熔断状态"""
+        plat = platform.value
+        now = datetime.now()
+        async with self._lock:
+            if plat not in self._failure_window:
+                return False
+                
+            # 清理并统计
+            cutoff = now - timedelta(seconds=self._panic_window_seconds)
+            failures = [t for t in self._failure_window[plat] if t > cutoff]
+            self._failure_window[plat] = failures
+            
+            return len(failures) >= self._panic_threshold
 
 
 # 全局实例

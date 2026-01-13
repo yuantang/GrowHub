@@ -33,6 +33,8 @@ from playwright.async_api import Page
 
 from model.m_douyin import VideoUrlInfo, CreatorUrlInfo
 from tools.crawler_util import extract_url_params_to_dict
+from tools.sign_client import get_sign_client
+import config
 
 douyin_sign_obj = execjs.compile(open('libs/douyin.js', encoding='utf-8-sig').read())
 
@@ -60,9 +62,21 @@ def get_web_id():
 
 async def get_a_bogus(url: str, params: str, post_data: dict, user_agent: str, page: Page = None):
     """
-    Get a_bogus parameter, currently does not support POST request type signature
+    Get a_bogus parameter with RPC-first logic and JS fallback
     """
+    # 1. 优先尝试 RPC 模式 (借鉴 Pro 版)
+    if getattr(config, "ENABLE_SIGN_SERVER", False):
+        a_bogus = await get_a_bogus_from_rpc(url, params, post_data, user_agent)
+        if a_bogus:
+            return a_bogus
+            
+    # 2. 降级到本地 JS 模式
     return get_a_bogus_from_js(url, params, user_agent)
+
+async def get_a_bogus_from_rpc(url: str, params: str, post_data: dict, user_agent: str):
+    """通过 RPC 服务器获取 a_bogus"""
+    client = get_sign_client()
+    return await client.douyin_sign(url, params, user_agent, post_data)
 
 def get_a_bogus_from_js(url: str, params: str, user_agent: str):
     """

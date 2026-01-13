@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
     Heart, MessageCircle, Share2, Star, Play,
     Image as ImageIcon, Video, ExternalLink, X, ChevronLeft, ChevronRight,
-    Loader2
+    Loader2, Users
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
@@ -25,12 +25,73 @@ const PLATFORM_LABELS: Record<string, string> = {
     'zhihu': '知乎',
 };
 
+const getAuthorUrl = (platform: string, authorId?: string) => {
+    if (!authorId) return null;
+    switch (platform) {
+        case 'dy':
+        case 'douyin':
+            return `https://www.douyin.com/user/${authorId}`;
+        case 'xhs':
+        case 'xiaohongshu':
+            return `https://www.xiaohongshu.com/user/profile/${authorId}`;
+        case 'bili':
+        case 'bilibili':
+            return `https://space.bilibili.com/${authorId}`;
+        case 'wb':
+        case 'weibo':
+            return `https://weibo.com/u/${authorId}`;
+        case 'ks':
+        case 'kuaishou':
+            return `https://www.kuaishou.com/profile/${authorId}`;
+        default:
+            return null;
+    }
+};
+
 // 数字格式化：超过1万显示为 X.X万
 const formatNumber = (num: number): string => {
     if (num >= 10000) {
         return (num / 10000).toFixed(1) + '万';
     }
     return num.toLocaleString();
+};
+
+// 时间格式化：本地时间
+const formatTime = (ts?: string) => {
+    if (!ts) return '-';
+    
+    // 1. 尝试直接解析
+    let date = new Date(ts);
+    
+    // 2. 如果无效，尝试作为 UTC 时间处理 (补全 ISO 格式)
+    if (isNaN(date.getTime())) {
+        // 假设是 SQL 格式 "YYYY-MM-DD HH:mm:ss" 或类似的，且是 UTC
+        // 替换空格为 T，并确保有 Z
+        let fixed = typeof ts === 'string' ? ts.replace(' ', 'T') : ts;
+        if (typeof fixed === 'string' && !fixed.endsWith('Z')) {
+            fixed += 'Z';
+        }
+        date = new Date(fixed);
+    }
+    
+    // 3. 仍然无效，返回原字符串
+    if (isNaN(date.getTime())) {
+        return ts;
+    }
+    
+    try {
+        return new Intl.DateTimeFormat('zh-CN', {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false
+        }).format(date).replace(/\//g, '-');
+    } catch (e) {
+        return ts;
+    }
 };
 
 // ==================== Interfaces ====================
@@ -276,7 +337,10 @@ export const ContentDataTable: React.FC<ContentDataTableProps> = ({
                                                 {/* 头像 + 昵称 一排 */}
                                                 <div
                                                     className="flex items-center gap-2 cursor-pointer group/author"
-                                                    onClick={() => item.author.url && window.open(item.author.url, '_blank')}
+                                                    onClick={() => {
+                                                        const url = item.author.url || getAuthorUrl(item.platform || '', item.author.id);
+                                                        if (url) window.open(url, '_blank');
+                                                    }}
                                                     title="点击跳转博主主页"
                                                 >
                                                     <div className="relative w-9 h-9 rounded-full overflow-hidden bg-muted flex-shrink-0 border border-border group-hover/author:ring-2 ring-primary/30 transition-all">
@@ -288,9 +352,28 @@ export const ContentDataTable: React.FC<ContentDataTableProps> = ({
                                                             </div>
                                                         )}
                                                     </div>
-                                                    <span className="font-medium text-sm truncate max-w-[120px] group-hover/author:text-primary transition-colors">
-                                                        {item.author.name || '未知'}
-                                                    </span>
+                                                    <div className="flex flex-col min-w-0">
+                                                        <span className="font-medium text-sm truncate max-w-[120px] group-hover/author:text-primary transition-colors">
+                                                            {item.author.name || '未知'}
+                                                        </span>
+                                                        {/* 作者粉丝/获赞 - 温和的展示 */}
+                                                        {item.author.stats && (item.author.stats.fans !== undefined || item.author.stats.liked !== undefined) && (
+                                                            <div className="flex flex-col gap-1 mt-1">
+                                                                {item.author.stats.fans !== undefined && (
+                                                                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground/80 hover:text-foreground transition-colors">
+                                                                        <Users className="w-3.5 h-3.5 text-blue-500/70" /> 
+                                                                        <span>{formatNumber(Number(item.author.stats.fans))}</span>
+                                                                    </div>
+                                                                )}
+                                                                {item.author.stats.liked !== undefined && (
+                                                                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground/80 hover:text-foreground transition-colors">
+                                                                        <Heart className="w-3.5 h-3.5 text-rose-500/70" /> 
+                                                                        <span>{formatNumber(Number(item.author.stats.liked))}</span>
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        )}
+                                                    </div>
                                                 </div>
                                                 {/* 联系方式 - 有就展示 */}
                                                 {item.author.contact && (
@@ -409,12 +492,12 @@ export const ContentDataTable: React.FC<ContentDataTableProps> = ({
 
                                         {/* 6. 发布时间 */}
                                         <td className="p-4 align-middle text-xs text-muted-foreground">
-                                            <span className="font-mono">{item.meta.publish_time}</span>
+                                            <span className="font-mono">{formatTime(item.meta.publish_time)}</span>
                                         </td>
 
                                         {/* 7. 爬取时间 */}
                                         <td className="p-4 align-middle text-xs text-muted-foreground">
-                                            <span className="font-mono">{item.meta.crawl_time || '-'}</span>
+                                            <span className="font-mono">{formatTime(item.meta.crawl_time)}</span>
                                         </td>
 
                                         {/* 8. 操作 - 点击去帖子 */}

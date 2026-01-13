@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 
 // API 基础 URL
-const API_BASE = 'http://localhost:8080/api';
+const API_BASE = '/api';
 
 interface Keyword {
     id: number;

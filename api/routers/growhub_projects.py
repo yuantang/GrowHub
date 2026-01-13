@@ -200,13 +200,24 @@ async def create_project(data: ProjectCreateRequest):
         name=data.name,
         description=data.description,
         keywords=data.keywords,
+        sentiment_keywords=data.sentiment_keywords,
         platforms=data.platforms,
         crawler_type=data.crawler_type,
         crawl_limit=data.crawl_limit,
+        crawl_date_range=data.crawl_date_range,
         enable_comments=data.enable_comments,
+        deduplicate_authors=data.deduplicate_authors,
+        min_likes=data.min_likes,
+        max_likes=data.max_likes,
+        min_comments=data.min_comments,
+        max_comments=data.max_comments,
+        min_shares=data.min_shares,
+        max_shares=data.max_shares,
+        min_favorites=data.min_favorites,
+        max_favorites=data.max_favorites,
         schedule_type=data.schedule_type,
         schedule_value=data.schedule_value,
-        is_active=data.auto_start,
+        is_active=data.auto_start, # auto_start is used for initial active state
         alert_on_negative=data.alert_on_negative,
         alert_on_hotspot=data.alert_on_hotspot,
         alert_channels=data.alert_channels,
@@ -343,7 +354,7 @@ async def check_project_preflight(project_id: int):
             # 获取该平台的所有账号
             try:
                 platform_enum = AccountPlatform(platform)
-                all_accounts = account_pool.get_all_accounts(platform_enum)
+                all_accounts = await account_pool.get_all_accounts(platform_enum)
                 active_accounts = [a for a in all_accounts if a.status == AccountStatus.ACTIVE]
             except:
                 all_accounts = []
@@ -525,9 +536,9 @@ async def get_platform_options():
     return {
         "platforms": [
             {"value": "xhs", "label": "小红书", "icon": "📕"},
-            {"value": "douyin", "label": "抖音", "icon": "🎵"},
-            {"value": "bilibili", "label": "B站", "icon": "📺"},
-            {"value": "weibo", "label": "微博", "icon": "📱"},
+            {"value": "dy", "label": "抖音", "icon": "🎵"},
+            {"value": "bili", "label": "B站", "icon": "📺"},
+            {"value": "wb", "label": "微博", "icon": "📱"},
             {"value": "zhihu", "label": "知乎", "icon": "❓"},
         ]
     }

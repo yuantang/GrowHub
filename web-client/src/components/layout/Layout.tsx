@@ -1,12 +1,12 @@
 import React from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
-import { LayoutDashboard, Database, Activity, Github, Rocket, Settings, Flame, Sparkles, Shield, FolderOpen } from 'lucide-react';
+import { LayoutDashboard, Database, Github, Rocket, Settings, Flame, Sparkles, Shield, FolderOpen, Users, AlertTriangle } from 'lucide-react';
 import { cn } from '@/utils/cn';
 
 const Layout: React.FC = () => {
     const location = useLocation();
 
-    // 精简后的导航结构
+    // 重构后的导航结构
     const navItems = [
         // 核心入口
         { to: '/', icon: LayoutDashboard, label: '总览' },
@@ -14,15 +14,15 @@ const Layout: React.FC = () => {
 
         // 数据洞察
         { to: '/data', icon: Database, label: '数据管理' },
-        { to: '/analysis', icon: Activity, label: '数据分析' },
+        { to: '/creators', icon: Users, label: '达人博主' },
         { to: '/hotspots', icon: Flame, label: '热点排行' },
+        { to: '/sentiment', icon: AlertTriangle, label: '舆情监控' },
 
         // 工具
         { to: '/ai-creator', icon: Sparkles, label: 'AI 创作' },
 
         // 系统配置
         { to: '/account-pool', icon: Shield, label: '账号池' },
-        { to: '/notifications', icon: Settings, label: '通知配置' },
         { to: '/settings', icon: Settings, label: '系统设置' },
     ];
 

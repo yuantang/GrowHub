@@ -3,7 +3,6 @@ import Layout from '@/components/layout/Layout'
 import { Toaster } from 'sonner';
 import Dashboard from '@/pages/Dashboard'
 import DataView from '@/pages/DataView'
-import DataAnalysis from '@/pages/DataAnalysis'
 import AccountsPage from '@/pages/AccountsPage'
 import CheckpointsPage from '@/pages/CheckpointsPage'
 import KeywordsPage from '@/pages/KeywordsPage'
@@ -17,6 +16,8 @@ import AccountPoolPage from '@/pages/AccountPoolPage'
 import ProjectsPage from '@/pages/ProjectsPage'
 import ProjectDetailPage from '@/pages/ProjectDetailPage'
 import SettingsPage from '@/pages/SettingsPage'
+import CreatorsPage from '@/pages/CreatorsPage'
+import SentimentPage from '@/pages/SentimentPage'
 
 function App() {
   return (
@@ -25,7 +26,6 @@ function App() {
         <Route path="/" element={<Layout />}>
           <Route index element={<Dashboard />} />
           <Route path="data" element={<DataView />} />
-          <Route path="analysis" element={<DataAnalysis />} />
           <Route path="accounts" element={<AccountsPage />} />
           <Route path="checkpoints" element={<CheckpointsPage />} />
           {/* GrowHub Routes */}
@@ -34,6 +34,8 @@ function App() {
           <Route path="keywords" element={<KeywordsPage />} />
           <Route path="monitor" element={<ContentMonitorPage />} />
           <Route path="hotspots" element={<HotspotsPage />} />
+          <Route path="creators" element={<CreatorsPage />} />
+          <Route path="sentiment" element={<SentimentPage />} />
           <Route path="ai-creator" element={<SmartCreatorPage />} />
           <Route path="scheduler" element={<SchedulerPage />} />
           <Route path="account-pool" element={<AccountPoolPage />} />

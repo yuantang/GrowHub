@@ -1,30 +1,31 @@
 import React from 'react';
 import { ContentListView } from '@/components/business/ContentListView';
-import { Flame } from 'lucide-react';
+import { AlertTriangle } from 'lucide-react';
 
 /**
- * 热点排行页面
- * 展示热门内容，按互动量排序
+ * 舆情监控页面
+ * 展示预警内容，用于风险识别和舆情管理
  */
-const HotspotsPage: React.FC = () => {
+const SentimentPage: React.FC = () => {
     return (
         <div className="max-w-[1600px] mx-auto">
             <div className="mb-6">
                 <div className="flex items-center gap-3 mb-2">
-                    <Flame className="w-6 h-6 text-orange-500" />
-                    <h1 className="text-2xl font-bold">热点排行</h1>
+                    <AlertTriangle className="w-6 h-6 text-amber-500" />
+                    <h1 className="text-2xl font-bold">舆情监控</h1>
                 </div>
                 <p className="text-muted-foreground text-sm">
-                    发现高互动内容，按点赞量排序展示热门帖子
+                    监控敏感内容和负面舆情，及时发现风险信号
                 </p>
             </div>
             <ContentListView
                 defaultFilters={{
-                    sort_by: 'like_count',
+                    is_alert: true,
+                    sort_by: 'crawl_time',
                     sort_order: 'desc',
                 }}
                 showStatsCards={true}
-                showCharts={true}
+                showCharts={false}
                 showFilters={true}
                 showExport={true}
             />
@@ -32,4 +33,4 @@ const HotspotsPage: React.FC = () => {
     );
 };
 
-export default HotspotsPage;
+export default SentimentPage;

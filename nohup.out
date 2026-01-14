@@ -13387,3 +13387,7 @@ INFO:     Uvicorn running on http://0.0.0.0:8040 (Press CTRL+C to quit)
 [Scheduler Sync] Registered 2/2 active projects
 [Startup] Active projects synced to scheduler
 INFO:     127.0.0.1:50058 - "GET /api/growhub/projects HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53052 - "GET /api/growhub/projects/platforms/options HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53053 - "GET /api/growhub/projects/platforms/options HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53051 - "GET /api/growhub/projects HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53055 - "GET /api/growhub/projects HTTP/1.1" 200 OK

@@ -104,6 +104,7 @@ export interface ContentDisplayItem {
         name: string;
         avatar?: string;
         id?: string; // Display ID (e.g. dy number)
+        unique_id?: string; // 抖音号/快手号等平台账号
         url?: string; // Homepage Link
         contact?: string; // Contact text (e.g. "WeChat: xxx")
         ip_location?: string;
@@ -356,6 +357,12 @@ export const ContentDataTable: React.FC<ContentDataTableProps> = ({
                                                         <span className="font-medium text-sm truncate max-w-[120px] group-hover/author:text-primary transition-colors">
                                                             {item.author.name || '未知'}
                                                         </span>
+                                                        {/* 抖音号/快手号等平台账号 */}
+                                                        {item.author.unique_id && (
+                                                            <span className="text-[10px] text-muted-foreground/70 truncate max-w-[120px]">
+                                                                @{item.author.unique_id}
+                                                            </span>
+                                                        )}
                                                         {/* 作者粉丝/获赞 - 温和的展示 */}
                                                         {item.author.stats && (item.author.stats.fans !== undefined || item.author.stats.liked !== undefined) && (
                                                             <div className="flex flex-col gap-1 mt-1">

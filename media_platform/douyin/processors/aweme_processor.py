@@ -77,7 +77,7 @@ class AwemeProcessor:
                     # Assume update_douyin_aweme takes a model or dict. 
                     # Checking store/douyin.py later. For now assume it handles the model or we convert back.
                     # Wait, store usually takes dict in GrowHub.
-                    await douyin_store.update_douyin_aweme(aweme_data) 
+                    await douyin_store.update_douyin_aweme(aweme_data, client=self.dy_client) 
                     return aweme
                 else:
                     utils.logger.warning(

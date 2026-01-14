@@ -522,6 +522,7 @@ const ProjectDetailPage: React.FC = () => {
                                             name: item.author || '未知作者', 
                                             avatar: item.author_avatar,
                                             id: item.author_id,
+                                            unique_id: item.author_unique_id,
                                             stats: {
                                                 fans: item.author_fans,
                                                 liked: item.author_likes

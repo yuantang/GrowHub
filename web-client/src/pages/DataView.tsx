@@ -32,16 +32,17 @@ const DataPoolTab: React.FC = () => {
     const [trendData, setTrendData] = useState<any[]>([]);
     const [topData, setTopData] = useState<any[]>([]);
 
-    // 计算本周日期范围（默认值）
-    const getThisWeekRange = () => {
+    // 计算最近N天日期范围
+    const getLastNDaysRange = (days: number) => {
         const today = new Date();
-        const monday = new Date(today);
-        monday.setDate(today.getDate() - today.getDay() + 1);
+        const start = new Date(today);
+        start.setDate(today.getDate() - days + 1);
         const formatDate = (d: Date) => d.toISOString().split('T')[0];
-        return { start: formatDate(monday), end: formatDate(today) };
+        return { start: formatDate(start), end: formatDate(today) };
     };
 
-    const defaultDateRange = getThisWeekRange();
+    // 默认最近30天
+    const defaultDateRange = getLastNDaysRange(30);
 
     // Filters - 默认使用本周时间
     const [filters, setFilters] = useState<GrowHubContentFilters>({
@@ -171,6 +172,21 @@ const DataPoolTab: React.FC = () => {
                 const lastDay = new Date(today.getFullYear(), today.getMonth(), 0);
                 return { start: formatDate(firstDay), end: formatDate(lastDay) };
             }
+            case 'last7Days': {
+                const start = new Date(today);
+                start.setDate(today.getDate() - 6);
+                return { start: formatDate(start), end: formatDate(today) };
+            }
+            case 'last30Days': {
+                const start = new Date(today);
+                start.setDate(today.getDate() - 29);
+                return { start: formatDate(start), end: formatDate(today) };
+            }
+            case 'last90Days': {
+                const start = new Date(today);
+                start.setDate(today.getDate() - 89);
+                return { start: formatDate(start), end: formatDate(today) };
+            }
             default:
                 return { start: '', end: '' };
         }
@@ -192,6 +208,9 @@ const DataPoolTab: React.FC = () => {
         { label: '上周', value: 'lastWeek' },
         { label: '本月', value: 'thisMonth' },
         { label: '上月', value: 'lastMonth' },
+        { label: '近7天', value: 'last7Days' },
+        { label: '近30天', value: 'last30Days' },
+        { label: '近90天', value: 'last90Days' },
     ];
 
     return (
@@ -549,6 +568,7 @@ const DataPoolTab: React.FC = () => {
                                 name: item.author_name || '未知作者',
                                 avatar: item.author_avatar,
                                 id: item.author_id,
+                                unique_id: item.author_unique_id,
                                 url: getUserProfileUrl(item),
                                 contact: item.author_contact,
                                 ip_location: item.ip_location,

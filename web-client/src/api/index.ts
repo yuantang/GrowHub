@@ -349,6 +349,7 @@ export interface GrowHubContentItem {
     author_likes_count?: number;    // 作者获赞数
     author_contact?: string;
     ip_location?: string;           // IP归属地
+    author_unique_id?: string;       // 抖音号/快手号等
     media_urls?: string[];
     like_count: number;
     comment_count: number;

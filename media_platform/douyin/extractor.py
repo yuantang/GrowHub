@@ -89,6 +89,7 @@ class DouyinExtractor:
         return {
             "uid": author.get("uid"),
             "sec_uid": author.get("sec_uid"),
+            "unique_id": author.get("unique_id") or author.get("short_id") or "",
             "nickname": author.get("nickname"),
             "avatar": author.get("avatar_thumb", {}).get("url_list", [""])[0],
             "fans": author.get("follower_count") or author.get("followers_count") or author.get("fans") or a_stats.get("follower_count") or a_stats.get("followers_count") or a_stats.get("fans") or m_stats.get("follower_count") or m_stats.get("followers_count") or 0,

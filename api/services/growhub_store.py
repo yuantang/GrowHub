@@ -89,6 +89,9 @@ class GrowHubStoreService:
                 
                 # 提取IP归属地
                 ip_location = raw_data.get("ip_location")
+                
+                # 提取作者账号（抖音号/快手号等）
+                author_unique_id = raw_data.get("user_unique_id") or raw_data.get("unique_id") or ""
 
                 # 提取作者 ID (抖音优先使用 sec_uid 用于主页跳转)
                 author_id = str(raw_data.get("sec_uid") or raw_data.get("user_id") or "")
@@ -112,6 +115,7 @@ class GrowHubStoreService:
                     "author_follows_count": author_follows,
                     "author_likes_count": author_likes,
                     "ip_location": ip_location,
+                    "author_unique_id": author_unique_id,
                     "view_count": views,
                     "like_count": likes,
                     "comment_count": comments,

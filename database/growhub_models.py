@@ -85,6 +85,7 @@ class GrowHubContent(Base):
     author_follows_count = Column(Integer, default=0)  # 作者关注数
     author_likes_count = Column(Integer, default=0)    # 作者获赞数
     ip_location = Column(String(100), nullable=True)   # IP归属地
+    author_unique_id = Column(String(100), nullable=True)  # 抖音号/快手号等平台账号
     
     # 互动数据
     like_count = Column(Integer, default=0)

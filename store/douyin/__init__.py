@@ -217,6 +217,7 @@ async def update_douyin_aweme(aweme_item: Dict, client=None):
         "user_fans": str(user_info.get("fans", 0)),
         "user_follows": str(user_info.get("follows", 0)),
         "user_likes": str(user_info.get("likes", 0)),
+        "user_unique_id": user_info.get("unique_id", ""),
     }
     utils.logger.info(f"[store.douyin.update_douyin_aweme] douyin aweme id:{aweme_id}, title:{save_content_item.get('title')}")
     await DouyinStoreFactory.create_store().store_content(content_item=save_content_item)

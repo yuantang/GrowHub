@@ -44,6 +44,8 @@ from .routers.growhub_scheduler import router as growhub_scheduler_router
 from .routers.growhub_account_pool import router as growhub_account_pool_router
 from .routers.growhub_system import router as growhub_system_router
 from .routers.growhub_projects import router as growhub_projects_router
+from .routers.growhub_creators import router as growhub_creators_router
+from .routers.growhub_hotspots import router as growhub_hotspots_router
 
 app = FastAPI(
     title="GrowHub API",
@@ -107,6 +109,8 @@ app.include_router(growhub_scheduler_router, prefix="/api")
 app.include_router(growhub_account_pool_router, prefix="/api")
 app.include_router(growhub_system_router, prefix="/api")
 app.include_router(growhub_projects_router, prefix="/api")
+app.include_router(growhub_creators_router, prefix="/api")
+app.include_router(growhub_hotspots_router, prefix="/api")
 
 # Phase 2: 监控项目模块
 # (Moved to top imports)

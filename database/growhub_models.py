@@ -31,6 +31,14 @@ class SentimentType(enum.Enum):
     NEGATIVE = "negative"
 
 
+class ProjectPurpose(enum.Enum):
+    """项目/任务目的"""
+    CREATOR = "creator"       # 找达人博主
+    HOTSPOT = "hotspot"       # 找热门排行
+    SENTIMENT = "sentiment"   # 舆情监控
+    GENERAL = "general"       # 通用（全量入数据管理）
+
+
 class GrowHubKeyword(Base):
     """GrowHub 关键词表"""
     __tablename__ = 'growhub_keywords'
@@ -244,6 +252,9 @@ class GrowHubProject(Base):
     # 平台配置
     platforms = Column(JSON)  # ["xhs", "douyin", ...]
     
+    # 任务目的 (驱动数据分流)
+    purpose = Column(String(20), default='general')  # creator/hotspot/sentiment/general
+    
     # 爬虫配置
     crawler_type = Column(String(50), default='search')  # search/detail/creator
     crawl_limit = Column(Integer, default=20)  # 每次抓取数量限制
@@ -274,6 +285,7 @@ class GrowHubProject(Base):
     
     # 通知配置
     alert_on_negative = Column(Boolean, default=True)  # 负面内容预警
+    alert_on_new_content = Column(Boolean, default=False)  # 新内容更新通知
     alert_on_hotspot = Column(Boolean, default=False)  # 热点内容推送
     alert_channels = Column(JSON)  # ["wechat_work", "email"]
     
@@ -383,4 +395,95 @@ class GrowHubCheckpointNote(Base):
     note_type = Column(String(20), default='aweme') # aweme/comment/creator
     
     created_at = Column(DateTime, server_default=func.now())
+
+
+class GrowHubCreator(Base):
+    """GrowHub 达人博主池 - 按博主去重，聚合更新"""
+    __tablename__ = 'growhub_creators'
+    
+    id = Column(Integer, primary_key=True)
+    
+    # 博主唯一标识 (platform + author_id 联合唯一)
+    platform = Column(String(20), nullable=False, index=True)
+    author_id = Column(String(255), nullable=False, index=True)
+    
+    # 博主基础信息 (可更新)
+    author_name = Column(String(255))
+    author_avatar = Column(Text)
+    author_url = Column(Text)                # 主页链接
+    signature = Column(Text)                 # 简介/签名
+    
+    # 核心指标 (取最新值)
+    fans_count = Column(Integer, default=0)
+    follows_count = Column(Integer, default=0)
+    likes_count = Column(Integer, default=0)
+    works_count = Column(Integer, default=0)
+    
+    # 联系方式
+    contact_info = Column(Text)              # 提取的联系方式
+    ip_location = Column(String(100))
+    
+    # 内容分析 (聚合计算)
+    avg_likes = Column(Integer, default=0)
+    avg_comments = Column(Integer, default=0)
+    content_count = Column(Integer, default=0)  # 抓取到的内容数
+    content_tags = Column(JSON)              # 内容标签
+    
+    # 业务状态
+    status = Column(String(20), default='new')  # new/contacted/cooperating/rejected
+    notes = Column(Text)                     # 备注
+    
+    # 来源追踪
+    source_project_id = Column(Integer, ForeignKey('growhub_projects.id'), nullable=True)
+    source_keyword = Column(String(255))
+    
+    # 关联的最新内容ID (用于快速预览)
+    latest_content_id = Column(Integer, ForeignKey('growhub_contents.id'), nullable=True)
+    
+    # 时间戳
+    first_seen_at = Column(DateTime)         # 首次发现时间
+    last_updated_at = Column(DateTime)       # 最后更新时间
+    created_at = Column(DateTime, server_default=func.now())
+    
+    # 联合唯一约束
+    __table_args__ = (
+        {'sqlite_autoincrement': True},
+    )
+
+
+class GrowHubHotspot(Base):
+    """GrowHub 热点内容池 - 按内容去重，热度排行"""
+    __tablename__ = 'growhub_hotspots'
+    
+    id = Column(Integer, primary_key=True)
+    
+    # 关联原始内容 (唯一)
+    content_id = Column(Integer, ForeignKey('growhub_contents.id'), unique=True, index=True)
+    platform_content_id = Column(String(255), unique=True, index=True)  # 冗余, 快速查重
+    platform = Column(String(20), index=True)
+    
+    # 内容快照 (入选时的数据)
+    title = Column(String(500))
+    author_name = Column(String(255))
+    cover_url = Column(Text)
+    content_url = Column(Text)
+    
+    # 热度指标快照
+    heat_score = Column(Integer, default=0, index=True)  # 热度分 = likes + comments*2 + shares*3
+    like_count = Column(Integer, default=0)
+    comment_count = Column(Integer, default=0)
+    share_count = Column(Integer, default=0)
+    view_count = Column(Integer, default=0)
+    
+    # 排行信息
+    rank_date = Column(DateTime, index=True) # 排行日期
+    rank_position = Column(Integer)          # 当日排名
+    
+    # 来源追踪
+    source_project_id = Column(Integer, ForeignKey('growhub_projects.id'), nullable=True)
+    source_keyword = Column(String(255))
+    
+    # 时间戳
+    publish_time = Column(DateTime)          # 内容发布时间
+    entered_at = Column(DateTime, server_default=func.now())  # 入池时间
 

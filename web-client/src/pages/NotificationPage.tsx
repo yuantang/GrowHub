@@ -71,7 +71,8 @@ const NotificationPage: React.FC = () => {
         try {
             const response = await fetch(`${API_BASE}/growhub/notifications/channels`);
             const data = await response.json();
-            setChannels(data.items || []);
+            // Backend returns List[NotificationChannelResponse] directly
+            setChannels(Array.isArray(data) ? data : data.items || []);
         } catch (error) {
             console.error('Failed to fetch channels:', error);
         }
@@ -81,7 +82,7 @@ const NotificationPage: React.FC = () => {
         try {
             const response = await fetch(`${API_BASE}/growhub/notifications/groups`);
             const data = await response.json();
-            setGroups(data.items || []);
+            setGroups(Array.isArray(data) ? data : data.items || []);
         } catch (error) {
             console.error('Failed to fetch groups:', error);
         }

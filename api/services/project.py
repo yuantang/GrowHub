@@ -52,8 +52,12 @@ class ProjectConfig(BaseModel):
     
     # 通知配置
     alert_on_negative: bool = True
+    alert_on_new_content: bool = False
     alert_on_hotspot: bool = False
     alert_channels: List[str] = []
+    
+    # 任务目的
+    purpose: str = "general"
 
 
 class ProjectInfo(BaseModel):
@@ -179,8 +183,11 @@ class ProjectService:
                 schedule_value=config.schedule_value,
                 is_active=False,  # 创建时默认不启动
                 alert_on_negative=config.alert_on_negative,
+                alert_on_new_content=config.alert_on_new_content,
                 alert_on_hotspot=config.alert_on_hotspot,
                 alert_channels=config.alert_channels,
+                purpose=config.purpose,
+                max_concurrency=config.max_concurrency,
             )
             session.add(project)
             await session.flush()
@@ -381,11 +388,11 @@ class ProjectService:
                 return {"success": False, "error": "项目不存在"}
             
             # 异步执行爬虫任务
-            asyncio.create_task(self._execute_project(project_id))
+            asyncio.create_task(self.execute_project(project_id))
             
             return {"success": True, "message": "任务已开始执行"}
     
-    async def _execute_project(self, project_id: int):
+    async def execute_project(self, project_id: int):
         """执行项目爬虫任务"""
         from database.db_session import get_session
         from database.growhub_models import GrowHubProject
@@ -573,6 +580,8 @@ class ProjectService:
                             require_contact=getattr(project, 'require_contact', False) or False,
                             # 舆情敏感词
                             sentiment_keywords=project.sentiment_keywords or [],
+                            # 任务目的 (驱动数据分流)
+                            purpose=getattr(project, 'purpose', 'general') or 'general',
                         )
 
                         
@@ -1028,8 +1037,14 @@ class ProjectService:
             "schedule_value": project.schedule_value,
             "is_active": project.is_active,
             "alert_on_negative": project.alert_on_negative,
+            "alert_on_new_content": project.alert_on_new_content,
             "alert_on_hotspot": project.alert_on_hotspot,
             "alert_channels": project.alert_channels or [],
+            "purpose": project.purpose or "general",
+            "max_concurrency": project.max_concurrency or 3,
+            "require_contact": project.require_contact or False,
+            "min_fans": project.min_fans or 0,
+            "max_fans": project.max_fans or 0,
             
             # Advanced Filters
             "min_likes": project.min_likes or 0,

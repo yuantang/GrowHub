@@ -4,7 +4,7 @@
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Union
 from datetime import datetime
 
 router = APIRouter(prefix="/growhub/projects", tags=["GrowHub - 监控项目"])
@@ -21,6 +21,9 @@ class ProjectCreateRequest(BaseModel):
     keywords: List[str] = Field(default=[], description="监控关键词列表")
     sentiment_keywords: List[str] = Field(default=[], description="自定义舆情词列表")
     
+    # 任务目的 (驱动数据分流)
+    purpose: str = Field(default="general", description="任务目的: creator/hotspot/sentiment/general")
+    
     # 平台
     platforms: List[str] = Field(default=["xhs"], description="监控平台列表")
     
@@ -30,6 +33,7 @@ class ProjectCreateRequest(BaseModel):
     crawl_date_range: int = Field(default=7, ge=0, description="爬取时间范围（天），0为不限")
     enable_comments: bool = Field(default=True, description="是否抓取评论")
     deduplicate_authors: bool = Field(default=False, description="是否博主去重")
+    max_concurrency: int = Field(default=3, ge=1, le=10, description="最大并发数")
     
     # 调度配置
     schedule_type: str = Field(default="interval", description="调度类型: interval/cron")
@@ -38,8 +42,9 @@ class ProjectCreateRequest(BaseModel):
     
     # 通知配置
     alert_on_negative: bool = Field(default=True, description="负面内容预警")
+    alert_on_new_content: bool = Field(default=False, description="新内容更新通知")
     alert_on_hotspot: bool = Field(default=False, description="热点内容推送")
-    alert_channels: List[str] = Field(default=[], description="通知渠道")
+    alert_channels: List[Union[str, int]] = Field(default=[], description="通知渠道")
     
     # 高级过滤
     min_likes: int = Field(default=0, ge=0, description="最小点赞数")
@@ -63,17 +68,21 @@ class ProjectUpdateRequest(BaseModel):
     description: Optional[str] = None
     keywords: Optional[List[str]] = None
     sentiment_keywords: Optional[List[str]] = None
+    purpose: Optional[str] = Field(None, description="任务目的: creator/hotspot/sentiment/general")
     platforms: Optional[List[str]] = None
     crawler_type: Optional[str] = None
     crawl_limit: Optional[int] = Field(None, ge=1, le=100)
     crawl_date_range: Optional[int] = Field(None, ge=0)
     enable_comments: Optional[bool] = None
     deduplicate_authors: Optional[bool] = None
+    max_concurrency: Optional[int] = Field(None, ge=1, le=10)
+
     schedule_type: Optional[str] = None
     schedule_value: Optional[str] = None
     alert_on_negative: Optional[bool] = None
+    alert_on_new_content: Optional[bool] = None
     alert_on_hotspot: Optional[bool] = None
-    alert_channels: Optional[List[str]] = None
+    alert_channels: Optional[List[Union[str, int]]] = None
     is_active: Optional[bool] = None
     # 高级过滤
     min_likes: Optional[int] = Field(None, ge=0)
@@ -98,17 +107,20 @@ class ProjectResponse(BaseModel):
     keywords: List[str]
     sentiment_keywords: Optional[List[str]] = []
     platforms: List[str]
+    purpose: str = "general"  # 任务目的
     crawler_type: str
     crawl_limit: int
     crawl_date_range: int = 7
     enable_comments: bool
     deduplicate_authors: bool = False
+    max_concurrency: int = 3
     schedule_type: str
     schedule_value: str
     is_active: bool
     alert_on_negative: bool
+    alert_on_new_content: bool = False
     alert_on_hotspot: bool
-    alert_channels: List[str] = []
+    alert_channels: List[Union[str, int]] = []
     # 高级过滤
     min_likes: int = 0
     max_likes: int = 0

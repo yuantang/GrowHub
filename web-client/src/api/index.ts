@@ -223,6 +223,7 @@ export interface Project {
     keywords: string[];
     sentiment_keywords: string[];
     platforms: string[];
+    purpose: string;  // 任务目的: creator/hotspot/sentiment/general
     crawler_type: string;
     crawl_limit: number;
     crawl_date_range: number;
@@ -233,8 +234,9 @@ export interface Project {
     max_concurrency: number;
     is_active: boolean;
     alert_on_negative: boolean;
+    alert_on_new_content: boolean;
     alert_on_hotspot: boolean;
-    alert_channels: string[];
+    alert_channels: (string | number)[];
     // Stats
     total_crawled: number;
     total_alerts: number;
@@ -463,6 +465,161 @@ export const getGrowHubExportUrl = (filters: GrowHubContentFilters) => {
     return `/api/growhub/content/export?${params.toString()}`;
 };
 
+// ============ Purpose Enum ============
+export const ProjectPurpose = {
+    CREATOR: "creator",
+    HOTSPOT: "hotspot",
+    SENTIMENT: "sentiment",
+    GENERAL: "general",
+} as const;
+export type ProjectPurpose = typeof ProjectPurpose[keyof typeof ProjectPurpose];
+
+export const ProjectPurposeLabels: Record<string, string> = {
+    creator: "找达人博主",
+    hotspot: "找热点排行",
+    sentiment: "舆情监控",
+    general: "通用数据",
+};
+
+// ============ Creator (达人博主) API ============
+export interface Creator {
+    id: number;
+    platform: string;
+    author_id: string;
+    author_name?: string;
+    author_avatar?: string;
+    author_url?: string;
+    signature?: string;
+    fans_count: number;
+    follows_count: number;
+    likes_count: number;
+    works_count: number;
+    contact_info?: string;
+    ip_location?: string;
+    avg_likes: number;
+    avg_comments: number;
+    content_count: number;
+    status: string;
+    notes?: string;
+    source_project_id?: number;
+    source_keyword?: string;
+    first_seen_at?: string;
+    last_updated_at?: string;
+    created_at?: string;
+}
+
+export interface CreatorListResponse {
+    total: number;
+    items: Creator[];
+}
+
+export interface CreatorStats {
+    total: number;
+    by_status: Record<string, number>;
+    by_platform: Record<string, number>;
+}
+
+export interface CreatorFilters {
+    platform?: string;
+    source_project_id?: number;
+    status?: string;
+    min_fans?: number;
+    max_fans?: number;
+    source_keyword?: string;
+    sort_by?: string;
+    sort_order?: string;
+    page?: number;
+    page_size?: number;
+}
+
+export const fetchCreators = (filters?: CreatorFilters) =>
+    api.get<CreatorListResponse>('/growhub/creators/list', { params: cleanParams(filters || {}) }).then(res => res.data);
+
+export const fetchCreatorStats = (source_project_id?: number) =>
+    api.get<CreatorStats>('/growhub/creators/stats', { params: cleanParams({ source_project_id }) }).then(res => res.data);
+
+export const fetchCreator = (id: number) =>
+    api.get<Creator>(`/growhub/creators/${id}`).then(res => res.data);
+
+export const updateCreatorStatus = (id: number, status: string, notes?: string) =>
+    api.patch(`/growhub/creators/${id}/status`, { status, notes });
+
+export const deleteCreator = (id: number) =>
+    api.delete(`/growhub/creators/${id}`);
+
+// ============ Hotspot (热点内容) API ============
+export interface Hotspot {
+    id: number;
+    rank: number;
+    content_id?: number;
+    platform_content_id?: string;
+    platform?: string;
+    title?: string;
+    author_name?: string;
+    cover_url?: string;
+    content_url?: string;
+    heat_score: number;
+    like_count: number;
+    comment_count: number;
+    share_count: number;
+    view_count: number;
+    rank_date?: string;
+    source_project_id?: number;
+    source_keyword?: string;
+    publish_time?: string;
+    entered_at?: string;
+}
+
+export interface HotspotListResponse {
+    total: number;
+    items: Hotspot[];
+}
+
+export interface HotspotStats {
+    total: number;
+    today_count: number;
+    by_platform: Record<string, number>;
+    avg_heat_score: number;
+}
+
+export interface HotspotFilters {
+    platform?: string;
+    source_project_id?: number;
+    source_keyword?: string;
+    rank_date?: string;
+    start_date?: string;
+    end_date?: string;
+    min_heat?: number;
+    sort_by?: string;
+    sort_order?: string;
+    page?: number;
+    page_size?: number;
+}
+
+export const fetchHotspots = (filters?: HotspotFilters) =>
+    api.get<HotspotListResponse>('/growhub/hotspots/list', { params: cleanParams(filters || {}) }).then(res => res.data);
+
+export const fetchHotspotRanking = (rank_date?: string, platform?: string, limit = 50) =>
+    api.get<Hotspot[]>('/growhub/hotspots/ranking', { params: cleanParams({ rank_date, platform, limit }) }).then(res => res.data);
+
+export const fetchHotspotStats = (source_project_id?: number) =>
+    api.get<HotspotStats>('/growhub/hotspots/stats', { params: cleanParams({ source_project_id }) }).then(res => res.data);
+
+export const fetchHotspot = (id: number) =>
+    api.get<Hotspot>(`/growhub/hotspots/${id}`).then(res => res.data);
+
+export const deleteHotspot = (id: number) =>
+    api.delete(`/growhub/hotspots/${id}`);
+
 export default api;
+// ============ Notification API ============
+export interface NotificationChannel {
+    id: number;
+    name: string;
+    channel_type: string;
+    config: Record<string, any>;
+    is_active: boolean;
+}
 
-
+export const fetchNotificationChannels = () =>
+    api.get<NotificationChannel[]>('/growhub/notifications/channels').then(res => Array.isArray(res.data) ? res.data : (res.data as any).items || []);

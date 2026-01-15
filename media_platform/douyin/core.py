@@ -19,7 +19,15 @@ from proxy.proxy_ip_pool import IpInfoModel, create_ip_pool
 from store import douyin as douyin_store
 from tools import utils
 from tools.cdp_browser import CDPBrowserManager
-from var import crawler_type_var
+from var import (
+    crawler_type_var, 
+    project_id_var, 
+    min_fans_var, 
+    max_fans_var, 
+    require_contact_var, 
+    sentiment_keywords_var, 
+    purpose_var
+)
 
 from media_platform.douyin.client import DouYinClient
 from media_platform.douyin.login import DouYinLogin
@@ -141,6 +149,13 @@ class DouYinCrawler(AbstractCrawler):
             )
 
             crawler_type_var.set(config.CRAWLER_TYPE)
+            # Initialize GrowHub session variables from config
+            project_id_var.set(getattr(config, "PROJECT_ID", 0))
+            min_fans_var.set(getattr(config, "MIN_FANS", 0))
+            max_fans_var.set(getattr(config, "MAX_FANS", 0))
+            require_contact_var.set(getattr(config, "REQUIRE_CONTACT", False))
+            sentiment_keywords_var.set(getattr(config, "SENTIMENT_KEYWORDS", []))
+            purpose_var.set(getattr(config, "PURPOSE", "general"))
             
             # Dispatch to Handler
             if config.CRAWLER_TYPE == "search":

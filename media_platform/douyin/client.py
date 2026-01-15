@@ -38,7 +38,29 @@ if TYPE_CHECKING:
 from .exception import *
 from .field import *
 from .help import *
-from tenacity import retry, stop_after_attempt, wait_fixed
+from tenacity import retry, stop_after_attempt, wait_exponential, before_sleep_log
+import time
+
+class AsyncTokenBucket:
+    """异步令牌桶限流器 (Async Token Bucket Rate Limiter)"""
+    def __init__(self, rate: float, capacity: float):
+        self.rate = rate
+        self.capacity = capacity
+        self.tokens = capacity
+        self.last_update = time.monotonic()
+        self._lock = asyncio.Lock()
+
+    async def consume(self, amount: float = 1.0):
+        async with self._lock:
+            while self.tokens < amount:
+                now = time.monotonic()
+                delta = (now - self.last_update) * self.rate
+                self.tokens = min(self.capacity, self.tokens + delta)
+                self.last_update = now
+                if self.tokens < amount:
+                    sleep_time = (amount - self.tokens) / self.rate
+                    await asyncio.sleep(sleep_time)
+            self.tokens -= amount
 
 class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
 
@@ -58,9 +80,16 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
         self._host = "https://www.douyin.com"
         self.playwright_page = playwright_page
         self.cookie_dict = cookie_dict
+        # 初始化限流器 (TPS 限制)
+        import config
+        global_tps = getattr(config, "GLOBAL_TPS_LIMIT", 1.5)
+        self.rate_limiter = AsyncTokenBucket(rate=global_tps, capacity=global_tps * 2)
+        
+        # 记录上一次请求的 Referer 用于链路模拟
+        self.last_referer = "https://www.douyin.com/"
+        
         # 初始化代理池（来自 ProxyRefreshMixin）
         # Pro Feature: Pass ACCOUNT_ID for IP-Account affinity
-        import config
         self.init_proxy_pool(proxy_ip_pool, account_id=config.ACCOUNT_ID)
 
 
@@ -158,33 +187,59 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
         except Exception as e:
             utils.logger.error(f"[DouYinClient] Failed to update account status in DB: {e}")
 
-    @retry(stop=stop_after_attempt(3), wait=wait_fixed(1))
+    @retry(
+        stop=stop_after_attempt(3), 
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        before_sleep=before_sleep_log(utils.logger, "DEBUG")
+    )
     async def request(self, method, url, **kwargs):
-        # 每次请求前检测代理是否过期
+        # 1. 触发频率限制 (Token Bucket)
+        await self.rate_limiter.consume()
+        
+        # 2. 刷新过期代理
         await self._refresh_proxy_if_expired()
+
+        # 3. 动态 Referer 注入 (链路模拟)
+        headers = kwargs.get("headers", {})
+        if "Referer" not in headers:
+            headers["Referer"] = self.last_referer
+            kwargs["headers"] = headers
 
         async with httpx.AsyncClient(proxy=self.proxy) as client:
             response = await client.request(method, url, timeout=self.timeout, **kwargs)
+        
+        # 记录最新的 Referer (如果是 GET HTML 页面或主接口)
+        if method == "GET" and "/web/" not in url:
+            self.last_referer = url
+
         try:
-            if response.text == "" or response.text == "blocked":
-                utils.logger.warning(f"[DouYinClient] Response text is empty or 'blocked'. URL: {url}")
-                # 暂时移除自动封禁逻辑，过于激进会导致账号池耗尽
-                # await self.update_account_status("banned")
-                raise Exception("account blocked or empty response")
+            # 抖音常见的拦截关键词
+            blocked_keywords = ["blocked", "verify_check", "verify_check_s", "forbidden"]
+            res_text = response.text.lower()
+            
+            if response.text == "" or any(k in res_text for k in blocked_keywords):
+                utils.logger.warning(f"🚨 [DouYinClient] 检测到风控拦截或空回复! URL: {url}, Response: {response.text[:100]}")
+                # 记录账号进入冷却状态
+                await self.update_account_status("cooldown")
+                raise Exception(f"account blocked or anti-bot triggered: {response.text[:50]}")
+                
             return response.json()
         except Exception as e:
-            if "account blocked" in str(e):
+            if "anti-bot" in str(e) or "blocked" in str(e):
                 raise e
-            raise DataFetchError(f"{e}, {response.text}")
+            raise DataFetchError(f"{e}, {response.text[:200]}")
 
 
     async def get(self, uri: str, params: Optional[Dict] = None, headers: Optional[Dict] = None):
         """
         GET请求
         """
+        # 如果是主 API 请求，通过 Referer 链路模拟真实的跳转来源
+        # 比如搜索完后，Referer 应该是搜索结果页
         await self.__process_req_params(uri, params, headers)
         headers = headers or self.headers
-        return await self.request(method="GET", url=f"{self._host}{uri}", params=params, headers=headers)
+        full_url = f"{self._host}{uri}"
+        return await self.request(method="GET", url=full_url, params=params, headers=headers)
 
     async def post(self, uri: str, data: dict, headers: Optional[Dict] = None):
         await self.__process_req_params(uri, data, headers)

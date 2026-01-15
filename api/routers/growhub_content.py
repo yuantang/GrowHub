@@ -297,6 +297,8 @@ async def list_contents(
     sort_by: str = Query("crawl_time", description="排序字段"),
     sort_order: str = Query("desc", description="排序方向"),
     deduplicate_authors: bool = Query(False, description="是否博主去重"),
+    min_fans: Optional[int] = Query(None, ge=0, description="博主最小粉丝数"),
+    max_fans: Optional[int] = Query(None, ge=0, description="博主最大粉丝数"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100)
 ):
@@ -692,7 +694,8 @@ async def get_content_trend(
         "platform": platform, "category": category, "sentiment": sentiment,
         "is_alert": is_alert, "is_handled": is_handled, "search": search,
         "source_keyword": source_keyword, "start_date": start_date, "end_date": end_date,
-        "min_likes": min_likes, "min_comments": min_comments, "min_shares": min_shares
+        "min_likes": min_likes, "min_comments": min_comments, "min_shares": min_shares,
+        "min_fans": min_fans, "max_fans": max_fans
     }
 
     async with get_session() as session:

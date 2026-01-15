@@ -461,4 +461,10 @@ from database.growhub_models import (
     GrowHubNotification,
     GrowHubNotificationChannel,
     GrowHubNotificationGroup,
+    GrowHubProject,
+    GrowHubAccount,
+    GrowHubCheckpoint,
+    GrowHubCheckpointNote,
+    GrowHubCreator,
+    GrowHubHotspot,
 )

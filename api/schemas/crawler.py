@@ -100,6 +100,9 @@ class CrawlerStartRequest(BaseModel):
     
     # 舆情监控
     sentiment_keywords: List[str] = []  # 敏感词列表
+    
+    # 任务目的 (驱动数据分流)
+    purpose: str = "general"  # creator/hotspot/sentiment/general
 
 
 

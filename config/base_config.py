@@ -172,6 +172,9 @@ FONT_PATH = "./docs/STZHONGS.TTF"
 # 爬取间隔时间
 CRAWLER_MAX_SLEEP_SEC = 2
 
+# 全局频率限制 (每秒请求数 TPS/RPS)
+GLOBAL_TPS_LIMIT = 1.0  # 建议保持在 1.0~2.0 之间，降低风控风险
+
 # ==================== HomeFeed 首页推荐配置 ====================
 # 首页推荐最大爬取页数
 HOMEFEED_MAX_PAGES = 10

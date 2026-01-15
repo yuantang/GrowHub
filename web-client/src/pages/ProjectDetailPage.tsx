@@ -6,12 +6,16 @@ import {
     fetchProjectStatsChart,
     updateProject,
     fetchAIKeywords,
+    fetchNotificationChannels,
 } from '@/api';
 import type {
     Project,
     ProjectContentItem,
-    ProjectStatsChartResponse
+    ProjectStatsChartResponse,
+    NotificationChannel
 } from '@/api';
+import { MultiSelect } from '@/components/ui/MultiSelect';
+import { ProjectPurposeLabels } from '@/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/Tabs';
@@ -269,6 +273,7 @@ const ProjectDetailPage: React.FC = () => {
     const projectId = Number(id);
 
     const [project, setProject] = useState<Project | null>(null);
+    const [notificationChannels, setNotificationChannels] = useState<NotificationChannel[]>([]);
     const [loading, setLoading] = useState(true);
     const [statsChart, setStatsChart] = useState<ProjectStatsChartResponse | null>(null);
     const [contents, setContents] = useState<ProjectContentItem[]>([]);
@@ -322,11 +327,17 @@ const ProjectDetailPage: React.FC = () => {
     }, [projectId]);
 
     const loadProjectData = async () => {
+        if (!projectId) return;
+        setLoading(true);
         try {
-            setLoading(true);
-            const data = await fetchProject(projectId);
-            setProject(data);
-            setDeduplicateAuthors(data.deduplicate_authors || false);
+            const [projectData, channelsData] = await Promise.all([
+                fetchProject(projectId),
+                fetchNotificationChannels()
+            ]);
+            setProject(projectData);
+            setEditForm(projectData);
+            setNotificationChannels(channelsData);
+            setDeduplicateAuthors(projectData.deduplicate_authors || false);
             const chartData = await fetchProjectStatsChart(projectId, 7);
             setStatsChart(chartData);
         } catch (err) {
@@ -362,6 +373,13 @@ const ProjectDetailPage: React.FC = () => {
 
     const handleSaveEdit = async () => {
         if (!project) return;
+        
+        // 验证：舆情监控任务必须填写敏感词
+        if (editForm.purpose === 'sentiment' && !sentimentKeywordsStr.trim()) {
+            alert('舆情监控任务必须填写舆情敏感词');
+            return;
+        }
+
         setIsSaving(true);
         try {
             const platformNormalize: Record<string, string> = {
@@ -383,7 +401,11 @@ const ProjectDetailPage: React.FC = () => {
                 keywords: keywordsStr.split(/[,，\n\s]+/).map(k => k.trim()).filter(Boolean),
                 sentiment_keywords: sentimentKeywordsStr.split(/[,，\n\s]+/).map(k => k.trim()).filter(Boolean),
                 // Normalize and deduplicate platforms
-                platforms: Array.from(new Set((editForm.platforms || []).map(p => platformNormalize[p] || p)))
+                platforms: Array.from(new Set((editForm.platforms || []).map(p => platformNormalize[p] || p))),
+                // 自动设置预警标记
+                alert_on_negative: editForm.purpose === 'sentiment' && (editForm.alert_channels?.length || 0) > 0,
+                alert_on_hotspot: editForm.purpose === 'hotspot' && (editForm.alert_channels?.length || 0) > 0,
+                alert_channels: editForm.alert_channels || []
             };
             // Ensure numeric fields are numbers
             payload.crawl_limit = Number(payload.crawl_limit || 20);
@@ -718,6 +740,23 @@ const ProjectDetailPage: React.FC = () => {
                                     />
                                 </div>
                                 
+                                {/* 任务目的 */}
+                                <div>
+                                    <label className="text-sm font-medium mb-2 block">任务目的 *</label>
+                                    <select
+                                        value={editForm.purpose || 'general'}
+                                        onChange={e => setEditForm({ ...editForm, purpose: e.target.value })}
+                                        className="w-full px-3 py-2 bg-background border border-border rounded-lg"
+                                    >
+                                        {Object.entries(ProjectPurposeLabels).map(([value, label]) => (
+                                            <option key={value} value={value}>{label}</option>
+                                        ))}
+                                    </select>
+                                    <p className="text-xs text-muted-foreground mt-1">
+                                        "找达人博主"数据入博主池，"找热点排行"数据入热点池，"舆情监控"触发预警
+                                    </p>
+                                </div>
+                                
                                 {/* Keywords */}
                                 <div>
                                     <div className="flex items-center justify-between mb-2">
@@ -745,7 +784,7 @@ const ProjectDetailPage: React.FC = () => {
                                 <div>
                                     <div className="flex items-center justify-between mb-2">
                                         <label className="text-sm font-medium">
-                                            舆情及预警敏感词
+                                            舆情及预警敏感词{editForm.purpose === 'sentiment' && ' *'}
                                             <span className="text-muted-foreground font-normal ml-2 text-xs">匹配后标记为预警，按重要程度排序</span>
                                         </label>
                                         <AIKeywordSuggest
@@ -978,53 +1017,33 @@ const ProjectDetailPage: React.FC = () => {
                                 </details>
 
                                 {/* Notifications */}
-                                <div>
-                                    <h3 className="text-sm font-medium mb-3">预警通知</h3>
-                                    <div className="space-y-3">
-                                        <div className="flex items-center gap-2">
-                                            <input
-                                                type="checkbox"
-                                                id="alertNegEdit"
-                                                checked={editForm.alert_on_negative !== false}
-                                                onChange={e => setEditForm({ ...editForm, alert_on_negative: e.target.checked })}
-                                                className="w-4 h-4"
-                                            />
-                                            <label htmlFor="alertNegEdit" className="text-sm">开启负面内容预警</label>
-                                        </div>
-                                        <div className="flex items-center gap-2">
-                                            <input
-                                                type="checkbox"
-                                                id="alertHotEdit"
-                                                checked={editForm.alert_on_hotspot === true}
-                                                onChange={e => setEditForm({ ...editForm, alert_on_hotspot: e.target.checked })}
-                                                className="w-4 h-4"
-                                            />
-                                            <label htmlFor="alertHotEdit" className="text-sm">开启热点内容预警</label>
-                                        </div>
+                                <div className="border rounded-lg p-4 bg-accent/20">
+                                    <h3 className="text-sm font-medium mb-3">消息推送渠道</h3>
+                                    <div className="max-w-xl">
+                                        <MultiSelect
+                                            options={notificationChannels.map(channel => ({
+                                                label: channel.name,
+                                                value: channel.id,
+                                                icon: channel.channel_type === 'wechat_work' ? '🤖' :
+                                                    channel.channel_type === 'email' ? '📧' :
+                                                        channel.channel_type === 'webhook' ? '⚡' : '📢'
+                                            }))}
+                                            value={editForm.alert_channels || []}
+                                            onChange={(val) => setEditForm({ ...editForm, alert_channels: val })}
+                                            placeholder="选择推送渠道..."
+                                        />
+                                        {(editForm.alert_channels || []).length === 0 && (
+                                            <p className="text-sm text-muted-foreground mt-2">
+                                                暂无选中渠道，请下拉选择
+                                                {notificationChannels.length === 0 && (
+                                                    <a href="/notifications" className="text-primary ml-2 hover:underline">去配置</a>
+                                                )}
+                                            </p>
+                                        )}
                                     </div>
-                                    <div className="mt-3">
-                                        <label className="text-xs text-muted-foreground block mb-2">通知渠道</label>
-                                        <div className="flex gap-4">
-                                            {[{id:'wechat_work', label:'企业微信', icon: <MessageSquare className="w-4 h-4" />}, {id:'email', label:'邮件', icon: <MessageCircle className="w-4 h-4" />}, {id:'webhook', label:'Webhook', icon: <Zap className="w-4 h-4" />}].map(ch => (
-                                                <label key={ch.id} className={cn("flex items-center gap-2 px-3 py-2 rounded border cursor-pointer text-sm", (editForm.alert_channels || []).includes(ch.id) ? "border-primary bg-primary/10 text-primary" : "border-border")}>
-                                                    <input
-                                                        type="checkbox"
-                                                        className="sr-only"
-                                                        checked={(editForm.alert_channels || []).includes(ch.id)}
-                                                        onChange={e => {
-                                                            const current = editForm.alert_channels || [];
-                                                            const updated = e.target.checked
-                                                                ? [...current, ch.id]
-                                                                : current.filter(x => x !== ch.id);
-                                                            setEditForm({ ...editForm, alert_channels: updated });
-                                                        }}
-                                                    />
-                                                    {ch.icon}
-                                                    {ch.label}
-                                                </label>
-                                            ))}
-                                        </div>
-                                    </div>
+                                    <p className="text-xs text-muted-foreground mt-3">
+                                        系统将根据项目目的（舆情/热点/通用）自动筛选符合条件的内容推送到上述渠道。
+                                    </p>
                                 </div>
 
                                 {/* Save Button */}

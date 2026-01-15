@@ -402,6 +402,14 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
                 rich_help_panel="Sentiment Configuration",
             ),
         ] = "",
+        purpose: Annotated[
+            str,
+            typer.Option(
+                "--purpose",
+                help="Task purpose for data routing: creator/hotspot/sentiment/general",
+                rich_help_panel="Task Configuration",
+            ),
+        ] = "general",
     ) -> SimpleNamespace:
         """MediaCrawler 命令行入口"""
 
@@ -502,6 +510,7 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
             max_fans=max_fans,
             require_contact=config.REQUIRE_CONTACT,
             sentiment_keywords=config.SENTIMENT_KEYWORDS,
+            purpose=purpose,
         )
 
     command = typer.main.get_command(app)

@@ -6,7 +6,14 @@ import {
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
-import { fetchAIKeywords } from '@/api';
+import { MultiSelect } from '@/components/ui/MultiSelect';
+import {
+    fetchAIKeywords,
+    ProjectPurposeLabels,
+    fetchPlatforms, // Added based on usage in component
+    fetchNotificationChannels,
+    type NotificationChannel
+} from '@/api';
 
 const API_BASE = '/api';
 
@@ -24,8 +31,9 @@ interface Project {
     schedule_value: string;
     is_active: boolean;
     alert_on_negative: boolean;
+    alert_on_new_content: boolean;
     alert_on_hotspot: boolean;
-    alert_channels: string[];
+    alert_channels: (string | number)[];
     last_run_at?: string;
     next_run_at?: string;
     run_count: number;
@@ -43,7 +51,8 @@ interface Project {
     sentiment_keywords?: string[] | string;
 }
 
-interface Platform {
+// Assuming PlatformOption is the type returned by fetchPlatforms
+interface PlatformOption {
     value: string;
     label: string;
     icon: string;
@@ -293,7 +302,8 @@ const AIKeywordSuggest: React.FC<{ onSelect: (keywords: string[]) => void }> = (
 const ProjectsPage: React.FC = () => {
     const navigate = useNavigate();
     const [projects, setProjects] = useState<Project[]>([]);
-    const [platforms, setPlatforms] = useState<Platform[]>([]);
+    const [platforms, setPlatforms] = useState<PlatformOption[]>([]);
+    const [notificationChannels, setNotificationChannels] = useState<NotificationChannel[]>([]);
     const [loading, setLoading] = useState(true);
     const [showCreateModal, setShowCreateModal] = useState(false);
     const [actionLoading, setActionLoading] = useState<number | null>(null);
@@ -311,6 +321,7 @@ const ProjectsPage: React.FC = () => {
         schedule_type: 'interval',
         schedule_value: '3600',
         alert_on_negative: true,
+        alert_on_new_content: false,
         alert_on_hotspot: false,
         auto_start: false,
         // 高级过滤 - 范围
@@ -329,12 +340,15 @@ const ProjectsPage: React.FC = () => {
         sentiment_keywords: '',
         enable_comments: true,
         deduplicate_authors: false,
+        purpose: 'general',  // 任务目的
+        alert_channels: [] as (string | number)[],
     });
 
 
     useEffect(() => {
         fetchProjects();
         fetchPlatforms();
+        fetchNotificationChannels().then(setNotificationChannels);
     }, []);
 
     const fetchProjects = async () => {
@@ -342,7 +356,12 @@ const ProjectsPage: React.FC = () => {
             setLoading(true);
             const response = await fetch(`${API_BASE}/growhub/projects`);
             const data = await response.json();
-            setProjects(data || []);
+            if (Array.isArray(data)) {
+                setProjects(data);
+            } else {
+                console.error('API returned non-array data:', data);
+                setProjects([]);
+            }
         } catch (error) {
             console.error('Failed to fetch projects:', error);
         } finally {
@@ -362,6 +381,12 @@ const ProjectsPage: React.FC = () => {
 
     const createProject = async () => {
         if (!newProject.name.trim()) return;
+        
+        // 验证：舆情监控任务必须填写敏感词
+        if (newProject.purpose === 'sentiment' && !newProject.sentiment_keywords.trim()) {
+            alert('舆情监控任务必须填写舆情敏感词');
+            return;
+        }
 
         try {
             const platformNormalize: Record<string, string> = {
@@ -381,7 +406,12 @@ const ProjectsPage: React.FC = () => {
                 ...newProject,
                 keywords: newProject.keywords.split(/[,，\n\s]+/).filter(k => k.trim()),
                 sentiment_keywords: newProject.sentiment_keywords.split(/[,，\n\s]+/).filter(k => k.trim()),
-                platforms: Array.from(new Set((newProject.platforms || []).map(p => platformNormalize[p] || p)))
+                platforms: Array.from(new Set((newProject.platforms || []).map(p => platformNormalize[p] || p))),
+                // 设置预警标记
+                alert_on_negative: newProject.alert_on_negative,
+                alert_on_new_content: newProject.alert_on_new_content,
+                alert_on_hotspot: newProject.alert_on_hotspot,
+                alert_channels: newProject.alert_channels
             };
 
             const response = await fetch(`${API_BASE}/growhub/projects`, {
@@ -403,6 +433,7 @@ const ProjectsPage: React.FC = () => {
                     schedule_type: 'interval',
                     schedule_value: '3600',
                     alert_on_negative: true,
+                    alert_on_new_content: false,
                     alert_on_hotspot: false,
                     auto_start: false,
                     min_likes: 0,
@@ -828,6 +859,23 @@ const ProjectsPage: React.FC = () => {
                                 />
                             </div>
 
+                            {/* 任务目的 */}
+                            <div>
+                                <label className="text-sm font-medium mb-2 block">任务目的 *</label>
+                                <select
+                                    value={newProject.purpose}
+                                    onChange={e => setNewProject({ ...newProject, purpose: e.target.value })}
+                                    className="w-full px-3 py-2 bg-background border border-border rounded-lg"
+                                >
+                                    {Object.entries(ProjectPurposeLabels).map(([value, label]) => (
+                                        <option key={value} value={value}>{label}</option>
+                                    ))}
+                                </select>
+                                <p className="text-xs text-muted-foreground mt-1">
+                                    "找达人博主"数据入博主池，"找热点排行"数据入热点池，"舆情监控"触发预警
+                                </p>
+                            </div>
+
                             {/* 关键词 - 带 AI 联想 */}
                             <div>
                                 <div className="flex items-center justify-between mb-2">
@@ -855,7 +903,7 @@ const ProjectsPage: React.FC = () => {
                             <div>
                                 <div className="flex items-center justify-between mb-2">
                                     <label className="text-sm font-medium">
-                                        舆情及预警敏感词
+                                        舆情及预警敏感词{newProject.purpose === 'sentiment' && ' *'}
                                         <span className="text-muted-foreground font-normal ml-2 text-xs">匹配后标记为预警，按重要程度排序</span>
                                     </label>
                                     <AIKeywordSuggest
@@ -1126,30 +1174,34 @@ const ProjectsPage: React.FC = () => {
                             </details>
 
 
-                            {/* 预警配置 */}
-                            <div>
-                                <label className="text-sm font-medium mb-2 block">预警规则</label>
-                                <div className="flex gap-4">
-                                    <label className="flex items-center gap-2 cursor-pointer">
-                                        <input
-                                            type="checkbox"
-                                            checked={newProject.alert_on_negative}
-                                            onChange={e => setNewProject({ ...newProject, alert_on_negative: e.target.checked })}
-                                            className="w-4 h-4"
-                                        />
-                                        <AlertTriangle className="w-4 h-4 text-orange-500" />
-                                        负面内容预警
-                                    </label>
-                                    <label className="flex items-center gap-2 cursor-pointer">
-                                        <input
-                                            type="checkbox"
-                                            checked={newProject.alert_on_hotspot}
-                                            onChange={e => setNewProject({ ...newProject, alert_on_hotspot: e.target.checked })}
-                                            className="w-4 h-4"
-                                        />
-                                        <TrendingUp className="w-4 h-4 text-green-500" />
-                                        热点内容推送
-                                    </label>
+                            {/* 预警配置 */ }
+                            <div className="border rounded-lg p-4 bg-accent/20">
+                                <label className="text-sm font-medium mb-3 block">消息推送渠道</label>
+                                <div className="max-w-xl">
+                                    <MultiSelect
+                                        options={notificationChannels.map(channel => ({
+                                            label: channel.name,
+                                            value: channel.id,
+                                            icon: channel.channel_type === 'wechat_work' ? '🤖' :
+                                                channel.channel_type === 'email' ? '📧' :
+                                                    channel.channel_type === 'webhook' ? '⚡' : '📢'
+                                        }))}
+                                        value={newProject.alert_channels}
+                                        onChange={(val) => setNewProject({ ...newProject, alert_channels: val })}
+                                        placeholder="选择推送渠道..."
+                                    />
+                                    {newProject.alert_channels.length === 0 && (
+                                        <p className="text-sm text-muted-foreground mt-2">
+                                            暂无选中渠道，请下拉选择
+                                            {notificationChannels.length === 0 && (
+                                                <a href="/notifications" className="text-primary ml-2 hover:underline">去配置</a>
+                                            )}
+                                        </p>
+                                    )}
+                                    
+                                    <p className="text-xs text-muted-foreground mt-3">
+                                        系统将根据项目目的（舆情/热点/通用）自动筛选符合条件的内容推送到上述渠道。
+                                    </p>
                                 </div>
                             </div>
 

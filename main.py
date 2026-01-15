@@ -126,7 +126,7 @@ async def main() -> None:
     print(f"[Debug] Config loaded - Start Time: {config.START_TIME}, End Time: {config.END_TIME}, Keywords: {config.KEYWORDS}, Project ID: {config.PROJECT_ID}, Dedup Authors: {config.DEDUPLICATE_AUTHORS}, Max Likes: {config.MAX_LIKES_COUNT}, Concurrency: {config.MAX_CONCURRENCY_NUM}")
 
     # Set context variables
-    from var import project_id_var, min_fans_var, max_fans_var, require_contact_var, sentiment_keywords_var
+    from var import project_id_var, min_fans_var, max_fans_var, require_contact_var, sentiment_keywords_var, purpose_var
     if config.PROJECT_ID:
         project_id_var.set(int(config.PROJECT_ID))
     
@@ -144,6 +144,10 @@ async def main() -> None:
         else:
             s_keywords = args.sentiment_keywords
         sentiment_keywords_var.set(s_keywords)
+    
+    # 设置任务目的 (驱动数据分流)
+    if hasattr(args, 'purpose') and args.purpose:
+        purpose_var.set(args.purpose)
 
     if args.init_db:
         await db.init_db(args.init_db)

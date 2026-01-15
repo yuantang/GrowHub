@@ -292,6 +292,10 @@ class CrawlerManager:
         # 舆情敏感词
         if config.sentiment_keywords:
             cmd.extend(["--sentiment_keywords", ",".join(config.sentiment_keywords)])
+        
+        # 任务目的 (驱动数据分流)
+        if hasattr(config, 'purpose') and config.purpose:
+            cmd.extend(["--purpose", config.purpose])
 
         return cmd
 

@@ -8,7 +8,7 @@ import config
 from tools import utils
 from media_platform.douyin.field import PublishTimeType, SearchSortType, SearchChannelType
 from media_platform.douyin.exception import DataFetchError
-from var import request_keyword_var, min_fans_var, max_fans_var, require_contact_var, sentiment_keywords_var
+from var import request_keyword_var, source_keyword_var, min_fans_var, max_fans_var, require_contact_var, sentiment_keywords_var
 from media_platform.douyin.extractor import DouyinExtractor
 
 if TYPE_CHECKING:
@@ -112,6 +112,7 @@ class SearchHandler:
                  
             utils.logger.info(f"🔍 [SearchHandler] 正在搜索: '{keyword}'")
             request_keyword_var.set(keyword)
+            source_keyword_var.set(keyword)
             
             # 是否是针对特定舆情词的搜索
             is_expanded_query = any(skw in keyword for skw in sentiment_keywords) if sentiment_keywords else False

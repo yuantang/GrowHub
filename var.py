@@ -38,3 +38,6 @@ require_contact_var: ContextVar[bool] = ContextVar("require_contact", default=Fa
 
 # 舆情敏感词配置
 sentiment_keywords_var: ContextVar[List[str]] = ContextVar("sentiment_keywords", default=[])
+
+# 任务目的配置 (驱动数据分流)
+purpose_var: ContextVar[str] = ContextVar("purpose", default="general")

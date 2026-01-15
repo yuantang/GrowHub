@@ -10,14 +10,16 @@ from sqlalchemy import select, update, and_
 from database.db_session import get_session
 from database.growhub_models import GrowHubContent, SentimentType
 from tools import utils
-from var import min_fans_var, max_fans_var, require_contact_var, sentiment_keywords_var
+from var import min_fans_var, max_fans_var, require_contact_var, sentiment_keywords_var, purpose_var
 
 class GrowHubStoreService:
     """GrowHub 统一存储服务"""
 
     def __init__(self):
-        # 简单的负面关键词列表（可以后续扩展为配置或AI接口）
-        self.negative_keywords = ["差评", "太烂", "垃圾", "投诉", "避雷", "失望", "骗子", "不要买", "后悔", "坑"]
+        self.negative_keywords = [
+            "差评", "太烂", "垃圾", "投诉", "避雷", "失望", "骗子", "不要买", "后悔", "坑", 
+            "退款", "维权", "曝光", "上当", "受骗", "虚假", "恶心", "差劲", "别买", "避坑"
+        ]
         self.positive_keywords = ["好评", "推荐", "安利", "不错", "喜欢", "赞", "优秀", "完美", "神器"]
 
     async def sync_to_growhub(
@@ -27,7 +29,8 @@ class GrowHubStoreService:
         min_fans: int = None,
         max_fans: int = None,
         require_contact: bool = None,
-        sentiment_keywords: List[str] = None
+        sentiment_keywords: List[str] = None,
+        purpose: str = None  # creator/hotspot/sentiment/general
     ):
         """
         将各平台原始数据同步到 GrowHubContent
@@ -37,6 +40,7 @@ class GrowHubStoreService:
         :param max_fans: 博主最大粉丝数筛选 (None=从 ContextVar 读取, 0=不限)
         :param require_contact: 是否要求有联系方式 (None=从 ContextVar 读取)
         :param sentiment_keywords: 舆情敏感词列表 (None=从 ContextVar 读取)
+        :param purpose: 任务目的 (None=从 ContextVar 读取)
         """
         # 从 ContextVar 读取默认值 (如果参数未传)
         if min_fans is None:
@@ -47,6 +51,8 @@ class GrowHubStoreService:
             require_contact = require_contact_var.get()
         if sentiment_keywords is None:
             sentiment_keywords = sentiment_keywords_var.get()
+        if purpose is None:
+            purpose = purpose_var.get() or 'general'
         
         # 0. 规范化平台标识 (统一使用短名称)
         platform_map = {
@@ -65,7 +71,8 @@ class GrowHubStoreService:
                 return
             
             # 3. 提取文本内容 (用于后续检测)
-            text_content = f"{raw_data.get('title', '')} {raw_data.get('desc', '')} {raw_data.get('content', '')}"
+            source_keyword = raw_data.get('source_keyword', '')
+            text_content = f"{raw_data.get('title', '')} {raw_data.get('desc', '')} {raw_data.get('content', '')} {source_keyword}"
             
             # =============== 智能分流策略开始 ===============
             
@@ -236,6 +243,20 @@ class GrowHubStoreService:
                     session.add(new_content)
 
                 await session.commit()
+                
+                # 获取入库后的内容对象 (用于分流)
+                saved_content = existing_content if existing_content else new_content
+                await session.refresh(saved_content)
+                
+                # =============== 根据任务目的进行数据分流 ===============
+                await self._route_by_purpose(
+                    purpose=purpose,
+                    content=saved_content,
+                    raw_data=raw_data,
+                    platform=platform,
+                    source_project_id=raw_data.get("project_id"),
+                    source_keyword=raw_data.get("source_keyword")
+                )
                 # print(f"[GrowHubStore] Synced {platform} content {content_id}")
 
         except Exception as e:
@@ -375,6 +396,73 @@ class GrowHubStoreService:
                 return f"VX: {val}"
                 
         return None
+
+    async def _route_by_purpose(
+        self,
+        purpose: str,
+        content: GrowHubContent,
+        raw_data: Dict[str, Any],
+        platform: str,
+        source_project_id: Optional[int] = None,
+        source_keyword: Optional[str] = None
+    ):
+        """
+        根据任务目的进行数据分流
+        - creator: 写入达人博主池 (按博主去重)
+        - hotspot: 写入热点内容池 (按内容去重)
+        - sentiment: 确保舆情标记 (已在主流程处理)
+        - general: 仅写入全量数据池 (不额外分流)
+        """
+        try:
+            if purpose == 'creator':
+                # 达人博主分流：提取博主信息并 UPSERT
+                from api.services.creator_service import get_creator_service
+                creator_service = get_creator_service()
+                
+                author_id = str(raw_data.get("sec_uid") or raw_data.get("user_id") or content.author_id or "")
+                if author_id:
+                    author_data = {
+                        'author_name': content.author_name,
+                        'author_avatar': content.author_avatar,
+                        'author_url': raw_data.get("user_url") or raw_data.get("author_url"),
+                        'signature': raw_data.get("signature") or raw_data.get("user_signature"),
+                        'fans_count': content.author_fans_count or 0,
+                        'follows_count': content.author_follows_count or 0,
+                        'likes_count': content.author_likes_count or 0,
+                        'works_count': raw_data.get("works_count") or raw_data.get("aweme_count") or 0,
+                        'contact_info': content.author_contact,
+                        'ip_location': content.ip_location
+                    }
+                    await creator_service.upsert_creator(
+                        platform=platform,
+                        author_id=author_id,
+                        data=author_data,
+                        source_project_id=source_project_id,
+                        source_keyword=source_keyword,
+                        content_id=content.id
+                    )
+                    
+            elif purpose == 'hotspot':
+                # 热点内容分流：计算热度并入池
+                from api.services.hotspot_service import get_hotspot_service
+                hotspot_service = get_hotspot_service()
+                
+                await hotspot_service.upsert_hotspot(
+                    content=content,
+                    source_project_id=source_project_id,
+                    source_keyword=source_keyword
+                )
+                
+            elif purpose == 'sentiment':
+                # 舆情监控：主流程已处理 is_alert 标记，此处可做额外处理
+                # 例如：触发通知、更新统计等（暂不实现）
+                pass
+                
+            # general: 不做额外分流，仅保留在 growhub_contents 全量池
+            
+        except Exception as e:
+            utils.logger.warning(f"[GrowHubStore] 数据分流失败 ({purpose}): {e}")
+
 
 # 全局实例
 growhub_store_service = GrowHubStoreService()

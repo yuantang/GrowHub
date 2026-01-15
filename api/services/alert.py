@@ -16,9 +16,6 @@ class ProjectAlertService:
         # 1. 检查是否开启预警
         if not project.alert_channels:
             return 0
-        
-        if not (project.alert_on_negative or project.alert_on_hotspot):
-            return 0
             
         # 2. 获取有效的通知渠道配置
         # alert_channels stores types e.g. ["wechat_work"]
@@ -43,35 +40,32 @@ class ProjectAlertService:
         
         # 3. 遍历内容检查规则
         async with get_session() as session:
-            # Re-attach contents to session if valid, but we might just modify and update them later
-            # Or assume they are detached but we have IDs.
-            # Best is to operate on objects and then session.add/commit if we change is_alert.
-            # Passed contents might be from another session.
+            purpose = project.purpose or 'general'
             
             for content in new_contents:
                 triggered = False
                 reasons = []
                 
-                # 规则1: 负面内容
-                if project.alert_on_negative and content.sentiment == 'negative':
-                    triggered = True
-                    reasons.append("负面内容")
-                    
-                # 规则2: 热点内容 (Mock threshold > 1000 likes)
-                if project.alert_on_hotspot:
-                    likes = content.like_count or 0
-                    if likes > 1000:
+                # 场景 1: 舆情监控模式 -> 自动负面预警
+                if purpose == 'sentiment':
+                    if content.sentiment == 'negative' or content.is_alert:
                         triggered = True
-                        reasons.append(f"热点内容(点赞{likes}+)")
+                        reasons.append("发现负面/敏感内容")
+                
+                # 场景 2: 热点发现模式 -> 自动爆款预警
+                elif purpose == 'hotspot':
+                    likes = content.like_count or 0
+                    if likes > 1000: # 爆款阈值
+                        triggered = True
+                        reasons.append(f"发现热门内容(🔥{likes})")
+                
+                # 场景 3: 达人/通用模式 -> 只要配置了渠道就通知新内容
+                else:
+                    triggered = True
+                    reasons.append("新内容更新")
                 
                 if triggered:
-                    # 标记内容
-                    # We need to update this content in DB.
-                    # Use a fresh session update or execute update statement
-                    # For simplicity, we assume we can just update the object if it's attached.
-                    # But to be safe, we run an update query.
-                    
-                    # Update is_alert flag
+                    # 更新内容预警标记
                     content.is_alert = True
                     
                     # Send process
@@ -103,15 +97,37 @@ class ProjectAlertService:
                 
         return alerts_triggered_count
 
-    async def _get_active_channels(self, types: List[str]) -> List[GrowHubNotificationChannel]:
-        """获取指定类型的活跃渠道"""
+    async def _get_active_channels(self, identifiers: List[Any]) -> List[GrowHubNotificationChannel]:
+        """获取指定标识(ID或类型)的活跃渠道"""
         async with get_session() as session:
-            # We pick ONE active channel per type for now to avoid spamming multiple identical hooks
-            # Or should we broadcast? Usually broadcast to all hooks of that type.
+            # Separate ints (IDs) and strings (Types)
+            ids = []
+            types = []
+            
+            for x in identifiers:
+                if isinstance(x, int):
+                    ids.append(x)
+                elif isinstance(x, str):
+                    if x.isdigit():
+                        ids.append(int(x))
+                    else:
+                        types.append(x)
+                        
+            from sqlalchemy import or_
+            conditions = []
+            
+            if ids:
+                conditions.append(GrowHubNotificationChannel.id.in_(ids))
+            if types:
+                conditions.append(GrowHubNotificationChannel.channel_type.in_(types))
+                
+            if not conditions:
+                return []
+                
             result = await session.execute(
                 select(GrowHubNotificationChannel).where(
-                    GrowHubNotificationChannel.channel_type.in_(types),
-                    GrowHubNotificationChannel.is_active == True
+                    GrowHubNotificationChannel.is_active == True,
+                    or_(*conditions)
                 )
             )
             return result.scalars().all()

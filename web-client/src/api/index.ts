@@ -69,9 +69,11 @@ export interface CrawlerStartRequest {
     headless: boolean;
     crawl_limit_count?: number;
     min_likes?: number;
-    min_shares?: number;
-    min_comments?: number;
     min_favorites?: number;
+    min_fans?: number;
+    max_fans?: number;
+    require_contact?: boolean;
+    sentiment_keywords?: string[];
     concurrency_num?: number;
 }
 
@@ -250,6 +252,9 @@ export interface Project {
     max_shares: number;
     min_favorites: number;
     max_favorites: number;
+    min_fans: number;
+    max_fans: number;
+    require_contact: boolean;
     // 断点信息
     latest_checkpoint?: {
         task_id: string;
@@ -415,6 +420,8 @@ export interface GrowHubContentFilters {
     max_likes?: number;
     max_comments?: number;
     max_shares?: number;
+    min_fans?: number;
+    max_fans?: number;
     crawl_start_date?: string;
     crawl_end_date?: string;
     sort_by?: string;

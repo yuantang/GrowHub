@@ -127,6 +127,12 @@ DEDUPLICATE_AUTHORS = False  # 博主去重：每个博主只保留一条内容
 START_TIME = ""  # 开始时间 YYYY-MM-DD or YYYY-MM-DD HH:MM:SS
 END_TIME = ""    # 结束时间
 
+# ==================== 博主与舆情配置 ====================
+MIN_FANS_COUNT = 0       # 创作者最小粉丝数
+MAX_FANS_COUNT = 0       # 创作者最大粉丝数
+REQUIRE_CONTACT = False  # 是否要求有联系方式
+SENTIMENT_KEYWORDS = []  # 舆情监控敏感词列表
+
 # 并发爬虫数量控制
 MAX_CONCURRENCY_NUM = 1
 

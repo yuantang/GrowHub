@@ -17,7 +17,7 @@
 # 使用本代码即表示您同意遵守上述原则和LICENSE中的所有条款。
 
 from enum import Enum
-from typing import Optional, Literal
+from typing import Optional, Literal, List
 from pydantic import BaseModel
 
 
@@ -92,6 +92,14 @@ class CrawlerStartRequest(BaseModel):
     deduplicate_authors: bool = False  # 博主去重
     concurrency_num: int = 3  # 并发数 (Pro 版特性)
     account_id: Optional[str] = None  # 账号唯一标识 (用于 IP 池绑定)
+    
+    # 博主筛选
+    min_fans: int = 0  # 博主最小粉丝数
+    max_fans: int = 0  # 博主最大粉丝数 (0=不限)
+    require_contact: bool = False  # 是否要求有联系方式
+    
+    # 舆情监控
+    sentiment_keywords: List[str] = []  # 敏感词列表
 
 
 

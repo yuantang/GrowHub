@@ -162,27 +162,34 @@ async def update_douyin_aweme(aweme_item: Dict, client=None):
     
     # 修复：如果粉丝数为0且有sec_uid，且提供了client，尝试获取用户详情补充数据
     fans_count = user_info.get("fans", 0)
-    if (not fans_count or fans_count == 0) and user_info.get("sec_uid") and client:
-        try:
-            sec_uid = user_info.get("sec_uid")
-            utils.logger.info(f"[store.douyin] Author fans=0, fetching profile for sec_uid={sec_uid}...")
-            # 增加随机延迟避免被风控
-            import random
-            await asyncio.sleep(random.uniform(0.5, 1.5))
-            
-            profile_res = await client.get_user_info(sec_uid)
-            if profile_res and "user" in profile_res:
-                user_obj = profile_res["user"]
-                # Update user_info with profile data
-                user_info["fans"] = user_obj.get("follower_count") or user_obj.get("m_stats", {}).get("follower_count") or 0
-                user_info["follows"] = user_obj.get("following_count") or 0
-                user_info["likes"] = user_obj.get("total_favorited") or 0
-                # Could also refresh nickname, avatar
-                user_info["nickname"] = user_obj.get("nickname") or user_info.get("nickname")
-                user_info["avatar"] = user_obj.get("avatar_thumb", {}).get("url_list", [""])[0] or user_info.get("avatar")
-                utils.logger.info(f"[store.douyin] Fetched profile: fans={user_info['fans']}")
-        except Exception as e:
-            utils.logger.error(f"[store.douyin] Failed to fetch user profile fallback: {e}")
+    fans_count = user_info.get("fans", 0)
+    if (not fans_count or fans_count == 0):
+        sec_uid = user_info.get("sec_uid")
+        if sec_uid and client:
+            try:
+                utils.logger.info(f"[store.douyin] 🔍 Author '{user_info.get('nickname')}' fans=0, attempting fallback fetch via sec_uid...")
+                # 增加随机延迟避免被风控
+                import random
+                await asyncio.sleep(random.uniform(0.5, 1.5))
+                
+                profile_res = await client.get_user_info(sec_uid)
+                if profile_res and "user" in profile_res:
+                    user_obj = profile_res["user"]
+                    # Update user_info with profile data
+                    found_fans = user_obj.get("follower_count") or user_obj.get("m_stats", {}).get("follower_count") or 0
+                    user_info["fans"] = found_fans
+                    user_info["follows"] = user_obj.get("following_count") or 0
+                    user_info["likes"] = user_obj.get("total_favorited") or 0
+                    # Could also refresh nickname, avatar
+                    user_info["nickname"] = user_obj.get("nickname") or user_info.get("nickname")
+                    user_info["avatar"] = user_obj.get("avatar_thumb", {}).get("url_list", [""])[0] or user_info.get("avatar")
+                    utils.logger.info(f"[store.douyin] ✅ Fallback success! Updated fans: {found_fans}")
+                else:
+                    utils.logger.warning(f"[store.douyin] ⚠️ Fallback fetch returned invalid profile data for sec_uid={sec_uid}")
+            except Exception as e:
+                utils.logger.error(f"[store.douyin] ❌ Failed to fetch user profile fallback: {e}")
+        else:
+            utils.logger.warning(f"[store.douyin] ⚠️ Unable to fetch profile fallback: sec_uid={'Found' if sec_uid else 'Missing'}, client={'Found' if client else 'Missing'}")
 
     interact_info = extractor.get_item_statistics(aweme_item)
     

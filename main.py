@@ -126,9 +126,24 @@ async def main() -> None:
     print(f"[Debug] Config loaded - Start Time: {config.START_TIME}, End Time: {config.END_TIME}, Keywords: {config.KEYWORDS}, Project ID: {config.PROJECT_ID}, Dedup Authors: {config.DEDUPLICATE_AUTHORS}, Max Likes: {config.MAX_LIKES_COUNT}, Concurrency: {config.MAX_CONCURRENCY_NUM}")
 
     # Set context variables
-    from var import project_id_var
+    from var import project_id_var, min_fans_var, max_fans_var, require_contact_var, sentiment_keywords_var
     if config.PROJECT_ID:
         project_id_var.set(int(config.PROJECT_ID))
+    
+    # 设置博主筛选和舆情配置
+    if hasattr(args, 'min_fans') and args.min_fans:
+        min_fans_var.set(args.min_fans)
+    if hasattr(args, 'max_fans') and args.max_fans:
+        max_fans_var.set(args.max_fans)
+    if hasattr(args, 'require_contact') and args.require_contact:
+        require_contact_var.set(args.require_contact)
+    if hasattr(args, 'sentiment_keywords') and args.sentiment_keywords:
+        # sentiment_keywords might be passed as a string from command line or already a list
+        if isinstance(args.sentiment_keywords, str):
+            s_keywords = [k.strip() for k in args.sentiment_keywords.split(",") if k.strip()]
+        else:
+            s_keywords = args.sentiment_keywords
+        sentiment_keywords_var.set(s_keywords)
 
     if args.init_db:
         await db.init_db(args.init_db)

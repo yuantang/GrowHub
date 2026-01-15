@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-    FolderOpen, Plus, Play, Pause, Trash2, RefreshCw,
-    Clock, Search, AlertTriangle, TrendingUp, Loader2, Zap, Sparkles
+    FolderOpen, Plus, Play, Pause, Trash2, RefreshCw, 
+    Clock, Search, AlertTriangle, TrendingUp, Loader2, Zap, Sparkles, Save, Settings
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -34,7 +34,13 @@ interface Project {
     today_crawled: number;
     today_alerts: number;
     created_at?: string;
-    is_running?: boolean; // 任务正在执行中
+    is_running?: boolean;
+    // 博主筛选
+    min_fans?: number;
+    max_fans?: number;
+    require_contact?: boolean;
+    // 舆情敏感词 (逗号分隔的字符串，与后端同步)
+    sentiment_keywords?: string[] | string;
 }
 
 interface Platform {
@@ -54,6 +60,58 @@ const PLATFORM_MAP: Record<string, { label: string; icon: string; color: string 
     ks: { label: '快手', icon: '📹', color: 'bg-yellow-500/10 text-yellow-500' },
     kuaishou: { label: '快手', icon: '📹', color: 'bg-yellow-500/10 text-yellow-500' },
     zhihu: { label: '知乎', icon: '❓', color: 'bg-blue-500/10 text-blue-500' },
+};
+
+// Custom helper for clean number inputs (handles 0 as empty, fixes leading zeros)
+const CleanNumberInput = ({ value, onChange, placeholder, className }: { 
+    value: number | string; 
+    onChange: (val: number) => void; 
+    placeholder?: string;
+    className?: string;
+}) => {
+    // Helper to check if value is effectively 0
+    const isZero = (v: number | string) => Number(v) === 0;
+
+    // Initialize: if value is 0, show empty string
+    const [localValue, setLocalValue] = useState<string>(isZero(value) ? '' : String(value));
+
+    // Force sync when external value changes
+    useEffect(() => {
+        if (isZero(value)) {
+           // Only clear if local is not already empty (to avoid cursor jump loops if logic was complex, though here it's fine)
+           if (localValue !== '') setLocalValue('');
+        } else {
+           if (String(value) !== localValue) setLocalValue(String(value));
+        }
+    }, [value]);
+
+    const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const val = e.target.value;
+        if (val === '') {
+            setLocalValue('');
+            onChange(0);
+            return;
+        }
+        if (!/^\d+$/.test(val)) return;
+        const num = parseInt(val, 10);
+        if (num === 0) {
+            setLocalValue('');
+            onChange(0);
+        } else {
+            setLocalValue(String(num));
+            onChange(num);
+        }
+    };
+
+    return (
+        <input
+            type="text"
+            value={localValue}
+            onChange={handleChange}
+            placeholder={placeholder}
+            className={className}
+        />
+    );
 };
 
 // AI 关键词联想组件
@@ -264,6 +322,11 @@ const ProjectsPage: React.FC = () => {
         max_shares: 0,
         min_favorites: 0,
         max_favorites: 0,
+        // 新增博主筛选
+        min_fans: 0,
+        max_fans: 0,
+        require_contact: false,
+        sentiment_keywords: '',
         enable_comments: true,
         deduplicate_authors: false,
     });
@@ -301,9 +364,24 @@ const ProjectsPage: React.FC = () => {
         if (!newProject.name.trim()) return;
 
         try {
+            const platformNormalize: Record<string, string> = {
+                "douyin": "dy",
+                "bilibili": "bili",
+                "weibo": "wb",
+                "kuaishou": "ks",
+                "xhs": "xhs",
+                "dy": "dy",
+                "bili": "bili",
+                "wb": "wb",
+                "ks": "ks",
+                "zhihu": "zhihu"
+            };
+
             const payload = {
                 ...newProject,
-                keywords: newProject.keywords.split(/[,，\s]+/).filter(k => k.trim()),
+                keywords: newProject.keywords.split(/[,，\n\s]+/).filter(k => k.trim()),
+                sentiment_keywords: newProject.sentiment_keywords.split(/[,，\n\s]+/).filter(k => k.trim()),
+                platforms: Array.from(new Set((newProject.platforms || []).map(p => platformNormalize[p] || p)))
             };
 
             const response = await fetch(`${API_BASE}/growhub/projects`, {
@@ -335,6 +413,10 @@ const ProjectsPage: React.FC = () => {
                     max_shares: 0,
                     min_favorites: 0,
                     max_favorites: 0,
+                    min_fans: 0,
+                    max_fans: 0,
+                    require_contact: false,
+                    sentiment_keywords: '',
                     enable_comments: true,
                     deduplicate_authors: false,
                 });
@@ -599,28 +681,44 @@ const ProjectsPage: React.FC = () => {
                                         )}
 
                                         {/* Keywords */}
-                                        <div className="flex items-center gap-2 mb-3 flex-wrap">
-                                            <Search className="w-4 h-4 text-muted-foreground" />
-                                            {project.keywords.slice(0, 5).map((kw, idx) => (
-                                                <span key={idx} className="text-xs px-2 py-1 bg-primary/10 text-primary rounded">
-                                                    {kw}
-                                                </span>
-                                            ))}
-                                            {project.keywords.length > 5 && (
-                                                <span className="text-xs text-muted-foreground">
-                                                    +{project.keywords.length - 5} 个
-                                                </span>
+                                        <div className="flex flex-col gap-2 mb-3">
+                                            <div className="flex items-center gap-2 flex-wrap">
+                                                <Search className="w-3.5 h-3.5 text-muted-foreground" title="关键词" />
+                                                {project.keywords.slice(0, 5).map((kw, idx) => (
+                                                    <span key={idx} className="text-[10px] px-1.5 py-0.5 bg-indigo-500/10 text-indigo-500 rounded border border-indigo-500/20">
+                                                        {kw}
+                                                    </span>
+                                                ))}
+                                                {project.keywords.length > 5 && (
+                                                    <span className="text-[10px] text-muted-foreground">+{project.keywords.length - 5}</span>
+                                                )}
+                                            </div>
+                                            {project.sentiment_keywords && (project.sentiment_keywords as string[]).length > 0 && (
+                                                <div className="flex items-center gap-2 flex-wrap">
+                                                    <AlertTriangle className="w-3.5 h-3.5 text-amber-500" title="舆情词" />
+                                                    {(project.sentiment_keywords as string[]).slice(0, 5).map((kw, idx) => (
+                                                        <span key={idx} className="text-[10px] px-1.5 py-0.5 bg-amber-500/10 text-amber-500 rounded border border-amber-500/20">
+                                                            {kw}
+                                                        </span>
+                                                    ))}
+                                                    {(project.sentiment_keywords as string[]).length > 5 && (
+                                                        <span className="text-[10px] text-muted-foreground">+{(project.sentiment_keywords as string[]).length - 5}</span>
+                                                    )}
+                                                </div>
                                             )}
                                         </div>
 
                                         {/* Platforms & Schedule */}
                                         <div className="flex items-center gap-4 text-sm text-muted-foreground">
                                             <div className="flex items-center gap-2">
-                                                {project.platforms.map(p => (
-                                                    <span key={p} className={`text-xs px-2 py-0.5 rounded ${PLATFORM_MAP[p]?.color || 'bg-gray-100'}`}>
-                                                        {PLATFORM_MAP[p]?.icon} {PLATFORM_MAP[p]?.label || p}
-                                                    </span>
-                                                ))}
+                                                {Array.from(new Set(project.platforms.map(p => PLATFORM_MAP[p]?.label || p))).map(label => {
+                                                    const key = project.platforms.find(p => (PLATFORM_MAP[p]?.label || p) === label) || label;
+                                                    return (
+                                                        <span key={label} className={`text-xs px-2 py-0.5 rounded ${PLATFORM_MAP[key]?.color || 'bg-gray-100'}`}>
+                                                            {PLATFORM_MAP[key]?.icon} {label}
+                                                        </span>
+                                                    );
+                                                })}
                                             </div>
                                             <span className="flex items-center gap-1">
                                                 <Clock className="w-3 h-3" />
@@ -753,6 +851,29 @@ const ProjectsPage: React.FC = () => {
                                 />
                             </div>
 
+                            {/* 舆情敏感词 - 带 AI 联想 */}
+                            <div>
+                                <div className="flex items-center justify-between mb-2">
+                                    <label className="text-sm font-medium">
+                                        舆情及预警敏感词
+                                        <span className="text-muted-foreground font-normal ml-2 text-xs">匹配后标记为预警，按重要程度排序</span>
+                                    </label>
+                                    <AIKeywordSuggest
+                                        onSelect={(keywords) => {
+                                            const current = newProject.sentiment_keywords ? newProject.sentiment_keywords + ', ' : '';
+                                            setNewProject({ ...newProject, sentiment_keywords: current + keywords.join(', ') });
+                                        }}
+                                    />
+                                </div>
+                                <textarea
+                                    value={newProject.sentiment_keywords}
+                                    onChange={e => setNewProject({ ...newProject, sentiment_keywords: e.target.value })}
+                                    placeholder="价格太贵, 质量不好, 虚假宣传, 避雷..."
+                                    rows={2}
+                                    className="w-full px-3 py-2 bg-background border border-border rounded-lg resize-none text-sm"
+                                />
+                            </div>
+
                             {/* 平台选择 */}
                             <div>
                                 <label className="text-sm font-medium mb-2 block">监控平台 *</label>
@@ -882,21 +1003,17 @@ const ProjectsPage: React.FC = () => {
                                     <div>
                                         <label className="text-sm font-medium mb-2 block">点赞数范围</label>
                                         <div className="flex items-center gap-2">
-                                            <input
-                                                type="number"
-                                                min={0}
-                                                value={newProject.min_likes || 0}
-                                                onChange={e => setNewProject({ ...newProject, min_likes: parseInt(e.target.value) || 0 })}
-                                                placeholder="最小"
+                                            <CleanNumberInput
+                                                value={newProject.min_likes}
+                                                onChange={val => setNewProject({ ...newProject, min_likes: val })}
+                                                placeholder="不限"
                                                 className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm"
                                             />
                                             <span className="text-muted-foreground">—</span>
-                                            <input
-                                                type="number"
-                                                min={0}
-                                                value={newProject.max_likes || 0}
-                                                onChange={e => setNewProject({ ...newProject, max_likes: parseInt(e.target.value) || 0 })}
-                                                placeholder="最大"
+                                            <CleanNumberInput
+                                                value={newProject.max_likes}
+                                                onChange={val => setNewProject({ ...newProject, max_likes: val })}
+                                                placeholder="不限"
                                                 className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm"
                                             />
                                         </div>
@@ -906,21 +1023,17 @@ const ProjectsPage: React.FC = () => {
                                     <div>
                                         <label className="text-sm font-medium mb-2 block">评论数范围</label>
                                         <div className="flex items-center gap-2">
-                                            <input
-                                                type="number"
-                                                min={0}
-                                                value={newProject.min_comments || 0}
-                                                onChange={e => setNewProject({ ...newProject, min_comments: parseInt(e.target.value) || 0 })}
-                                                placeholder="最小"
+                                            <CleanNumberInput
+                                                value={newProject.min_comments}
+                                                onChange={val => setNewProject({ ...newProject, min_comments: val })}
+                                                placeholder="不限"
                                                 className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm"
                                             />
                                             <span className="text-muted-foreground">—</span>
-                                            <input
-                                                type="number"
-                                                min={0}
-                                                value={newProject.max_comments || 0}
-                                                onChange={e => setNewProject({ ...newProject, max_comments: parseInt(e.target.value) || 0 })}
-                                                placeholder="最大"
+                                            <CleanNumberInput
+                                                value={newProject.max_comments}
+                                                onChange={val => setNewProject({ ...newProject, max_comments: val })}
+                                                placeholder="不限"
                                                 className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm"
                                             />
                                         </div>
@@ -931,21 +1044,17 @@ const ProjectsPage: React.FC = () => {
                                         <div>
                                             <label className="text-sm font-medium mb-2 block">分享数范围</label>
                                             <div className="flex items-center gap-1">
-                                                <input
-                                                    type="number"
-                                                    min={0}
-                                                    value={newProject.min_shares || 0}
-                                                    onChange={e => setNewProject({ ...newProject, min_shares: parseInt(e.target.value) || 0 })}
-                                                    placeholder="最小"
+                                                <CleanNumberInput
+                                                    value={newProject.min_shares}
+                                                    onChange={val => setNewProject({ ...newProject, min_shares: val })}
+                                                    placeholder="不限"
                                                     className="w-full px-2 py-2 bg-background border border-border rounded-lg text-sm"
                                                 />
                                                 <span className="text-muted-foreground text-xs">—</span>
-                                                <input
-                                                    type="number"
-                                                    min={0}
-                                                    value={newProject.max_shares || 0}
-                                                    onChange={e => setNewProject({ ...newProject, max_shares: parseInt(e.target.value) || 0 })}
-                                                    placeholder="最大"
+                                                <CleanNumberInput
+                                                    value={newProject.max_shares}
+                                                    onChange={val => setNewProject({ ...newProject, max_shares: val })}
+                                                    placeholder="不限"
                                                     className="w-full px-2 py-2 bg-background border border-border rounded-lg text-sm"
                                                 />
                                             </div>
@@ -953,25 +1062,54 @@ const ProjectsPage: React.FC = () => {
                                         <div>
                                             <label className="text-sm font-medium mb-2 block">收藏数范围</label>
                                             <div className="flex items-center gap-1">
-                                                <input
-                                                    type="number"
-                                                    min={0}
-                                                    value={newProject.min_favorites || 0}
-                                                    onChange={e => setNewProject({ ...newProject, min_favorites: parseInt(e.target.value) || 0 })}
-                                                    placeholder="最小"
+                                                <CleanNumberInput
+                                                    value={newProject.min_favorites}
+                                                    onChange={val => setNewProject({ ...newProject, min_favorites: val })}
+                                                    placeholder="不限"
                                                     className="w-full px-2 py-2 bg-background border border-border rounded-lg text-sm"
                                                 />
                                                 <span className="text-muted-foreground text-xs">—</span>
-                                                <input
-                                                    type="number"
-                                                    min={0}
-                                                    value={newProject.max_favorites || 0}
-                                                    onChange={e => setNewProject({ ...newProject, max_favorites: parseInt(e.target.value) || 0 })}
-                                                    placeholder="最大"
+                                                <CleanNumberInput
+                                                    value={newProject.max_favorites}
+                                                    onChange={val => setNewProject({ ...newProject, max_favorites: val })}
+                                                    placeholder="不限"
                                                     className="w-full px-2 py-2 bg-background border border-border rounded-lg text-sm"
                                                 />
                                             </div>
                                         </div>
+                                    </div>
+
+                                    {/* 粉丝数范围 */}
+                                    <div>
+                                        <label className="text-sm font-medium mb-2 block text-violet-500">博主粉丝数范围</label>
+                                        <div className="flex items-center gap-2">
+                                            <CleanNumberInput
+                                                value={newProject.min_fans || 0}
+                                                onChange={val => setNewProject({ ...newProject, min_fans: val })}
+                                                placeholder="最少粉丝"
+                                                className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm"
+                                            />
+                                            <span className="text-muted-foreground">—</span>
+                                            <CleanNumberInput
+                                                value={newProject.max_fans || 0}
+                                                onChange={val => setNewProject({ ...newProject, max_fans: val })}
+                                                placeholder="最多粉丝 (0 不限)"
+                                                className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm"
+                                            />
+                                        </div>
+                                    </div>
+
+                                    <div className="flex items-center gap-2 pt-1">
+                                        <input
+                                            type="checkbox"
+                                            id="requireContact"
+                                            checked={newProject.require_contact === true}
+                                            onChange={e => setNewProject({ ...newProject, require_contact: e.target.checked })}
+                                            className="w-4 h-4 cursor-pointer"
+                                        />
+                                        <label htmlFor="requireContact" className="text-sm cursor-pointer font-medium text-violet-500">
+                                            必须包含联系方式 (微信/手机/邮箱)
+                                        </label>
                                     </div>
 
                                     <div className="flex items-center gap-2 pt-2">

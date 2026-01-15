@@ -10,6 +10,7 @@ from sqlalchemy import select, update, and_
 from database.db_session import get_session
 from database.growhub_models import GrowHubContent, SentimentType
 from tools import utils
+from var import min_fans_var, max_fans_var, require_contact_var, sentiment_keywords_var
 
 class GrowHubStoreService:
     """GrowHub 统一存储服务"""
@@ -19,12 +20,34 @@ class GrowHubStoreService:
         self.negative_keywords = ["差评", "太烂", "垃圾", "投诉", "避雷", "失望", "骗子", "不要买", "后悔", "坑"]
         self.positive_keywords = ["好评", "推荐", "安利", "不错", "喜欢", "赞", "优秀", "完美", "神器"]
 
-    async def sync_to_growhub(self, platform: str, raw_data: Dict[str, Any]):
+    async def sync_to_growhub(
+        self, 
+        platform: str, 
+        raw_data: Dict[str, Any],
+        min_fans: int = None,
+        max_fans: int = None,
+        require_contact: bool = None,
+        sentiment_keywords: List[str] = None
+    ):
         """
         将各平台原始数据同步到 GrowHubContent
         :param platform: 平台标识 (xhs/dy/wb/bili/ks/tieba/zhihu)
         :param raw_data: 对应平台的 local_db_item
+        :param min_fans: 博主最小粉丝数筛选 (None=从 ContextVar 读取)
+        :param max_fans: 博主最大粉丝数筛选 (None=从 ContextVar 读取, 0=不限)
+        :param require_contact: 是否要求有联系方式 (None=从 ContextVar 读取)
+        :param sentiment_keywords: 舆情敏感词列表 (None=从 ContextVar 读取)
         """
+        # 从 ContextVar 读取默认值 (如果参数未传)
+        if min_fans is None:
+            min_fans = min_fans_var.get()
+        if max_fans is None:
+            max_fans = max_fans_var.get()
+        if require_contact is None:
+            require_contact = require_contact_var.get()
+        if sentiment_keywords is None:
+            sentiment_keywords = sentiment_keywords_var.get()
+        
         # 0. 规范化平台标识 (统一使用短名称)
         platform_map = {
             "douyin": "dy",
@@ -40,6 +63,76 @@ class GrowHubStoreService:
             content_id = self._get_platform_content_id(platform, raw_data)
             if not content_id:
                 return
+            
+            # 3. 提取文本内容 (用于后续检测)
+            text_content = f"{raw_data.get('title', '')} {raw_data.get('desc', '')} {raw_data.get('content', '')}"
+            
+            # =============== 智能分流策略开始 ===============
+            
+            # A. 舆情分析 (优先执行，不仅为了入库字段，也为了判断是否"豁免"过滤)
+            # 简单情感分析
+            sentiment, sentiment_score = self._simple_sentiment_analysis(text_content, sentiment_keywords)
+            
+            # 敏感词检测
+            is_alert = False
+            alert_level = None
+            matched_keywords = []
+            
+            # 合并系统默认敏感词和项目配置的敏感词
+            all_sentiment_keywords = list(self.negative_keywords)
+            if sentiment_keywords:
+                all_sentiment_keywords.extend(sentiment_keywords)
+            
+            for keyword in all_sentiment_keywords:
+                if keyword and keyword.strip().lower() in text_content.lower():
+                    is_alert = True
+                    matched_keywords.append(keyword.strip())
+            
+            # 根据匹配数量和情感分析确定预警等级
+            if is_alert:
+                if len(matched_keywords) >= 3 or sentiment == SentimentType.NEGATIVE.value:
+                    alert_level = "high"
+                elif len(matched_keywords) >= 2:
+                    alert_level = "medium"
+                else:
+                    alert_level = "low"
+                # Log moved to after decision to save or not, or just ensure we log if saved.
+            
+            # B. 过滤器检查 (Filters)
+            should_save = True
+            filter_reason = ""
+
+            # 提取关键指标
+            author_fans = self._safe_int(raw_data.get("user_fans") or raw_data.get("fans_count"))
+            contact_info = self._extract_contact_info(text_content)
+            
+            # 策略：如果触发预警 (is_alert)，则【无视】粉丝数和联系方式限制 (强制保留)
+            # 否则，必须满足项目设定的门槛
+            if not is_alert:
+                # 粉丝数过滤
+                if min_fans is not None and min_fans > 0 and author_fans < min_fans:
+                    should_save = False
+                    filter_reason = f"粉丝数不足 ({author_fans} < {min_fans})"
+                
+                elif max_fans is not None and max_fans > 0 and author_fans > max_fans:
+                    should_save = False
+                    filter_reason = f"粉丝数超标 ({author_fans} > {max_fans})"
+                
+                # 联系方式过滤
+                elif require_contact and not contact_info:
+                    should_save = False
+                    filter_reason = "无联系方式"
+            else:
+                if (min_fans and author_fans < min_fans) or (require_contact and not contact_info):
+                    utils.logger.info(f"[GrowHubStore] 触发预警豁免机制: 内容 {content_id} 粉丝/联系方式不达标但包含敏感词/负面，强制保留。")
+            
+            if not should_save:
+                utils.logger.debug(f"[GrowHubStore] 跳过内容 {content_id}: {filter_reason}")
+                return
+
+            # =============== 智能分流策略结束 (开始入库准备) ===============
+                
+            # =============== 入库操作 ===============
 
             async with get_session() as session:
                 # 检查是否已存在
@@ -55,10 +148,6 @@ class GrowHubStoreService:
                 # 处理时间属性
                 publish_time = self._parse_publish_time(platform, raw_data)
                 
-                # 情感分析 (简单实现)
-                text_content = f"{raw_data.get('title', '')} {raw_data.get('desc', '')} {raw_data.get('content', '')}"
-                sentiment, sentiment_score = self._simple_sentiment_analysis(text_content)
-
                 # 提取图片列表
                 media_urls = self._parse_media_urls(platform, raw_data)
 
@@ -69,8 +158,8 @@ class GrowHubStoreService:
                 collects = self._safe_int(raw_data.get("collected_count"))
                 views = self._safe_int(raw_data.get("view_count")) # specific for Bili
                 
-                # 提取作者统计数据
-                author_fans = self._safe_int(raw_data.get("user_fans") or raw_data.get("fans_count"))
+                # 提取作者统计数据 (Re-extract or reuse var, reusing for clarity in new block structure)
+                # author_fans has been extracted above
                 author_follows = self._safe_int(raw_data.get("user_follows") or raw_data.get("follows_count"))
                 author_likes = self._safe_int(raw_data.get("user_likes") or raw_data.get("total_favorited"))
                 
@@ -93,9 +182,13 @@ class GrowHubStoreService:
                 # 提取作者账号（抖音号/快手号等）
                 author_unique_id = raw_data.get("user_unique_id") or raw_data.get("unique_id") or ""
 
-                # 提取作者 ID (抖音优先使用 sec_uid 用于主页跳转)
+                # 提取作者 ID
                 author_id = str(raw_data.get("sec_uid") or raw_data.get("user_id") or "")
-                
+
+                # 记录日志
+                if is_alert:
+                     utils.logger.info(f"[GrowHubStore] 舆情预警: {content_id}, 匹配词: {matched_keywords}, 等级: {alert_level}")
+
                 # 构造/更新数据
                 content_data = {
                     "platform": platform,
@@ -110,7 +203,7 @@ class GrowHubStoreService:
                     "author_id": author_id,
                     "author_name": raw_data.get("nickname") or raw_data.get("author_name"),
                     "author_avatar": raw_data.get("avatar") or raw_data.get("user_avatar"),
-                    "author_contact": self._extract_contact_info(text_content),
+                    "author_contact": contact_info,  # 使用前面提取的 contact_info
                     "author_fans_count": author_fans,
                     "author_follows_count": author_follows,
                     "author_likes_count": author_likes,
@@ -123,6 +216,8 @@ class GrowHubStoreService:
                     "collect_count": collects,
                     "sentiment": sentiment,
                     "sentiment_score": sentiment_score,
+                    "is_alert": is_alert,
+                    "alert_level": alert_level,
                     "source_keyword": raw_data.get("source_keyword"),
                     "project_id": raw_data.get("project_id"),  # 关联的项目 ID
                     "publish_time": publish_time,
@@ -223,7 +318,7 @@ class GrowHubStoreService:
         
         return []
 
-    def _simple_sentiment_analysis(self, text: str) -> (str, float):
+    def _simple_sentiment_analysis(self, text: str, custom_keywords: List[str] = None) -> (str, float):
         """极其简单的关键词情感分析"""
         if not text:
             return "neutral", 0.0
@@ -232,13 +327,18 @@ class GrowHubStoreService:
         neg_count = 0
         pos_count = 0
         
-        for word in self.negative_keywords:
-            if word in text:
+        # 合并系统和自定义负面词
+        all_neg = list(self.negative_keywords)
+        if custom_keywords:
+            all_neg.extend([k.strip() for k in custom_keywords if k.strip()])
+        
+        for word in all_neg:
+            if word and word.lower() in text.lower():
                 neg_count += 1
                 score -= 0.2
         
         for word in self.positive_keywords:
-            if word in text:
+            if word and word.lower() in text.lower():
                 pos_count += 1
                 score += 0.1
         

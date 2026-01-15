@@ -370,6 +370,38 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
                 rich_help_panel="Account Configuration",
             ),
         ] = None,
+        min_fans: Annotated[
+            int,
+            typer.Option(
+                "--min_fans",
+                help="Minimum number of fans for the author",
+                rich_help_panel="Filter Configuration",
+            ),
+        ] = 0,
+        max_fans: Annotated[
+            int,
+            typer.Option(
+                "--max_fans",
+                help="Maximum number of fans for the author",
+                rich_help_panel="Filter Configuration",
+            ),
+        ] = 0,
+        require_contact: Annotated[
+            str,
+            typer.Option(
+                "--require_contact",
+                help="Only include authors with contact info (true/false)",
+                rich_help_panel="Filter Configuration",
+            ),
+        ] = "false",
+        sentiment_keywords: Annotated[
+            str,
+            typer.Option(
+                "--sentiment_keywords",
+                help="Custom sentiment keywords, separated by commas",
+                rich_help_panel="Sentiment Configuration",
+            ),
+        ] = "",
     ) -> SimpleNamespace:
         """MediaCrawler 命令行入口"""
 
@@ -411,6 +443,12 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
         config.MAX_CONCURRENCY_NUM = concurrency_num
         config.CONCURRENCY_NUM = concurrency_num
         config.ACCOUNT_ID = account_id
+        
+        # New filters and sentiment config
+        config.MIN_FANS_COUNT = min_fans
+        config.MAX_FANS_COUNT = max_fans
+        config.REQUIRE_CONTACT = _to_bool(require_contact)
+        config.SENTIMENT_KEYWORDS = [k.strip() for k in sentiment_keywords.split(",")] if sentiment_keywords else []
 
         # Set platform-specific ID lists for detail/creator mode
         if specified_id_list:
@@ -460,6 +498,10 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
             max_comments=max_comments,
             max_favorites=max_favorites,
             concurrency_num=concurrency_num,
+            min_fans=min_fans,
+            max_fans=max_fans,
+            require_contact=config.REQUIRE_CONTACT,
+            sentiment_keywords=config.SENTIMENT_KEYWORDS,
         )
 
     command = typer.main.get_command(app)

@@ -252,7 +252,7 @@ class GrowHubProject(Base):
     deduplicate_authors = Column(Boolean, default=False)  # 是否博主去重（只保留最新一条）
     max_concurrency = Column(Integer, default=3)  # 最大并发数 (Pro 版特性)
     
-    # 高级过滤配置
+    # 高级过滤配置 - 内容筛选
     min_likes = Column(Integer, default=0)
     max_likes = Column(Integer, default=0)
     min_comments = Column(Integer, default=0)
@@ -261,6 +261,11 @@ class GrowHubProject(Base):
     max_shares = Column(Integer, default=0)
     min_favorites = Column(Integer, default=0)
     max_favorites = Column(Integer, default=0)
+    
+    # 高级过滤配置 - 博主筛选
+    min_fans = Column(Integer, default=0)  # 博主最小粉丝数
+    max_fans = Column(Integer, default=0)  # 博主最大粉丝数 (0=不限)
+    require_contact = Column(Boolean, default=False)  # 是否要求有联系方式
     
     # 调度配置
     schedule_type = Column(String(20), default='interval')  # interval / cron

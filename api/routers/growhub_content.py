@@ -145,7 +145,9 @@ def apply_content_filters(
     end_date: Optional[Union[datetime, date]] = None,
     min_likes: Optional[int] = None,
     min_comments: Optional[int] = None,
-    min_shares: Optional[int] = None
+    min_shares: Optional[int] = None,
+    min_fans: Optional[int] = None,
+    max_fans: Optional[int] = None
 ):
     """Refactored helper to apply common filters to GrowHubContent query"""
     if platform:
@@ -190,6 +192,12 @@ def apply_content_filters(
     
     if min_shares is not None:
         query = query.where(GrowHubContent.share_count >= min_shares)
+
+    if min_fans is not None:
+        query = query.where(GrowHubContent.author_fans_count >= min_fans)
+        
+    if max_fans is not None and max_fans > 0:
+        query = query.where(GrowHubContent.author_fans_count <= max_fans)
         
     return query
 
@@ -208,6 +216,8 @@ async def export_contents(
     min_likes: Optional[int] = Query(None, ge=0, description="最小点赞数"),
     min_comments: Optional[int] = Query(None, ge=0, description="最小评论数"),
     min_shares: Optional[int] = Query(None, ge=0, description="最小分享数"),
+    min_fans: Optional[int] = Query(None, ge=0, description="最小粉丝数"),
+    max_fans: Optional[int] = Query(None, ge=0, description="最大粉丝数"),
     sort_by: str = Query("crawl_time", description="排序字段"),
     sort_order: str = Query("desc", description="排序方向")
 ):
@@ -219,7 +229,7 @@ async def export_contents(
         query = apply_content_filters(
             query, platform, category, sentiment, is_alert, is_handled,
             search, source_keyword, start_date, end_date,
-            min_likes, min_comments, min_shares
+            min_likes, min_comments, min_shares, min_fans, max_fans
         )
         
         # Sorting
@@ -299,7 +309,7 @@ async def list_contents(
             inner_stmt = apply_content_filters(
                 inner_stmt, platform, category, sentiment, is_alert, is_handled,
                 search, source_keyword, start_date, end_date,
-                min_likes, min_comments, min_shares
+                min_likes, min_comments, min_shares, min_fans, max_fans
             )
             
             subq = inner_stmt.subquery()
@@ -325,12 +335,12 @@ async def list_contents(
             query = apply_content_filters(
                 query, platform, category, sentiment, is_alert, is_handled,
                 search, source_keyword, start_date, end_date,
-                min_likes, min_comments, min_shares
+                min_likes, min_comments, min_shares, min_fans, max_fans
             )
             count_query = apply_content_filters(
                 count_query, platform, category, sentiment, is_alert, is_handled,
                 search, source_keyword, start_date, end_date,
-                min_likes, min_comments, min_shares
+                min_likes, min_comments, min_shares, min_fans, max_fans
             )
         
         # Get total
@@ -469,14 +479,17 @@ async def get_content_stats(
     end_date: Optional[Union[datetime, date]] = Query(None),
     min_likes: Optional[int] = Query(None),
     min_comments: Optional[int] = Query(None),
-    min_shares: Optional[int] = Query(None)
+    min_shares: Optional[int] = Query(None),
+    min_fans: Optional[int] = Query(None),
+    max_fans: Optional[int] = Query(None)
 ):
     """获取内容统计概览（数据池仪表盘）"""
     filter_args = {
         "platform": platform, "category": category, "sentiment": sentiment,
         "is_alert": is_alert, "is_handled": is_handled, "search": search,
         "source_keyword": source_keyword, "start_date": start_date, "end_date": end_date,
-        "min_likes": min_likes, "min_comments": min_comments, "min_shares": min_shares
+        "min_likes": min_likes, "min_comments": min_comments, "min_shares": min_shares,
+        "min_fans": min_fans, "max_fans": max_fans
     }
 
     async with get_session() as session:
@@ -656,6 +669,8 @@ async def get_content_trend(
     min_likes: Optional[int] = Query(None),
     min_comments: Optional[int] = Query(None),
     min_shares: Optional[int] = Query(None),
+    min_fans: Optional[int] = Query(None),
+    max_fans: Optional[int] = Query(None),
     days: int = Query(7, ge=1)
 ):
     """获取内容趋势数据（按天统计，基于发布时间）"""
@@ -776,7 +791,9 @@ async def get_top_analysis(
     end_date: Optional[Union[datetime, date]] = Query(None),
     min_likes: Optional[int] = Query(None),
     min_comments: Optional[int] = Query(None),
-    min_shares: Optional[int] = Query(None)
+    min_shares: Optional[int] = Query(None),
+    min_fans: Optional[int] = Query(None),
+    max_fans: Optional[int] = Query(None)
 ):
     """获取 Top 10 内容分析（按点赞降序）"""
     
@@ -784,7 +801,8 @@ async def get_top_analysis(
         "platform": platform, "category": category, "sentiment": sentiment,
         "is_alert": is_alert, "is_handled": is_handled, "search": search,
         "source_keyword": source_keyword, "start_date": start_date, "end_date": end_date,
-        "min_likes": min_likes, "min_comments": min_comments, "min_shares": min_shares
+        "min_likes": min_likes, "min_comments": min_comments, "min_shares": min_shares,
+        "min_fans": min_fans, "max_fans": max_fans
     }
     
     async with get_session() as session:

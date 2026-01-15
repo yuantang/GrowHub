@@ -281,6 +281,18 @@ class CrawlerManager:
         if config.account_id:
             cmd.extend(["--account_id", config.account_id])
 
+        # 博主筛选
+        if config.min_fans > 0:
+            cmd.extend(["--min_fans", str(config.min_fans)])
+        if config.max_fans > 0:
+            cmd.extend(["--max_fans", str(config.max_fans)])
+        if config.require_contact:
+            cmd.extend(["--require_contact", "true"])
+        
+        # 舆情敏感词
+        if config.sentiment_keywords:
+            cmd.extend(["--sentiment_keywords", ",".join(config.sentiment_keywords)])
+
         return cmd
 
 

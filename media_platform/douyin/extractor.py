@@ -80,11 +80,47 @@ class DouyinExtractor:
         # Also try to get from author_stats which exists in some API versions
         a_stats = aweme_info.get("author_stats") or {}
         
+        # 常见路径优先尝试
+        fans = author.get("follower_count") or \
+               author.get("followers_count") or \
+               author.get("fans") or \
+               a_stats.get("follower_count") or \
+               a_stats.get("followers_count") or \
+               a_stats.get("fans") or \
+               m_stats.get("follower_count") or \
+               m_stats.get("followers_count") or 0
+
+        # 如果标准路径都失败了，进行深度递归搜索 (仅当 fans 为 0 时)
+        if fans == 0:
+            def find_key_recursive(obj, key_patterns):
+                 if isinstance(obj, dict):
+                     for k, v in obj.items():
+                         if any(p in k for p in key_patterns):
+                             if isinstance(v, (int, float)) and v > 0:
+                                 return v
+                         # Recurse
+                         res = find_key_recursive(v, key_patterns)
+                         if res: return res
+                 elif isinstance(obj, list):
+                     for item in obj:
+                         res = find_key_recursive(item, key_patterns)
+                         if res: return res
+                 return None
+
+            # 尝试在 author 对象中搜索 "follow" 相关字段
+            found_fans = find_key_recursive(author, ["follower", "fans"])
+            if found_fans:
+                fans = found_fans
+                utils.logger.info(f"[DouyinExtractor] Recursively found fans count: {fans}")
+
         # DEBUG: Log if we find non-zero stats
         nickname = author.get("nickname", "unknown")
-        fans = author.get("follower_count") or a_stats.get("follower_count") or m_stats.get("follower_count") or 0
         if fans == 0:
-            utils.logger.info(f"[Extractor Debug] Author '{nickname}' fans is 0. Keys in author: {list(author.keys())}. a_stats: {list(a_stats.keys())}. m_stats: {list(m_stats.keys())}")
+            # 只有当确实找不到时才打印详细日志，避免刷屏
+            utils.logger.debug(f"[Extractor Debug] Author '{nickname}' fans is 0 even after recursive search.")
+        
+        follows = author.get("following_count") or author.get("follows_count") or author.get("follows") or a_stats.get("following_count") or a_stats.get("follows_count") or a_stats.get("follows") or m_stats.get("following_count") or m_stats.get("follows_count") or 0
+        likes = author.get("total_favorited") or author.get("favorited_count") or author.get("likes") or author.get("interaction") or a_stats.get("total_favorited") or a_stats.get("favorited_count") or a_stats.get("likes") or a_stats.get("interaction") or m_stats.get("total_favorited") or m_stats.get("favorited_count") or 0
         
         return {
             "uid": author.get("uid"),
@@ -92,7 +128,7 @@ class DouyinExtractor:
             "unique_id": author.get("unique_id") or author.get("short_id") or "",
             "nickname": author.get("nickname"),
             "avatar": author.get("avatar_thumb", {}).get("url_list", [""])[0],
-            "fans": author.get("follower_count") or author.get("followers_count") or author.get("fans") or a_stats.get("follower_count") or a_stats.get("followers_count") or a_stats.get("fans") or m_stats.get("follower_count") or m_stats.get("followers_count") or 0,
-            "follows": author.get("following_count") or author.get("follows_count") or author.get("follows") or a_stats.get("following_count") or a_stats.get("follows_count") or a_stats.get("follows") or m_stats.get("following_count") or m_stats.get("follows_count") or 0,
-            "likes": author.get("total_favorited") or author.get("favorited_count") or author.get("likes") or author.get("interaction") or a_stats.get("total_favorited") or a_stats.get("favorited_count") or a_stats.get("likes") or a_stats.get("interaction") or m_stats.get("total_favorited") or m_stats.get("favorited_count") or 0,
+            "fans": fans,
+            "follows": follows,
+            "likes": likes,
         }

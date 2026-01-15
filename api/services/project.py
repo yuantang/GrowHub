@@ -30,7 +30,7 @@ class ProjectConfig(BaseModel):
     deduplicate_authors: bool = False
     max_concurrency: int = 3  # 最大并发数 (Pro 版特性)
     
-    # 高级过滤器
+    # 高级过滤器 - 内容
     min_likes: int = 0
     max_likes: int = 0
     min_comments: int = 0
@@ -39,6 +39,11 @@ class ProjectConfig(BaseModel):
     max_shares: int = 0
     min_favorites: int = 0
     max_favorites: int = 0
+    
+    # 高级过滤器 - 博主
+    min_fans: int = 0
+    max_fans: int = 0
+    require_contact: bool = False
     
     # 调度配置
     schedule_type: str = "interval"  # interval / cron
@@ -167,6 +172,9 @@ class ProjectService:
                 max_shares=config.max_shares,
                 min_favorites=config.min_favorites,
                 max_favorites=config.max_favorites,
+                min_fans=config.min_fans,
+                max_fans=config.max_fans,
+                require_contact=config.require_contact,
                 schedule_type=config.schedule_type,
                 schedule_value=config.schedule_value,
                 is_active=False,  # 创建时默认不启动
@@ -404,6 +412,8 @@ class ProjectService:
             self._project_logs[project_id] = []
             self.append_log(project_id, f"开始执行任务: {project.name}")
             self.append_log(project_id, f"关键词: {project.keywords}")
+            # Explicitly log sentiment keywords
+            self.append_log(project_id, f"舆情词: {project.sentiment_keywords or '无'}")
             
             keywords_str = ",".join(project.keywords or [])
             platforms = project.platforms or ["xhs"]
@@ -416,7 +426,23 @@ class ProjectService:
             
             MAX_ACCOUNT_RETRIES = 3  # 最大账号切换次数
             
-            for platform in platforms:
+            # Deduplicate platforms using normalized keys
+            platform_normalize_map = {
+                "douyin": "dy", "dy": "dy",
+                "bilibili": "bili", "bili": "bili",
+                "weibo": "wb", "wb": "wb",
+                "kuaishou": "ks", "ks": "ks",
+                "xhs": "xhs", "zhihu": "zhihu"
+            }
+            unique_platforms = []
+            seen_platforms = set()
+            for p in (project.platforms or []):
+                norm = platform_normalize_map.get(p, p)
+                if norm not in seen_platforms:
+                    seen_platforms.add(norm)
+                    unique_platforms.append(p)
+            
+            for platform in unique_platforms:
                 # 平台名称映射
                 platform_names = {
                     "xhs": "小红书",
@@ -429,6 +455,15 @@ class ProjectService:
                 }
                 display_platform = platform_names.get(platform, platform)
                 
+                # Normalize platform for AccountPlatform enum
+                platform_normalize = {
+                    "douyin": "dy",
+                    "bilibili": "bili",
+                    "weibo": "wb",
+                    "kuaishou": "ks"
+                }
+                normalized_plat_str = platform_normalize.get(platform, platform)
+                
                 # 账号重试循环
                 success_this_platform = False
                 tried_accounts = []
@@ -437,7 +472,7 @@ class ProjectService:
                     # 获取账号（排除已尝试的）
                     pool = get_account_pool()
                     try:
-                        plat_enum = AccountPlatform(platform)
+                        plat_enum = AccountPlatform(normalized_plat_str)
                         self.append_log(project_id, f"正在获取 {display_platform} 平台账号 (尝试 {retry_num + 1}/{MAX_ACCOUNT_RETRIES})...")
                         
                         # 获取所有可用账号中未尝试过的 (Sticky Sessions: 传入 project_id)
@@ -458,7 +493,12 @@ class ProjectService:
 
                         if not account:
                             if retry_num == 0:
-                                self.append_log(project_id, f"❌ 平台 {display_platform} 没有可用账号，跳过")
+                                # 检查是否是因为所有账号都在冷却
+                                all_accounts = await pool.get_all_accounts(plat_enum)
+                                if not all_accounts:
+                                    self.append_log(project_id, f"❌ 平台 {display_platform} 尚未配置任何账号，请前往账号中心添加")
+                                else:
+                                    self.append_log(project_id, f"❌ 平台 {display_platform} 所有账号均在冷却中或不可用 (可用数: 0/{len(all_accounts)})")
                             else:
                                 self.append_log(project_id, f"❌ 平台 {display_platform} 没有更多可用账号")
                             break
@@ -527,6 +567,12 @@ class ProjectService:
                             deduplicate_authors=getattr(project, 'deduplicate_authors', False) or False,
                             concurrency_num=getattr(project, 'max_concurrency', 3) or 3,
                             account_id=str(account.id),
+                            # 博主筛选
+                            min_fans=getattr(project, 'min_fans', 0) or 0,
+                            max_fans=getattr(project, 'max_fans', 0) or 0,
+                            require_contact=getattr(project, 'require_contact', False) or False,
+                            # 舆情敏感词
+                            sentiment_keywords=project.sentiment_keywords or [],
                         )
 
                         
@@ -539,7 +585,14 @@ class ProjectService:
                         self.append_log(project_id, f"   - 评论范围: {config.min_comments} ~ {config.max_comments if config.max_comments > 0 else '不限'}")
                         self.append_log(project_id, f"   - 分享范围: {config.min_shares} ~ {config.max_shares if config.max_shares > 0 else '不限'}")
                         self.append_log(project_id, f"   - 收藏范围: {config.min_favorites} ~ {config.max_favorites if config.max_favorites > 0 else '不限'}")
+                        self.append_log(project_id, f"   - 博主粉丝: {config.min_fans} ~ {config.max_fans if config.max_fans > 0 else '不限'}")
                         self.append_log(project_id, f"   - 博主去重: {'是' if config.deduplicate_authors else '否'}")
+                        
+                        sk_list = config.sentiment_keywords or []
+                        sk_str = ', '.join(sk_list[:5])
+                        if len(sk_list) > 5:
+                            sk_str += '...'
+                        self.append_log(project_id, f"   - 舆情敏感词: {sk_str if sk_list else '无'}")
                         
                         success = await crawler_manager.start(config)
                         if success:
@@ -731,6 +784,7 @@ class ProjectService:
                 "project_id": project.id,
                 "platforms": project.platforms,
                 "keywords": project.keywords,
+                "sentiment_keywords": project.sentiment_keywords,
                 "crawler_type": project.crawler_type,
                 "limit_count": project.crawl_limit,
             }

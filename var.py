@@ -31,3 +31,10 @@ db_conn_pool_var: ContextVar[aiomysql.Pool] = ContextVar("db_conn_pool_var")
 source_keyword_var: ContextVar[str] = ContextVar("source_keyword", default="")
 project_id_var: ContextVar[int] = ContextVar("project_id", default=0)
 
+# 博主筛选配置
+min_fans_var: ContextVar[int] = ContextVar("min_fans", default=0)
+max_fans_var: ContextVar[int] = ContextVar("max_fans", default=0)
+require_contact_var: ContextVar[bool] = ContextVar("require_contact", default=False)
+
+# 舆情敏感词配置
+sentiment_keywords_var: ContextVar[List[str]] = ContextVar("sentiment_keywords", default=[])

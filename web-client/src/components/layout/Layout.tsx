@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
-import { LayoutDashboard, Database, Github, Rocket, Settings, Flame, Sparkles, Shield, FolderOpen, Users, AlertTriangle } from 'lucide-react';
+import { LayoutDashboard, Database, Github, Rocket, Settings, Flame, Sparkles, Shield, FolderOpen, Users, AlertTriangle, Bell } from 'lucide-react';
 import { cn } from '@/utils/cn';
 
 const Layout: React.FC = () => {
@@ -23,6 +23,7 @@ const Layout: React.FC = () => {
 
         // 系统配置
         { to: '/account-pool', icon: Shield, label: '账号池' },
+        { to: '/notifications', icon: Bell, label: '通知配置' },
         { to: '/settings', icon: Settings, label: '系统设置' },
     ];
 
@@ -59,7 +60,7 @@ const Layout: React.FC = () => {
 
                 <div className="p-4 border-t border-border">
                     <a
-                        href="https://github.com/NanmiCoder/MediaCrawler"
+                        href="https://github.com/yuantang/GrowHub"
                         target="_blank"
                         rel="noopener noreferrer"
                         className="flex items-center px-4 py-3 rounded-lg text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-all text-sm font-medium"

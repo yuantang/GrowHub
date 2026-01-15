@@ -50,6 +50,11 @@ class ProjectCreateRequest(BaseModel):
     max_shares: int = Field(default=0, ge=0, description="最大分享数,0=不限")
     min_favorites: int = Field(default=0, ge=0, description="最小收藏数")
     max_favorites: int = Field(default=0, ge=0, description="最大收藏数,0=不限")
+    
+    # 博主筛选
+    min_fans: int = Field(default=0, ge=0, description="博主最小粉丝数")
+    max_fans: int = Field(default=0, ge=0, description="博主最大粉丝数,0=不限")
+    require_contact: bool = Field(default=False, description="是否要求有联系方式")
 
 
 class ProjectUpdateRequest(BaseModel):
@@ -79,6 +84,10 @@ class ProjectUpdateRequest(BaseModel):
     max_shares: Optional[int] = Field(None, ge=0)
     min_favorites: Optional[int] = Field(None, ge=0)
     max_favorites: Optional[int] = Field(None, ge=0)
+    # 博主筛选
+    min_fans: Optional[int] = Field(None, ge=0)
+    max_fans: Optional[int] = Field(None, ge=0)
+    require_contact: Optional[bool] = None
 
 
 class ProjectResponse(BaseModel):
@@ -109,6 +118,10 @@ class ProjectResponse(BaseModel):
     max_shares: int = 0
     min_favorites: int = 0
     max_favorites: int = 0
+    # 博主筛选
+    min_fans: int = 0
+    max_fans: int = 0
+    require_contact: bool = False
     
     # 运行状态
     last_run_at: Optional[str]
@@ -215,6 +228,9 @@ async def create_project(data: ProjectCreateRequest):
         max_shares=data.max_shares,
         min_favorites=data.min_favorites,
         max_favorites=data.max_favorites,
+        min_fans=data.min_fans,
+        max_fans=data.max_fans,
+        require_contact=data.require_contact,
         schedule_type=data.schedule_type,
         schedule_value=data.schedule_value,
         is_active=data.auto_start, # auto_start is used for initial active state

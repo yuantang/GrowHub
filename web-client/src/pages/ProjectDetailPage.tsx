@@ -5,6 +5,7 @@ import {
     fetchProjectContents,
     fetchProjectStatsChart,
     updateProject,
+    fetchAIKeywords,
 } from '@/api';
 import type {
     Project,
@@ -25,18 +26,13 @@ import {
     PieChart as PieChartIcon,
     BarChart3,
     Terminal,
-    FileText,
-    Target,
-    Clock,
-    Bell,
     Sparkles,
     AlertTriangle,
-    Calendar,
-    MessageSquare,
-    Users,
-    Zap,
     Save,
-    Search
+    Search,
+    MessageSquare,
+    Zap,
+    Users
 } from 'lucide-react';
 import {
     LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -45,79 +41,21 @@ import {
 import { cn } from '@/utils';
 import { ContentDataTable } from '@/components/business/ContentDataTable';
 import { Input } from '@/components/ui/Input';
-import { Select } from '@/components/ui/Select';
-import { AiKeywordDialog } from '@/components/business/AiKeywordDialog';
 
-
-// Custom helper for array inputs (strings separated by comma)
-const ArrayInput = ({ value, onChange, placeholder, className }: { 
-    value: string[]; 
-    onChange: (val: string[]) => void; 
-    placeholder?: string;
-    className?: string; 
-}) => {
-    const [tempValue, setTempValue] = useState('');
-    const [isEditing, setIsEditing] = useState(false);
-
-    // Sync state only when not editing
-    useEffect(() => {
-        if (!isEditing) {
-            setTempValue(value?.join(', ') || '');
-        }
-    }, [value, isEditing]);
-
-    const handleBlur = () => {
-        setIsEditing(false);
-        const newValue = tempValue.split(/[,，]/) // Support both comma types
-            .map(k => k.trim())
-            .filter(Boolean);
-        
-        // Remove duplicates
-        const uniqueValues = Array.from(new Set(newValue));
-        
-        // Only update if changed
-        if (JSON.stringify(uniqueValues) !== JSON.stringify(value)) {
-            onChange(uniqueValues);
-        }
-    };
-
-    const handleFocus = () => {
-        setIsEditing(true);
-    };
-
-    return (
-        <Input
-            className={className}
-            value={tempValue}
-            onChange={e => setTempValue(e.target.value)}
-            onBlur={handleBlur}
-            onFocus={handleFocus}
-            placeholder={placeholder}
-        />
-    );
-};
-
-// Custom helper for clean number inputs (handles 0 as empty, fixes leading zeros)
+// Clean Number Input Helper
 const CleanNumberInput = ({ value, onChange, placeholder, className }: { 
     value: number | string; 
     onChange: (val: number) => void; 
     placeholder?: string;
     className?: string;
 }) => {
-    // Helper to check if value is effectively 0
     const isZero = (v: number | string) => Number(v) === 0;
-
-    // Initialize: if value is 0, show empty string
     const [localValue, setLocalValue] = useState<string>(isZero(value) ? '' : String(value));
 
     useEffect(() => {
-        // Sync from parent prop to local state
-        // If parent is 0, local should be empty
         if (isZero(value)) {
             if (localValue !== '') setLocalValue('');
         } else {
-            // If parent has a value, make sure local matches it
-            // use String(value) to handle both number and string types
             if (String(value) !== localValue) {
                 setLocalValue(String(value));
             }
@@ -126,27 +64,17 @@ const CleanNumberInput = ({ value, onChange, placeholder, className }: {
 
     const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const val = e.target.value;
-        
-        // 1. Handle empty input
         if (val === '') {
             setLocalValue('');
             onChange(0);
             return;
         }
-
-        // 2. Allow digits only
         if (!/^\d+$/.test(val)) return;
-
-        // 3. Parse integer to remove leading zeros immediately
         const num = parseInt(val, 10);
-
         if (num === 0) {
-            // If user types '0' or '00', treat as empty/0
             setLocalValue('');
             onChange(0);
         } else {
-            // If valid number, update local to clean string (e.g. '01' -> '1')
-            // This prevents '0100' by forcing it to '100' immediately
             setLocalValue(String(num));
             onChange(num);
         }
@@ -162,8 +90,178 @@ const CleanNumberInput = ({ value, onChange, placeholder, className }: {
     );
 };
 
-// Colors for charts
+// Platform Map
+const PLATFORM_MAP: Record<string, { label: string; icon: string; color: string }> = {
+    xhs: { label: '小红书', icon: '📕', color: 'bg-red-500/10 text-red-500' },
+    douyin: { label: '抖音', icon: '🎵', color: 'bg-slate-500/20 text-slate-300' },
+    bilibili: { label: 'B站', icon: '📺', color: 'bg-pink-500/10 text-pink-500' },
+    weibo: { label: '微博', icon: '📱', color: 'bg-orange-500/10 text-orange-500' },
+    kuaishou: { label: '快手', icon: '📹', color: 'bg-yellow-500/10 text-yellow-500' },
+    zhihu: { label: '知乎', icon: '❓', color: 'bg-blue-500/10 text-blue-500' },
+    // Aliases to safely handle legacy data
+    dy: { label: '抖音', icon: '🎵', color: 'bg-slate-500/20 text-slate-300' },
+    bili: { label: 'B站', icon: '📺', color: 'bg-pink-500/10 text-pink-500' },
+    wb: { label: '微博', icon: '📱', color: 'bg-orange-500/10 text-orange-500' },
+    ks: { label: '快手', icon: '📹', color: 'bg-yellow-500/10 text-yellow-500' },
+};
+
+// Chart Colors
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d'];
+
+// AI Keyword Suggest Component
+const AIKeywordSuggest: React.FC<{ onSelect: (keywords: string[]) => void }> = ({ onSelect }) => {
+    const [isOpen, setIsOpen] = useState(false);
+    const [target, setTarget] = useState('');
+    const [mode, setMode] = useState<'risk' | 'trend'>('risk');
+    const [loading, setLoading] = useState(false);
+    const [suggestions, setSuggestions] = useState<string[]>([]);
+    const [selected, setSelected] = useState<string[]>([]);
+
+    const handleAnalyze = async () => {
+        if (!target.trim()) return;
+        setLoading(true);
+        try {
+            const keywords = await fetchAIKeywords(target, mode, 'google/gemini-2.0-flash-exp:free');
+            if (keywords && keywords.length > 0) {
+                setSuggestions(keywords);
+                setSelected(keywords.slice(0, 5));
+            } else {
+                const fallback = mode === 'risk'
+                    ? [`${target} 差评`, `${target} 避雷`, `${target} 假货`, `${target} 吐槽`, `${target} 踩坑`, `${target} 退款`, `${target} 质量差`, `${target} 不推荐`]
+                    : [`${target} 测评`, `${target} 推荐`, `${target} 好用`, `${target} 教程`, `${target} 种草`, `${target} 攻略`, `${target} 分享`, `${target} 体验`];
+                setSuggestions(fallback);
+                setSelected(fallback.slice(0, 5));
+            }
+        } catch (e) {
+            console.error('AI analysis failed:', e);
+            const fallback = mode === 'risk'
+                ? [`${target} 差评`, `${target} 避雷`, `${target} 问题`, `${target} 吐槽`, `${target} 踩坑`]
+                : [`${target} 测评`, `${target} 推荐`, `${target} 好用`, `${target} 教程`, `${target} 种草`];
+            setSuggestions(fallback);
+            setSelected(fallback.slice(0, 3));
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const toggleKeyword = (kw: string) => {
+        setSelected(prev =>
+            prev.includes(kw) ? prev.filter(k => k !== kw) : [...prev, kw]
+        );
+    };
+
+    const handleConfirm = () => {
+        onSelect(selected);
+        setIsOpen(false);
+        setTarget('');
+        setSuggestions([]);
+        setSelected([]);
+    };
+
+    return (
+        <>
+            <button
+                type="button"
+                onClick={() => setIsOpen(true)}
+                className="text-xs px-2 py-1 rounded bg-violet-500/10 text-violet-600 hover:bg-violet-500/20 flex items-center gap-1 transition-colors"
+            >
+                <Sparkles className="w-3 h-3" />
+                AI 智能联想
+            </button>
+
+            {isOpen && (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4">
+                    <div className="bg-card rounded-lg p-6 w-full max-w-md shadow-2xl border border-border">
+                        <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+                            <Sparkles className="w-5 h-5 text-violet-500" />
+                            AI 关键词联想
+                        </h3>
+
+                        {suggestions.length === 0 ? (
+                            <div className="space-y-4">
+                                <div>
+                                    <label className="text-sm font-medium mb-2 block">输入品牌/产品名</label>
+                                    <input
+                                        type="text"
+                                        value={target}
+                                        onChange={e => setTarget(e.target.value)}
+                                        placeholder="如：SK-II 神仙水、iPhone 16"
+                                        className="w-full px-3 py-2 bg-background border border-border rounded-lg"
+                                        autoFocus
+                                    />
+                                </div>
+
+                                <div>
+                                    <label className="text-sm font-medium mb-2 block">联想模式</label>
+                                    <div className="flex gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={() => setMode('risk')}
+                                            className={cn("flex-1 px-3 py-2 rounded-lg border text-sm transition-colors", mode === 'risk' ? "bg-rose-500/10 border-rose-500 text-rose-600" : "bg-background border-border")}
+                                        >
+                                            <AlertTriangle className="w-4 h-4 inline mr-1" />
+                                            舆情预警词
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setMode('trend')}
+                                            className={cn("flex-1 px-3 py-2 rounded-lg border text-sm transition-colors", mode === 'trend' ? "bg-purple-500/10 border-purple-500 text-purple-600" : "bg-background border-border")}
+                                        >
+                                            <TrendingUp className="w-4 h-4 inline mr-1" />
+                                            热点趋势词
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div className="flex gap-2 pt-2">
+                                    <Button variant="outline" onClick={() => setIsOpen(false)} className="flex-1">
+                                        取消
+                                    </Button>
+                                    <Button
+                                        onClick={handleAnalyze}
+                                        disabled={!target.trim() || loading}
+                                        className="flex-1 bg-violet-600 hover:bg-violet-700"
+                                    >
+                                        {loading ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Sparkles className="w-4 h-4 mr-1" />}
+                                        {loading ? '分析中...' : '开始联想'}
+                                    </Button>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="space-y-4">
+                                <div className="text-sm text-muted-foreground">
+                                    基于 <span className="font-medium text-foreground">{target}</span> 联想的
+                                    {mode === 'risk' ? '舆情预警' : '热点趋势'}关键词：
+                                </div>
+
+                                <div className="flex flex-wrap gap-2">
+                                    {suggestions.map(kw => (
+                                        <button
+                                            key={kw}
+                                            onClick={() => toggleKeyword(kw)}
+                                            className={cn("px-3 py-1.5 rounded-full text-sm border transition-colors", selected.includes(kw) ? "bg-violet-500 text-white border-violet-500" : "bg-background border-border hover:border-violet-300")}
+                                        >
+                                            {kw}
+                                        </button>
+                                    ))}
+                                </div>
+
+                                <div className="flex gap-2 pt-4 border-t border-border mt-2">
+                                    <Button variant="outline" onClick={() => { setSuggestions([]); setTarget(''); }} className="flex-1">
+                                        重试
+                                    </Button>
+                                    <Button onClick={handleConfirm} className="flex-1 bg-violet-600 hover:bg-violet-700">
+                                        确认添加 ({selected.length})
+                                    </Button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+        </>
+    );
+};
 
 const ProjectDetailPage: React.FC = () => {
     const { id } = useParams<{ id: string }>();
@@ -179,20 +277,25 @@ const ProjectDetailPage: React.FC = () => {
     const [contentsTotal, setContentsTotal] = useState(0);
     const [deduplicateAuthors, setDeduplicateAuthors] = useState(false);
 
-    // AI Dialog State
-    const [aiDialogOpen, setAiDialogOpen] = useState(false);
-    const [aiDialogMode, setAiDialogMode] = useState<'risk' | 'trend'>('trend');
-    const [aiTargetKeyword, setAiTargetKeyword] = useState('');
-
-    // Settings Tab State
-    const [settingsTab, setSettingsTab] = useState('basic');
+    // Edit Form State (local state for Settings tab)
+    const [editForm, setEditForm] = useState<Partial<Project>>({});
+    const [keywordsStr, setKeywordsStr] = useState('');
+    const [sentimentKeywordsStr, setSentimentKeywordsStr] = useState('');
     const [isSaving, setIsSaving] = useState(false);
 
-    // Logs
     const [logs, setLogs] = useState<string[]>([]);
     const [activeTab, setActiveTab] = useState("dashboard");
 
-    // Poll logs if active tab is 'logs'
+    // Sync project data to editForm
+    useEffect(() => {
+        if (project) {
+            setEditForm(JSON.parse(JSON.stringify(project)));
+            setKeywordsStr((project.keywords || []).join(', '));
+            setSentimentKeywordsStr((project.sentiment_keywords || []).join(', '));
+        }
+    }, [project]);
+
+    // Poll logs
     useEffect(() => {
         if (activeTab === 'logs' && projectId) {
             loadLogs();
@@ -213,7 +316,6 @@ const ProjectDetailPage: React.FC = () => {
         }
     };
 
-    // Initial Load
     useEffect(() => {
         if (!projectId) return;
         loadProjectData();
@@ -258,38 +360,43 @@ const ProjectDetailPage: React.FC = () => {
         loadContents();
     };
 
-    const updateSettings = async (updates: Partial<Project>) => {
+    const handleSaveEdit = async () => {
         if (!project) return;
+        setIsSaving(true);
         try {
-            setIsSaving(true);
-            const prev = project;
-            setProject({ ...prev, ...updates });
-            await updateProject(projectId, updates);
+            const platformNormalize: Record<string, string> = {
+                "douyin": "dy",
+                "bilibili": "bili",
+                "weibo": "wb",
+                "kuaishou": "ks",
+                "xhs": "xhs",
+                "dy": "dy",
+                "bili": "bili",
+                "wb": "wb",
+                "ks": "ks",
+                "zhihu": "zhihu"
+            };
+
+            const payload = {
+                ...editForm,
+                // Parse string inputs back to arrays
+                keywords: keywordsStr.split(/[,，\n\s]+/).map(k => k.trim()).filter(Boolean),
+                sentiment_keywords: sentimentKeywordsStr.split(/[,，\n\s]+/).map(k => k.trim()).filter(Boolean),
+                // Normalize and deduplicate platforms
+                platforms: Array.from(new Set((editForm.platforms || []).map(p => platformNormalize[p] || p)))
+            };
+            // Ensure numeric fields are numbers
+            payload.crawl_limit = Number(payload.crawl_limit || 20);
+            payload.crawl_date_range = Number(payload.crawl_date_range || 1);
+            
+            await updateProject(projectId, payload);
+            await loadProjectData();
+            // Optional: Success message or Toast could be added here
         } catch (err) {
             console.error(err);
-            loadProjectData();
         } finally {
             setIsSaving(false);
         }
-    };
-
-    const handleAiKeywordsSelect = (selected: string[]) => {
-        if (!project) return;
-        if (aiDialogMode === 'trend') {
-            const current = project.keywords || [];
-            const newKeywords = Array.from(new Set([...current, ...selected]));
-            updateSettings({ keywords: newKeywords });
-        } else {
-            const current = project.sentiment_keywords || [];
-            const newKeywords = Array.from(new Set([...current, ...selected]));
-            updateSettings({ sentiment_keywords: newKeywords });
-        }
-    };
-
-    const openAiDialog = (mode: 'risk' | 'trend') => {
-        setAiDialogMode(mode);
-        setAiTargetKeyword((project?.keywords && project.keywords.length > 0) ? project.keywords[0] : (project?.name || ''));
-        setAiDialogOpen(true);
     };
 
     if (loading) {
@@ -307,26 +414,7 @@ const ProjectDetailPage: React.FC = () => {
         negative: statsChart.sentiment_trend.negative[i],
     })) || [];
 
-    // ========== Settings Sub-Components ==========
-    const SettingCard: React.FC<{ title: string; icon: React.ReactNode; gradient?: string; children: React.ReactNode }> = ({ title, icon, gradient = 'from-slate-600 to-slate-700', children }) => (
-        <div className="rounded-xl border bg-card overflow-hidden shadow-sm">
-            <div className={cn("px-4 py-3 flex items-center gap-2 bg-gradient-to-r text-white", gradient)}>
-                {icon}
-                <span className="font-medium">{title}</span>
-            </div>
-            <div className="p-5 space-y-4">
-                {children}
-            </div>
-        </div>
-    );
-
-    const FormRow: React.FC<{ label: string; hint?: string; children: React.ReactNode }> = ({ label, hint, children }) => (
-        <div className="space-y-1.5">
-            <label className="text-sm font-medium text-foreground">{label}</label>
-            {children}
-            {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
-        </div>
-    );
+    const platformsList = ['xhs', 'douyin', 'bilibili', 'weibo', 'kuaishou', 'zhihu'];
 
     return (
         <div className="space-y-6 max-w-7xl mx-auto pb-10">
@@ -348,8 +436,17 @@ const ProjectDetailPage: React.FC = () => {
                                 {project.is_active ? '运行中' : '已停止'}
                             </span>
                         </h1>
-                        <p className="text-sm text-muted-foreground mt-1">
-                            关键词: {project.keywords.join(", ")} | 平台: {project.platforms.join(", ")}
+                        <p className="text-sm text-muted-foreground mt-1 flex items-center gap-3">
+                            <span>关键词: {project.keywords.join(", ")}</span>
+                            {project.sentiment_keywords && project.sentiment_keywords.length > 0 && (
+                                <span className="flex items-center gap-1 text-amber-500/80">
+                                    <AlertTriangle className="w-3.5 h-3.5" /> {(project.sentiment_keywords || []).join(", ")}
+                                </span>
+                            )}
+                            <span className="text-muted-foreground/30">|</span>
+                            <span>平台: {
+                                Array.from(new Set(project.platforms.map(p => PLATFORM_MAP[p]?.label || p))).join(", ")
+                            }</span>
                         </p>
                     </div>
                 </div>
@@ -418,8 +515,12 @@ const ProjectDetailPage: React.FC = () => {
                             <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-muted-foreground">任务配置概要</CardTitle></CardHeader>
                             <CardContent>
                                 <div className="text-lg font-bold truncate">{project.crawler_type === 'search' ? '综合搜索' : project.crawler_type === 'detail' ? '详情抓取' : '博主主页'}</div>
+                                <p className="text-xs text-muted-foreground mt-1 line-clamp-1">
+                                    关键词: {project.keywords.join(", ")}
+                                    {project.sentiment_keywords && project.sentiment_keywords.length > 0 && ` | 舆情: ${project.sentiment_keywords.join(", ")}`}
+                                </p>
                                 <p className="text-xs text-muted-foreground mt-1">
-                                    限量: {project.crawl_limit}条 | 范围: {project.crawl_date_range || '不限'}天
+                                    监控: {Array.from(new Set(project.platforms.map(p => PLATFORM_MAP[p]?.label || p))).join(", ")} | 限量: {project.crawl_limit}条 | 范围: {project.crawl_date_range || '不限'}天
                                 </p>
                             </CardContent>
                         </Card>
@@ -434,7 +535,7 @@ const ProjectDetailPage: React.FC = () => {
                                             project.latest_checkpoint.status === 'completed' ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-700"
                                         )}>
                                             {project.latest_checkpoint.status === 'running' ? '运行中' : 
-                                             project.latest_checkpoint.status === 'completed' ? '已完成' : '已暂停'}
+                                                project.latest_checkpoint.status === 'completed' ? '已完成' : '已暂停'}
                                         </span>
                                     </div>
                                 </CardHeader>
@@ -583,361 +684,368 @@ const ProjectDetailPage: React.FC = () => {
                     </Card>
                 </TabsContent>
 
-                {/* ========== SETTINGS (Redesigned) ========== */}
+                {/* Settings Tab - Unified Form */}
                 <TabsContent value="settings">
-                    <div className="space-y-6">
-                        {/* Settings Navigation */}
-                        <Tabs value={settingsTab} onValueChange={setSettingsTab} className="w-full">
-                            <TabsList className="grid w-full grid-cols-4 h-12 p-1 bg-muted/30 rounded-lg border">
-                                <TabsTrigger value="basic" className="flex items-center gap-2 text-muted-foreground hover:text-foreground data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm rounded-md transition-all">
-                                    <FileText className="w-4 h-4" /> <span>基础信息</span>
-                                </TabsTrigger>
-                                <TabsTrigger value="crawl" className="flex items-center gap-2 text-muted-foreground hover:text-foreground data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm rounded-md transition-all">
-                                    <Target className="w-4 h-4" /> <span>任务设置</span>
-                                </TabsTrigger>
-                                <TabsTrigger value="schedule" className="flex items-center gap-2 text-muted-foreground hover:text-foreground data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm rounded-md transition-all">
-                                    <Clock className="w-4 h-4" /> <span>调度配置</span>
-                                </TabsTrigger>
-                                <TabsTrigger value="alerts" className="flex items-center gap-2 text-muted-foreground hover:text-foreground data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm rounded-md transition-all">
-                                    <Bell className="w-4 h-4" /> <span>预警通知</span>
-                                </TabsTrigger>
-                            </TabsList>
-
-                            {/* Tab 1: Basic Info */}
-                            <TabsContent value="basic" className="mt-6">
-                                <SettingCard title="基础信息" icon={<FileText className="w-4 h-4" />} gradient="from-blue-600 to-indigo-600">
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                                        <FormRow label="项目名称" hint="用于展示和识别此监控项目">
-                                            <Input value={project.name} onChange={(e) => updateSettings({ name: e.target.value })} placeholder="输入项目名称" />
-                                        </FormRow>
-                                        <FormRow label="爬虫类型" hint="选择内容获取方式">
-                                            <Select value={project.crawler_type} onChange={(e) => updateSettings({ crawler_type: e.target.value })}>
-                                                <option value="search">综合搜索 (Search)</option>
-                                                <option value="detail">详情抓取 (Detail)</option>
-                                                <option value="creator">博主主页 (Creator)</option>
-                                            </Select>
-                                        </FormRow>
-                                        <FormRow label="项目描述" hint="可选，备注此项目用途">
-                                            <Input value={project.description || ''} onChange={(e) => updateSettings({ description: e.target.value })} placeholder="项目备注信息" />
-                                        </FormRow>
-                                    </div>
-                                </SettingCard>
-                            </TabsContent>
-
-                            {/* Tab 2: Crawl Config */}
-                            <TabsContent value="crawl" className="mt-6 space-y-6">
-                                <SettingCard title="任务策略与关键词" icon={<Target className="w-4 h-4" />} gradient="from-violet-600 to-purple-600">
-                                    <FormRow label="监控关键词" hint="多个关键词用逗号分隔，每个关键词会独立搜索">
-                                        <div className="flex gap-2">
-                                            <ArrayInput
-                                                className="flex-1"
-                                                value={project.keywords || []}
-                                                onChange={(keywords) => updateSettings({ keywords })}
-                                                placeholder="例如: 深度学习, AI绘画, ChatGPT (支持中英文逗号)"
-                                            />
-                                            <Button variant="outline" size="sm" className="shrink-0 text-violet-600 border-violet-200 hover:bg-violet-50" onClick={() => openAiDialog('trend')}>
-                                                <Sparkles className="w-4 h-4 mr-1" /> AI 推荐
-                                            </Button>
-                                        </div>
-                                    </FormRow>
-                                </SettingCard>
-
-                                <SettingCard title="平台与抓取参数" icon={<Zap className="w-4 h-4" />} gradient="from-emerald-600 to-teal-600">
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                                        <FormRow label="目标平台" hint="选择需要监控的社交媒体平台">
-                                            <div className="flex flex-wrap gap-3 pt-1">
-                                                {[{ id: 'xhs', label: '小红书' }, { id: 'douyin', label: '抖音' }, { id: 'bilibili', label: 'B站' }].map(p => (
-                                                    <label key={p.id} className={cn("flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer transition-all", project.platforms?.includes(p.id) ? "border-primary bg-primary/5 text-primary" : "border-border hover:border-primary/50")}>
-                                                        <input
-                                                            type="checkbox"
-                                                            className="sr-only"
-                                                            checked={project.platforms?.includes(p.id)}
-                                                            onChange={(e) => {
-                                                                const current = project.platforms || [];
-                                                                const updated = e.target.checked ? [...current, p.id] : current.filter(x => x !== p.id);
-                                                                updateSettings({ platforms: updated });
-                                                            }}
-                                                        />
-                                                        <span className="text-sm font-medium">{p.label}</span>
-                                                    </label>
-                                                ))}
-                                            </div>
-                                        </FormRow>
-                                        <FormRow label="单次抓取数量" hint="每次执行时抓取的内容条数 (1-100)">
-                                            <Input type="number" value={project.crawl_limit} onChange={(e) => updateSettings({ crawl_limit: parseInt(e.target.value) || 20 })} min={1} max={100} />
-                                        </FormRow>
-                                        <FormRow label="时间范围 (天)" hint="只抓取最近 N 天内发布的内容，0 表示不限制">
-                                            <div className="flex items-center gap-3">
-                                                <Input
-                                                    type="number"
-                                                    className="w-28"
-                                                    value={project.crawl_date_range || 7}
-                                                    onChange={(e) => updateSettings({ crawl_date_range: parseInt(e.target.value) || 0 })}
-                                                    min={0}
-                                                    max={365}
-                                                />
-                                                <div className="flex gap-1">
-                                                    {[7, 14, 30].map(d => (
-                                                        <Button
-                                                            key={d}
-                                                            type="button"
-                                                            variant={project.crawl_date_range === d ? 'default' : 'outline'}
-                                                            size="sm"
-                                                            className="h-9 px-3"
-                                                            onClick={() => updateSettings({ crawl_date_range: d })}
-                                                        >
-                                                            {d}天
-                                                        </Button>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                        </FormRow>
-                                    </div>
-                                    <div className="flex flex-wrap gap-6 pt-2 border-t mt-4">
-                                        <label className="flex items-center gap-2 cursor-pointer">
-                                            <input type="checkbox" className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary" checked={project.enable_comments} onChange={(e) => updateSettings({ enable_comments: e.target.checked })} />
-                                            <span className="text-sm">抓取评论内容</span>
+                    <Card>
+                        <CardHeader>
+                            <CardTitle className="flex items-center gap-2">
+                                <Settings className="w-5 h-5 text-indigo-500" />
+                                项目配置
+                            </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                            <div className="space-y-5 max-w-3xl">
+                                {/* Name */}
+                                <div>
+                                    <label className="text-sm font-medium mb-2 block">项目名称 *</label>
+                                    <input
+                                        type="text"
+                                        value={editForm.name || ''}
+                                        onChange={e => setEditForm({ ...editForm, name: e.target.value })}
+                                        placeholder="如：品牌舆情监控"
+                                        className="w-full px-3 py-2 bg-background border border-border rounded-lg"
+                                    />
+                                </div>
+                                {/* Description */}
+                                <div>
+                                    <label className="text-sm font-medium mb-2 block">项目描述</label>
+                                    <input
+                                        type="text"
+                                        value={editForm.description || ''}
+                                        onChange={e => setEditForm({ ...editForm, description: e.target.value })}
+                                        placeholder="可选的项目说明..."
+                                        className="w-full px-3 py-2 bg-background border border-border rounded-lg"
+                                    />
+                                </div>
+                                
+                                {/* Keywords */}
+                                <div>
+                                    <div className="flex items-center justify-between mb-2">
+                                        <label className="text-sm font-medium">
+                                            监控关键词 *
+                                            <span className="text-muted-foreground font-normal ml-2">多个关键词用逗号或空格分隔</span>
                                         </label>
-                                        <label className="flex items-center gap-2 cursor-pointer">
-                                            <input type="checkbox" className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary" checked={project.deduplicate_authors} onChange={(e) => updateSettings({ deduplicate_authors: e.target.checked })} />
-                                            <span className="text-sm">博主去重 (每个博主只保留最新一条)</span>
-                                        </label>
-                                        <div className="flex items-center gap-2">
-                                            <span className="text-sm">并发数量:</span>
-                                            <Input 
-                                                type="number" 
-                                                className="w-20 h-8" 
-                                                value={project.max_concurrency} 
-                                                onChange={(e) => updateSettings({ max_concurrency: parseInt(e.target.value) || 1 })} 
-                                                min={1} 
-                                                max={10} 
-                                            />
-                                            <span className="text-xs text-muted-foreground">(建议 1-5)</span>
-                                        </div>
+                                        <AIKeywordSuggest
+                                            onSelect={(keywords) => {
+                                                const current = keywordsStr ? keywordsStr + ', ' : '';
+                                                setKeywordsStr(current + keywords.join(', '));
+                                            }}
+                                        />
                                     </div>
-                                </SettingCard>
+                                    <textarea
+                                        value={keywordsStr}
+                                        onChange={e => setKeywordsStr(e.target.value)}
+                                        placeholder="品牌A, 竞品B, 行业热词..."
+                                        rows={3}
+                                        className="w-full px-3 py-2 bg-background border border-border rounded-lg resize-none"
+                                    />
+                                </div>
 
-                                {/* 高级过滤 - 折叠面板 */}
-                                <details className="border border-border rounded-lg bg-card">
+                                {/* Sentiment Keywords */}
+                                <div>
+                                    <div className="flex items-center justify-between mb-2">
+                                        <label className="text-sm font-medium">
+                                            舆情及预警敏感词
+                                            <span className="text-muted-foreground font-normal ml-2 text-xs">匹配后标记为预警，按重要程度排序</span>
+                                        </label>
+                                        <AIKeywordSuggest
+                                            onSelect={(keywords) => {
+                                                const current = sentimentKeywordsStr ? sentimentKeywordsStr + ', ' : '';
+                                                setSentimentKeywordsStr(current + keywords.join(', '));
+                                            }}
+                                        />
+                                    </div>
+                                    <textarea
+                                        value={sentimentKeywordsStr}
+                                        onChange={e => setSentimentKeywordsStr(e.target.value)}
+                                        placeholder="价格太贵, 质量不好, 虚假宣传, 避雷..."
+                                        rows={2}
+                                        className="w-full px-3 py-2 bg-background border border-border rounded-lg resize-none text-sm"
+                                    />
+                                </div>
+
+                                {/* Platforms */}
+                                <div>
+                                    <label className="text-sm font-medium mb-2 block">监控平台 *</label>
+                                    <div className="flex flex-wrap gap-2">
+                                        {platformsList.map(key => {
+                                            const p = PLATFORM_MAP[key] || { label: key, icon: '📱', color: '' };
+                                            const isActive = (editForm.platforms || []).includes(key);
+                                            return (
+                                                <button
+                                                    key={key}
+                                                    type="button"
+                                                    onClick={() => {
+                                                        const current = editForm.platforms || [];
+                                                        const updated = current.includes(key)
+                                                            ? current.filter(x => x !== key)
+                                                            : [...current, key];
+                                                        setEditForm({ ...editForm, platforms: updated });
+                                                    }}
+                                                    className={cn(
+                                                        "px-3 py-2 rounded-lg border transition-colors flex items-center gap-2",
+                                                        isActive
+                                                            ? "bg-primary/10 border-primary text-primary"
+                                                            : "bg-background border-border hover:border-primary/50"
+                                                    )}
+                                                >
+                                                    <span>{p.icon}</span> {p.label}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+
+                                {/* Schedule */}
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="text-sm font-medium mb-2 block">调度方式</label>
+                                        <select
+                                            value={editForm.schedule_type || 'interval'}
+                                            onChange={e => setEditForm({ ...editForm, schedule_type: e.target.value })}
+                                            className="w-full px-3 py-2 bg-background border border-border rounded-lg"
+                                        >
+                                            <option value="interval">固定间隔</option>
+                                            <option value="cron">Cron 表达式</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="text-sm font-medium mb-2 block">
+                                            {editForm.schedule_type === 'interval' ? '执行频率' : 'Cron 表达式'}
+                                        </label>
+                                        {editForm.schedule_type === 'interval' ? (
+                                            <select
+                                                value={editForm.schedule_value || '3600'}
+                                                onChange={e => setEditForm({ ...editForm, schedule_value: e.target.value })}
+                                                className="w-full px-3 py-2 bg-background border border-border rounded-lg"
+                                            >
+                                                <option value="1800">每 30 分钟</option>
+                                                <option value="3600">每 1 小时</option>
+                                                <option value="7200">每 2 小时</option>
+                                                <option value="21600">每 6 小时</option>
+                                                <option value="43200">每 12 小时</option>
+                                                <option value="86400">每天</option>
+                                            </select>
+                                        ) : (
+                                            <input
+                                                type="text"
+                                                value={editForm.schedule_value || ''}
+                                                onChange={e => setEditForm({ ...editForm, schedule_value: e.target.value })}
+                                                placeholder="0 9 * * *"
+                                                className="w-full px-3 py-2 bg-background border border-border rounded-lg"
+                                            />
+                                        )}
+                                    </div>
+                                </div>
+
+                                {/* Crawler Config */}
+                                <div className="grid grid-cols-3 gap-4">
+                                    <div>
+                                        <label className="text-sm font-medium mb-2 block">抓取模式</label>
+                                        <select
+                                            value={editForm.crawler_type || 'search'}
+                                            onChange={e => setEditForm({ ...editForm, crawler_type: e.target.value })}
+                                            className="w-full px-3 py-2 bg-background border border-border rounded-lg"
+                                        >
+                                            <option value="search">关键词搜索</option>
+                                            <option value="detail">指定内容详情</option>
+                                            <option value="creator">指定博主主页</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="text-sm font-medium mb-2 block">爬虫时间范围</label>
+                                        <select
+                                            value={editForm.crawl_date_range || 7}
+                                            onChange={e => setEditForm({ ...editForm, crawl_date_range: parseInt(e.target.value) })}
+                                            className="w-full px-3 py-2 bg-background border border-border rounded-lg"
+                                        >
+                                            <option value="1">最近 1 天</option>
+                                            <option value="3">最近 3 天</option>
+                                            <option value="7">最近 7 天</option>
+                                            <option value="30">最近 30 天</option>
+                                            <option value="90">最近 3 个月</option>
+                                            <option value="0">不限时间</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="text-sm font-medium mb-2 block">每次抓取数量</label>
+                                        <input
+                                            type="number"
+                                            min={1}
+                                            max={100}
+                                            value={editForm.crawl_limit || 20}
+                                            onChange={e => setEditForm({ ...editForm, crawl_limit: parseInt(e.target.value) })}
+                                            className="w-full px-3 py-2 bg-background border border-border rounded-lg"
+                                        />
+                                    </div>
+                                </div>
+
+                                <div className="flex items-center space-x-2">
+                                    <input
+                                        type="checkbox"
+                                        id="edit_dedup"
+                                        checked={editForm.deduplicate_authors || false}
+                                        onChange={(e) => setEditForm({ ...editForm, deduplicate_authors: e.target.checked })}
+                                        className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
+                                    />
+                                    <label htmlFor="edit_dedup" className="text-sm font-medium leading-none cursor-pointer">
+                                        开启博主去重 (只保留最新内容)
+                                    </label>
+                                </div>
+
+                                {/* Advanced Filters */}
+                                <details className="border border-border rounded-lg">
                                     <summary className="px-4 py-3 cursor-pointer text-sm font-medium hover:bg-muted/50 flex items-center gap-2">
                                         <Search className="w-4 h-4" />
                                         高级过滤（可选）
                                     </summary>
                                     <div className="p-4 border-t border-border space-y-4">
                                         <p className="text-xs text-muted-foreground">设置过滤条件，只抓取符合条件的内容（0 = 不限制）</p>
-
-                                        {/* 点赞数范围 */}
+                                        
+                                        {/* Likes */}
                                         <div>
                                             <label className="text-sm font-medium mb-2 block">点赞数范围</label>
                                             <div className="flex items-center gap-2">
                                                 <CleanNumberInput
-                                                    value={project.min_likes}
-                                                    onChange={val => updateSettings({ min_likes: val })}
+                                                    value={editForm.min_likes || 0}
+                                                    onChange={val => setEditForm({ ...editForm, min_likes: val })}
                                                     placeholder="不限"
                                                     className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm"
                                                 />
                                                 <span className="text-muted-foreground">—</span>
                                                 <CleanNumberInput
-                                                    value={project.max_likes}
-                                                    onChange={val => updateSettings({ max_likes: val })}
+                                                    value={editForm.max_likes || 0}
+                                                    onChange={val => setEditForm({ ...editForm, max_likes: val })}
                                                     placeholder="不限"
                                                     className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm"
                                                 />
                                             </div>
                                         </div>
 
-                                        {/* 评论数范围 */}
+                                        {/* Comments */}
                                         <div>
                                             <label className="text-sm font-medium mb-2 block">评论数范围</label>
                                             <div className="flex items-center gap-2">
                                                 <CleanNumberInput
-                                                    value={project.min_comments}
-                                                    onChange={val => updateSettings({ min_comments: val })}
+                                                    value={editForm.min_comments || 0}
+                                                    onChange={val => setEditForm({ ...editForm, min_comments: val })}
                                                     placeholder="不限"
                                                     className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm"
                                                 />
                                                 <span className="text-muted-foreground">—</span>
                                                 <CleanNumberInput
-                                                    value={project.max_comments}
-                                                    onChange={val => updateSettings({ max_comments: val })}
+                                                    value={editForm.max_comments || 0}
+                                                    onChange={val => setEditForm({ ...editForm, max_comments: val })}
                                                     placeholder="不限"
                                                     className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm"
                                                 />
                                             </div>
                                         </div>
 
-                                        {/* 分享/收藏范围 */}
-                                        <div className="grid grid-cols-2 gap-4">
-                                            <div>
-                                                <label className="text-sm font-medium mb-2 block">分享数范围</label>
-                                                <div className="flex items-center gap-1">
-                                                    <CleanNumberInput
-                                                        value={project.min_shares}
-                                                        onChange={val => updateSettings({ min_shares: val })}
-                                                        placeholder="不限"
-                                                        className="w-full px-2 py-2 bg-background border border-border rounded-lg text-sm"
-                                                    />
-                                                    <span className="text-muted-foreground text-xs">—</span>
-                                                    <CleanNumberInput
-                                                        value={project.max_shares}
-                                                        onChange={val => updateSettings({ max_shares: val })}
-                                                        placeholder="不限"
-                                                        className="w-full px-2 py-2 bg-background border border-border rounded-lg text-sm"
-                                                    />
-                                                </div>
+                                        {/* Fans */}
+                                        <div>
+                                            <label className="text-sm font-medium mb-2 block text-violet-500">博主粉丝数范围</label>
+                                            <div className="flex items-center gap-2">
+                                                <CleanNumberInput
+                                                    value={editForm.min_fans || 0}
+                                                    onChange={val => setEditForm({ ...editForm, min_fans: val })}
+                                                    placeholder="最少粉丝"
+                                                    className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm"
+                                                />
+                                                <span className="text-muted-foreground">—</span>
+                                                <CleanNumberInput
+                                                    value={editForm.max_fans || 0}
+                                                    onChange={val => setEditForm({ ...editForm, max_fans: val })}
+                                                    placeholder="最多粉丝"
+                                                    className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm"
+                                                />
                                             </div>
-                                            <div>
-                                                <label className="text-sm font-medium mb-2 block">收藏数范围</label>
-                                                <div className="flex items-center gap-1">
-                                                    <CleanNumberInput
-                                                        value={project.min_favorites}
-                                                        onChange={val => updateSettings({ min_favorites: val })}
-                                                        placeholder="不限"
-                                                        className="w-full px-2 py-2 bg-background border border-border rounded-lg text-sm"
-                                                    />
-                                                    <span className="text-muted-foreground text-xs">—</span>
-                                                    <CleanNumberInput
-                                                        value={project.max_favorites}
-                                                        onChange={val => updateSettings({ max_favorites: val })}
-                                                        placeholder="不限"
-                                                        className="w-full px-2 py-2 bg-background border border-border rounded-lg text-sm"
-                                                    />
-                                                </div>
-                                            </div>
+                                        </div>
+
+                                        <div className="flex items-center gap-2 pt-1">
+                                            <input
+                                                type="checkbox"
+                                                id="requireContactEdit"
+                                                checked={editForm.require_contact === true}
+                                                onChange={e => setEditForm({ ...editForm, require_contact: e.target.checked })}
+                                                className="w-4 h-4 cursor-pointer"
+                                            />
+                                            <label htmlFor="requireContactEdit" className="text-sm cursor-pointer font-medium text-violet-500">
+                                                必须包含联系方式 (微信/手机/邮箱)
+                                            </label>
                                         </div>
                                     </div>
                                 </details>
-                            </TabsContent>
 
-                            {/* Tab 3: Schedule Config */}
-                            <TabsContent value="schedule" className="mt-6">
-                                <SettingCard title="自动调度配置" icon={<Clock className="w-4 h-4" />} gradient="from-amber-500 to-orange-500">
-                                    {/* Status Toggle */}
-                                    <div className="flex items-center justify-between p-4 rounded-lg bg-muted/30 border mb-5">
-                                        <div>
-                                            <p className="text-sm font-medium">自动调度开关</p>
-                                            <p className="text-xs text-muted-foreground">开启后将按配置自动运行抓取任务</p>
-                                        </div>
-                                        <button
-                                            type="button"
-                                            onClick={() => updateSettings({ is_active: !project.is_active })}
-                                            className={cn(
-                                                "relative inline-flex h-7 w-14 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2",
-                                                project.is_active ? "bg-green-500" : "bg-gray-300"
-                                            )}
-                                        >
-                                            <span className={cn("inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform", project.is_active ? "translate-x-8" : "translate-x-1")} />
-                                        </button>
-                                    </div>
-
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                                        <FormRow label="调度类型" hint="选择自动运行策略">
-                                            <Select value={project.schedule_type} onChange={(e) => updateSettings({ schedule_type: e.target.value })}>
-                                                <option value="interval">间隔运行 (Interval)</option>
-                                                <option value="cron">定时运行 (Cron)</option>
-                                            </Select>
-                                        </FormRow>
-                                        <FormRow label={project.schedule_type === 'interval' ? '间隔时间 (秒)' : 'Cron 表达式'} hint={project.schedule_type === 'interval' ? '例如: 3600 表示每小时运行一次' : '例如: 0 8 * * * 表示每天早上8点运行'}>
-                                            <Input
-                                                value={project.schedule_value || ''}
-                                                onChange={(e) => updateSettings({ schedule_value: e.target.value })}
-                                                placeholder={project.schedule_type === 'interval' ? "3600" : "0 8 * * *"}
+                                {/* Notifications */}
+                                <div>
+                                    <h3 className="text-sm font-medium mb-3">预警通知</h3>
+                                    <div className="space-y-3">
+                                        <div className="flex items-center gap-2">
+                                            <input
+                                                type="checkbox"
+                                                id="alertNegEdit"
+                                                checked={editForm.alert_on_negative !== false}
+                                                onChange={e => setEditForm({ ...editForm, alert_on_negative: e.target.checked })}
+                                                className="w-4 h-4"
                                             />
-                                        </FormRow>
-                                    </div>
-
-                                    {/* Quick Presets for Interval */}
-                                    {project.schedule_type === 'interval' && (
-                                        <div className="pt-4 border-t mt-4">
-                                            <p className="text-xs text-muted-foreground mb-2">快速设置</p>
-                                            <div className="flex flex-wrap gap-2">
-                                                {[{ label: '30分钟', value: '1800' }, { label: '1小时', value: '3600' }, { label: '2小时', value: '7200' }, { label: '6小时', value: '21600' }, { label: '12小时', value: '43200' }, { label: '24小时', value: '86400' }].map(preset => (
-                                                    <Button
-                                                        key={preset.value}
-                                                        type="button"
-                                                        variant={project.schedule_value === preset.value ? 'default' : 'outline'}
-                                                        size="sm"
-                                                        onClick={() => updateSettings({ schedule_value: preset.value })}
-                                                    >
-                                                        {preset.label}
-                                                    </Button>
-                                                ))}
-                                            </div>
+                                            <label htmlFor="alertNegEdit" className="text-sm">开启负面内容预警</label>
                                         </div>
-                                    )}
-                                </SettingCard>
-                            </TabsContent>
-
-                            {/* Tab 4: Alerts & Notifications */}
-                            <TabsContent value="alerts" className="mt-6 space-y-6">
-                                <SettingCard title="舆情分析配置" icon={<AlertTriangle className="w-4 h-4" />} gradient="from-rose-600 to-pink-600">
-                                    <FormRow label="自定义舆情词 / 负面词" hint="内容中包含这些词会被标记为负面情感">
-                                        <div className="flex gap-2">
-                                            <Input
-                                                className="flex-1"
-                                                value={project.sentiment_keywords?.join(', ') || ''}
-                                                onChange={(e) => updateSettings({ sentiment_keywords: e.target.value.split(',').map(k => k.trim()).filter(Boolean) })}
-                                                placeholder="例如: 差评, 避雷, 智商税, 假货"
+                                        <div className="flex items-center gap-2">
+                                            <input
+                                                type="checkbox"
+                                                id="alertHotEdit"
+                                                checked={editForm.alert_on_hotspot === true}
+                                                onChange={e => setEditForm({ ...editForm, alert_on_hotspot: e.target.checked })}
+                                                className="w-4 h-4"
                                             />
-                                            <Button variant="outline" size="sm" className="shrink-0 text-rose-600 border-rose-200 hover:bg-rose-50" onClick={() => openAiDialog('risk')}>
-                                                <Sparkles className="w-4 h-4 mr-1" /> AI 推荐
-                                            </Button>
+                                            <label htmlFor="alertHotEdit" className="text-sm">开启热点内容预警</label>
                                         </div>
-                                    </FormRow>
-                                    <div className="flex flex-wrap gap-6 pt-2">
-                                        <label className="flex items-center gap-2 cursor-pointer">
-                                            <input type="checkbox" className="h-4 w-4 rounded border-gray-300 text-rose-600 focus:ring-rose-500" checked={project.alert_on_negative} onChange={(e) => updateSettings({ alert_on_negative: e.target.checked })} />
-                                            <span className="text-sm">开启负面内容实时预警</span>
-                                        </label>
-                                        <label className="flex items-center gap-2 cursor-pointer">
-                                            <input type="checkbox" className="h-4 w-4 rounded border-gray-300 text-amber-600 focus:ring-amber-500" checked={project.alert_on_hotspot} onChange={(e) => updateSettings({ alert_on_hotspot: e.target.checked })} />
-                                            <span className="text-sm">开启热点内容预警 (点赞 {'>'} 1000)</span>
-                                        </label>
                                     </div>
-                                </SettingCard>
-
-                                <SettingCard title="通知渠道" icon={<Bell className="w-4 h-4" />} gradient="from-sky-600 to-cyan-600">
-                                    <div className="flex flex-wrap gap-4">
-                                        {[{ id: 'wechat_work', label: '企业微信', icon: <MessageSquare className="w-4 h-4" /> }, { id: 'email', label: '邮件', icon: <MessageCircle className="w-4 h-4" /> }, { id: 'webhook', label: 'Webhook', icon: <Zap className="w-4 h-4" /> }].map(ch => (
-                                            <label key={ch.id} className={cn("flex items-center gap-3 px-4 py-3 rounded-lg border cursor-pointer transition-all", project.alert_channels?.includes(ch.id) ? "border-primary bg-primary/5" : "border-border hover:border-primary/50")}>
-                                                <input
-                                                    type="checkbox"
-                                                    className="sr-only"
-                                                    checked={project.alert_channels?.includes(ch.id)}
-                                                    onChange={(e) => {
-                                                        const current = project.alert_channels || [];
-                                                        const updated = e.target.checked ? [...current, ch.id] : current.filter(x => x !== ch.id);
-                                                        updateSettings({ alert_channels: updated });
-                                                    }}
-                                                />
-                                                {ch.icon}
-                                                <span className="text-sm font-medium">{ch.label}</span>
-                                            </label>
-                                        ))}
+                                    <div className="mt-3">
+                                        <label className="text-xs text-muted-foreground block mb-2">通知渠道</label>
+                                        <div className="flex gap-4">
+                                            {[{id:'wechat_work', label:'企业微信', icon: <MessageSquare className="w-4 h-4" />}, {id:'email', label:'邮件', icon: <MessageCircle className="w-4 h-4" />}, {id:'webhook', label:'Webhook', icon: <Zap className="w-4 h-4" />}].map(ch => (
+                                                <label key={ch.id} className={cn("flex items-center gap-2 px-3 py-2 rounded border cursor-pointer text-sm", (editForm.alert_channels || []).includes(ch.id) ? "border-primary bg-primary/10 text-primary" : "border-border")}>
+                                                    <input
+                                                        type="checkbox"
+                                                        className="sr-only"
+                                                        checked={(editForm.alert_channels || []).includes(ch.id)}
+                                                        onChange={e => {
+                                                            const current = editForm.alert_channels || [];
+                                                            const updated = e.target.checked
+                                                                ? [...current, ch.id]
+                                                                : current.filter(x => x !== ch.id);
+                                                            setEditForm({ ...editForm, alert_channels: updated });
+                                                        }}
+                                                    />
+                                                    {ch.icon}
+                                                    {ch.label}
+                                                </label>
+                                            ))}
+                                        </div>
                                     </div>
-                                    <p className="text-xs text-muted-foreground pt-2">选择接收预警通知的渠道，需在系统设置中配置具体的接收地址</p>
-                                </SettingCard>
-                            </TabsContent>
-                        </Tabs>
+                                </div>
 
-                        {/* Save indicator */}
-                        {isSaving && (
-                            <div className="fixed bottom-6 right-6 bg-primary text-primary-foreground px-4 py-2 rounded-full shadow-lg flex items-center gap-2 text-sm animate-pulse">
-                                <Loader2 className="w-4 h-4 animate-spin" /> 保存中...
+                                {/* Save Button */}
+                                <div className="pt-6 border-t border-border">
+                                    <Button 
+                                        onClick={handleSaveEdit} 
+                                        disabled={isSaving}
+                                        className="w-full bg-indigo-600 hover:bg-indigo-700"
+                                    >
+                                        {isSaving ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
+                                        {isSaving ? '保存中...' : '保存修改'}
+                                    </Button>
+                                    <p className="text-center text-xs text-muted-foreground mt-2">
+                                        修改配置后，下一次任务执行将自动生效
+                                    </p>
+                                </div>
                             </div>
-                        )}
-                    </div>
+                        </CardContent>
+                    </Card>
                 </TabsContent>
             </Tabs>
-
-            {/* AI Dialog */}
-            <AiKeywordDialog
-                isOpen={aiDialogOpen}
-                onClose={() => setAiDialogOpen(false)}
-                onSelect={handleAiKeywordsSelect}
-                initialKeyword={aiTargetKeyword}
-                mode={aiDialogMode}
-            />
         </div>
     );
 };

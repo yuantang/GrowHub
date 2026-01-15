@@ -425,6 +425,27 @@ export const ContentListView: React.FC<ContentListViewProps> = ({
                                         />
                                     </div>
                                 </div>
+
+                                <div className="flex flex-col gap-1">
+                                    <span className="text-xs text-muted-foreground flex items-center gap-1">
+                                        <Users className="w-3 h-3 text-violet-400" /> 粉丝数
+                                    </span>
+                                    <div className="flex items-center gap-1.5">
+                                        <Input
+                                            type="number" placeholder="最小"
+                                            className="w-[100px] h-9 text-sm"
+                                            value={tempFilters.min_fans || ''}
+                                            onChange={e => setTempFilters(prev => ({ ...prev, min_fans: parseInt(e.target.value) || undefined }))}
+                                        />
+                                        <span className="text-muted-foreground">-</span>
+                                        <Input
+                                            type="number" placeholder="最大"
+                                            className="w-[100px] h-9 text-sm"
+                                            value={tempFilters.max_fans || ''}
+                                            onChange={e => setTempFilters(prev => ({ ...prev, max_fans: parseInt(e.target.value) || undefined }))}
+                                        />
+                                    </div>
+                                </div>
                             </div>
 
                             {/* Row 4: 操作按钮 */}

@@ -8,7 +8,7 @@ import config
 from tools import utils
 from media_platform.douyin.field import PublishTimeType, SearchSortType, SearchChannelType
 from media_platform.douyin.exception import DataFetchError
-from var import request_keyword_var
+from var import request_keyword_var, min_fans_var, max_fans_var, require_contact_var, sentiment_keywords_var
 from media_platform.douyin.extractor import DouyinExtractor
 
 if TYPE_CHECKING:
@@ -38,21 +38,43 @@ class SearchHandler:
         """
         utils.logger.info("🚀 [SearchHandler] 开始执行抖音关键词搜索任务")
         
-        # 1. 展示所有任务条件 (Show all task conditions)
-        keywords_list = config.KEYWORDS.split(",")
-        first_keyword = keywords_list[0] if keywords_list else "None"
-        keyword_display = config.KEYWORDS if len(config.KEYWORDS) < 50 else f"{config.KEYWORDS[:50]}..."
+        # 1. 准备关键词列表 (Prepare keywords with expansion)
+        base_keywords = [k.strip() for k in config.KEYWORDS.split(",") if k.strip()]
+        sentiment_keywords = sentiment_keywords_var.get() or []
         
-        utils.logger.info("📋 当前任务执行条件:")
-        utils.logger.info(f"   - 关键词: {keyword_display} (首个: {first_keyword})")
+        # 核心逻辑：如果提供了舆情监控词，则进行查询扩展
+        # 策略：优先搜索 "关键词 + 舆情词" 的组合，这样召回率最高且最精准
+        search_keywords = []
+        if sentiment_keywords:
+            for kw in base_keywords:
+                for skw in sentiment_keywords:
+                    # 组合搜索词，例如 "Now冥想 退款"
+                    search_keywords.append(f"{kw} {skw}")
+            
+            # 最后保留原始关键词，作为一个宽泛的补充
+            for kw in base_keywords:
+                search_keywords.append(kw)
+        else:
+            search_keywords = base_keywords
+
+        # 归一化去重
+        search_keywords = list(dict.fromkeys(search_keywords))
+
+        sentiment_display = ", ".join(sentiment_keywords) if sentiment_keywords else "无"
+
+        utils.logger.info("📋 任务执行条件 (已优化舆情搜索):")
+        utils.logger.info(f"   - 原始关键词: {config.KEYWORDS}")
+        utils.logger.info(f"   - 搜索词队列: {search_keywords}")
+        utils.logger.info(f"   - 舆情监控词: {sentiment_display}")
         utils.logger.info(f"   - 爬取总量限制: {config.CRAWLER_MAX_NOTES_COUNT}")
         utils.logger.info(f"   - 发布时间范围: {config.START_TIME or '不限'} 至 {config.END_TIME or '不限'}")
-        utils.logger.info(f"   - 点赞范围: {config.MIN_LIKES_COUNT} ~ {config.MAX_LIKES_COUNT if config.MAX_LIKES_COUNT > 0 else '不限'}")
-        utils.logger.info(f"   - 评论范围: {config.MIN_COMMENTS_COUNT} ~ {config.MAX_COMMENTS_COUNT if config.MAX_COMMENTS_COUNT > 0 else '不限'}")
-        utils.logger.info(f"   - 分享范围: {config.MIN_SHARES_COUNT} ~ {config.MAX_SHARES_COUNT if config.MAX_SHARES_COUNT > 0 else '不限'}")
-        utils.logger.info(f"   - 收藏范围: {config.MIN_FAVORITES_COUNT} ~ {config.MAX_FAVORITES_COUNT if config.MAX_FAVORITES_COUNT > 0 else '不限'}")
-        utils.logger.info(f"   - 博主去重: {'开启 (每位博主仅保留1条)' if config.DEDUPLICATE_AUTHORS else '关闭'}")
-        utils.logger.info(f"   - 评论抓取: {'开启' if config.ENABLE_GET_COMMENTS else '关闭'}")
+        utils.logger.info(f"   - 互动要求: 点赞>{config.MIN_LIKES_COUNT}, 评论>{config.MIN_COMMENTS_COUNT}")
+        utils.logger.info(f"   - 博主去重: {'开启' if config.DEDUPLICATE_AUTHORS else '关闭'}")
+        
+        # Get advanced filter vars
+        min_fans = min_fans_var.get() or 0
+        max_fans = max_fans_var.get() or 0
+        require_contact = require_contact_var.get() or False
 
         # Config validation and defaults
         dy_limit_count = 20 # Douyin search count
@@ -82,16 +104,17 @@ class SearchHandler:
         # Task-level state
         total_processed_count = 0
         processed_authors = set()
-
-        # Iterate over keywords
-        keywords = config.KEYWORDS.split(",")
-        for keyword in keywords:
-            keyword = keyword.strip()
-            if not keyword:
-                continue
-                
-            utils.logger.info(f"🔍 [SearchHandler] 正在搜索关键词: {keyword}")
+        
+        # --- 循环执行搜索词队列 ---
+        for keyword in search_keywords:
+            if total_processed_count >= config.CRAWLER_MAX_NOTES_COUNT:
+                 break
+                 
+            utils.logger.info(f"🔍 [SearchHandler] 正在搜索: '{keyword}'")
             request_keyword_var.set(keyword)
+            
+            # 是否是针对特定舆情词的搜索
+            is_expanded_query = any(skw in keyword for skw in sentiment_keywords) if sentiment_keywords else False
             
             checkpoint = await self.checkpoint_manager.find_matching_checkpoint(
                 platform="douyin",
@@ -254,6 +277,14 @@ class SearchHandler:
                         if config.DEDUPLICATE_AUTHORS and user_id in processed_authors:
                             skip_stats["author"] += 1
                             continue
+                            
+                        # 4. 舆情敏感词本地过滤 (Sentiment local filter)
+                        # 如果设置了舆情词，则本地强制校验（即便搜索召回了，也要确保文案匹配）
+                        if sentiment_keywords:
+                            content_text = f"{aweme_info.get('desc', '')} {aweme_info.get('title', '')}".lower()
+                            if not any(skw.lower() in content_text for skw in sentiment_keywords):
+                                skip_stats["sentiment"] = skip_stats.get("sentiment", 0) + 1
+                                continue
                         
                         # 全部通过过滤
                         aweme_list_to_process.append(aweme_info)
@@ -266,9 +297,9 @@ class SearchHandler:
                     total_out = len(aweme_list_to_process)
                     utils.logger.info(f"📊 第 {page} 页汇总: API返回 {total_raw} 条 | 达标 {total_out} 条")
                     if total_out == 0 and total_raw > 0:
-                        utils.logger.warning(f"  └─ 剔除原因: 非视频 {skip_stats['no_vid']} | 已存在 {skip_stats['duplicate']} | 时间不符 {skip_stats['time']} | 互动未达标 {skip_stats['interaction']} | 重复博主 {skip_stats['author']}")
+                        utils.logger.warning(f"  └─ 剔除原因: 时间 {skip_stats['time']} | 互动 {skip_stats['interaction']} | 重复博主 {skip_stats['author']} | 舆情不符 {skip_stats.get('sentiment', 0)}")
                     elif total_raw > 0:
-                        utils.logger.info(f"  └─ 过滤详情: 已存在 {skip_stats['duplicate']} | 时间 {skip_stats['time']} | 互动 {skip_stats['interaction']} | 重复 {skip_stats['author']}")
+                        utils.logger.info(f"  └─ 过滤详情: 已存在 {skip_stats['duplicate']} | 时间 {skip_stats['time']} | 互动 {skip_stats['interaction']} | 舆情 {skip_stats.get('sentiment', 0)}")
 
                     if aweme_list_to_process:
                         await self.aweme_processor.process_aweme_list(aweme_list=aweme_list_to_process, checkpoint=checkpoint)

@@ -436,7 +436,7 @@ const ProjectDetailPage: React.FC = () => {
         negative: statsChart.sentiment_trend.negative[i],
     })) || [];
 
-    const platformsList = ['xhs', 'douyin', 'bilibili', 'weibo', 'kuaishou', 'zhihu'];
+    const platformsList = ['xhs', 'dy', 'bili', 'wb', 'ks', 'zhihu'];
 
     return (
         <div className="space-y-6 max-w-7xl mx-auto pb-10">

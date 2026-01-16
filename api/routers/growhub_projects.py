@@ -245,10 +245,13 @@ async def create_project(data: ProjectCreateRequest):
         require_contact=data.require_contact,
         schedule_type=data.schedule_type,
         schedule_value=data.schedule_value,
-        is_active=data.auto_start, # auto_start is used for initial active state
+        is_active=data.auto_start,
         alert_on_negative=data.alert_on_negative,
+        alert_on_new_content=data.alert_on_new_content,
         alert_on_hotspot=data.alert_on_hotspot,
         alert_channels=data.alert_channels,
+        purpose=data.purpose,
+        max_concurrency=data.max_concurrency,
     )
     
     result = await service.create_project(config)
@@ -567,6 +570,7 @@ async def get_platform_options():
             {"value": "dy", "label": "抖音", "icon": "🎵"},
             {"value": "bili", "label": "B站", "icon": "📺"},
             {"value": "wb", "label": "微博", "icon": "📱"},
+            {"value": "ks", "label": "快手", "icon": "📹"},
             {"value": "zhihu", "label": "知乎", "icon": "❓"},
         ]
     }

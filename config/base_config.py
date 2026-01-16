@@ -26,6 +26,11 @@ PROJECT_ID = 0  # 关联的项目 ID（用于数据过滤）
 CRAWLER_TYPE = (
     "search"  # 爬取类型，search(关键词搜索) | detail(帖子详情)| creator(创作者主页数据)
 )
+PURPOSE = "general" # creator/hotspot/sentiment/general
+MIN_FANS = 0
+MAX_FANS = 0
+REQUIRE_CONTACT = False
+SENTIMENT_KEYWORDS = []
 # 是否开启 IP 代理
 ENABLE_IP_PROXY = False
 

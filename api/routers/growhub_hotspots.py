@@ -36,6 +36,10 @@ class HotspotResponse(BaseModel):
     source_keyword: Optional[str]
     publish_time: Optional[str]
     entered_at: Optional[str]
+    video_url: Optional[str] = None
+    author_url: Optional[str] = None
+    author_id: Optional[str] = None
+    author_avatar: Optional[str] = None
 
 
 class HotspotListResponse(BaseModel):

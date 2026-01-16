@@ -38,7 +38,7 @@ if TYPE_CHECKING:
 from .exception import *
 from .field import *
 from .help import *
-from tenacity import retry, stop_after_attempt, wait_exponential, before_sleep_log
+from tenacity import retry, stop_after_attempt, wait_exponential, before_sleep_log, retry_if_exception
 import time
 
 class AsyncTokenBucket:
@@ -187,10 +187,18 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
         except Exception as e:
             utils.logger.error(f"[DouYinClient] Failed to update account status in DB: {e}")
 
+    def _retry_predicate(self, exception: Exception) -> bool:
+        """判定是否需要重试：如果是风控拦截，则不重试"""
+        exc_str = str(exception).lower()
+        if "blocked" in exc_str or "anti-bot" in exc_str or "forbidden" in exc_str:
+            return False
+        return True
+
     @retry(
         stop=stop_after_attempt(3), 
         wait=wait_exponential(multiplier=1, min=2, max=10),
-        before_sleep=before_sleep_log(utils.logger, "DEBUG")
+        before_sleep=before_sleep_log(utils.logger, "DEBUG"),
+        retry=retry_if_exception(lambda e: "blocked" not in str(e).lower() and "anti-bot" not in str(e).lower())
     )
     async def request(self, method, url, **kwargs):
         # 1. 触发频率限制 (Token Bucket)

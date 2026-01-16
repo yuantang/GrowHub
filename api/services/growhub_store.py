@@ -425,6 +425,7 @@ class GrowHubStoreService:
                         'author_name': content.author_name,
                         'author_avatar': content.author_avatar,
                         'author_url': raw_data.get("user_url") or raw_data.get("author_url"),
+                        'unique_id': content.author_unique_id or raw_data.get("unique_id") or raw_data.get("short_id"),
                         'signature': raw_data.get("signature") or raw_data.get("user_signature"),
                         'fans_count': content.author_fans_count or 0,
                         'follows_count': content.author_follows_count or 0,

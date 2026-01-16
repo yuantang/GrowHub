@@ -144,9 +144,9 @@ const ContentMonitorPage: React.FC = () => {
         return () => clearTimeout(timer);
     }, [searchTerm]);
 
-    const handleMarkHandled = async (contentId: number) => {
+    const handleMarkHandled = async (contentId: number, status: boolean = true) => {
         try {
-            await fetch(`${API_BASE}/growhub/content/alerts/${contentId}/handle`, {
+            await fetch(`${API_BASE}/growhub/content/alerts/${contentId}/handle?status=${status}`, {
                 method: 'POST',
             });
             fetchContents();
@@ -400,77 +400,125 @@ const ContentMonitorPage: React.FC = () => {
                             >
                                 <CardContent className="p-4">
                                     <div className="flex items-start gap-4">
-                                        {/* Left: Platform & Sentiment */}
-                                        <div className="flex flex-col items-center gap-2">
-                                            <span className={`px-2 py-1 text-xs rounded ${platformCfg.color}`}>
-                                                {platformCfg.label}
-                                            </span>
-                                            <SentimentIcon className={`w-5 h-5 ${sentimentCfg.color}`} />
-                                        </div>
+                                            {/* Left: Platform & Sentiment */}
+                                            <div className="flex flex-col items-center gap-2">
+                                                <span className={`px-2 py-1 text-xs rounded ${platformCfg.color}`}>
+                                                    {platformCfg.label}
+                                                </span>
+                                                <SentimentIcon className={`w-5 h-5 ${sentimentCfg.color}`} />
+                                            </div>
 
-                                        {/* Middle: Content */}
-                                        <div className="flex-1 min-w-0">
-                                            <div className="flex items-start justify-between gap-4">
-                                                <div className="flex-1 min-w-0">
-                                                    <h3 className="font-medium text-sm line-clamp-1">
-                                                        {item.title || '(无标题)'}
-                                                    </h3>
-                                                    <p className="text-sm text-muted-foreground mt-1 line-clamp-2">
-                                                        {item.description || '暂无描述'}
-                                                    </p>
+                                            {/* Cover / Video Thumbnail */}
+                                            {item.cover_url && (
+                                                <div className="relative w-24 h-32 flex-shrink-0 group cursor-pointer" onClick={() => item.video_url ? window.open(item.video_url, '_blank') : window.open(item.content_url, '_blank')}>
+                                                    <img 
+                                                        src={item.cover_url} 
+                                                        alt="cover" 
+                                                        className="w-full h-full object-cover rounded-md border border-border"
+                                                        onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                                                    />
+                                                    {item.video_url && (
+                                                        <div className="absolute inset-0 bg-black/30 group-hover:bg-black/40 flex items-center justify-center transition-colors rounded-md">
+                                                            <div className="w-8 h-8 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center">
+                                                                <svg className="w-4 h-4 text-white fill-current" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
+
+                                            {/* Middle: Content */}
+                                            <div className="flex-1 min-w-0">
+                                                <div className="flex items-start justify-between gap-4">
+                                                    <div className="flex-1 min-w-0">
+                                                        <h3 className="font-medium text-sm line-clamp-1 hover:text-primary cursor-pointer" onClick={() => window.open(item.content_url || '#', '_blank')}>
+                                                            {item.title || '(无标题)'}
+                                                        </h3>
+                                                        <p className="text-sm text-muted-foreground mt-1 line-clamp-2">
+                                                            {item.description || '暂无描述'}
+                                                        </p>
+                                                    </div>
+
+                                                    {/* Alert Badge */}
+                                                    {item.is_alert && alertCfg && (
+                                                        <span className={`shrink-0 px-2 py-1 text-xs rounded flex items-center gap-1 ${alertCfg.color}`}>
+                                                            <AlertTriangle className="w-3 h-3" />
+                                                            {alertCfg.label}级预警
+                                                        </span>
+                                                    )}
                                                 </div>
 
-                                                {/* Alert Badge */}
-                                                {item.is_alert && alertCfg && (
-                                                    <span className={`shrink-0 px-2 py-1 text-xs rounded flex items-center gap-1 ${alertCfg.color}`}>
-                                                        <AlertTriangle className="w-3 h-3" />
-                                                        {alertCfg.label}级预警
+                                                {/* Meta */}
+                                                <div className="flex items-center gap-4 mt-3 text-xs text-muted-foreground">
+                                                    <div className="flex items-center gap-1.5 cursor-pointer hover:text-primary transition-colors"
+                                                         onClick={(e) => {
+                                                             e.stopPropagation();
+                                                             if(item.author_url) window.open(item.author_url, '_blank');
+                                                         }}
+                                                    >
+                                                        {item.author_avatar ? (
+                                                            <img src={item.author_avatar} className="w-5 h-5 rounded-full object-cover" alt="" /> 
+                                                        ) : (
+                                                            <div className="w-5 h-5 rounded-full bg-muted flex items-center justify-center">?</div>
+                                                        )}
+                                                        <span className={item.author_url ? "hover:underline" : ""}>@{item.author_name || '未知'}</span>
+                                                    </div>
+                                                    <span className={`px-1.5 py-0.5 rounded ${categoryCfg.color}`}>
+                                                        {categoryCfg.label}
                                                     </span>
-                                                )}
-                                            </div>
-
-                                            {/* Meta */}
-                                            <div className="flex items-center gap-4 mt-3 text-xs text-muted-foreground">
-                                                <span>@{item.author_name || '未知'}</span>
-                                                <span className={`px-1.5 py-0.5 rounded ${categoryCfg.color}`}>
-                                                    {categoryCfg.label}
-                                                </span>
-                                                <span className="flex items-center gap-1">
-                                                    <Heart className="w-3 h-3" /> {formatNumber(item.like_count)}
-                                                </span>
-                                                <span className="flex items-center gap-1">
-                                                    <MessageCircle className="w-3 h-3" /> {formatNumber(item.comment_count)}
-                                                </span>
-                                                <span className="flex items-center gap-1">
-                                                    <Share2 className="w-3 h-3" /> {formatNumber(item.share_count)}
-                                                </span>
-                                                {item.view_count > 0 && (
                                                     <span className="flex items-center gap-1">
-                                                        <Eye className="w-3 h-3" /> {formatNumber(item.view_count)}
+                                                        <Heart className="w-3 h-3" /> {formatNumber(item.like_count)}
                                                     </span>
-                                                )}
-                                                <span className="ml-auto">{formatDate(item.crawl_time)}</span>
+                                                    <span className="flex items-center gap-1">
+                                                        <MessageCircle className="w-3 h-3" /> {formatNumber(item.comment_count)}
+                                                    </span>
+                                                    <span className="flex items-center gap-1">
+                                                        <Share2 className="w-3 h-3" /> {formatNumber(item.share_count)}
+                                                    </span>
+                                                    {item.view_count > 0 && (
+                                                        <span className="flex items-center gap-1">
+                                                            <Eye className="w-3 h-3" /> {formatNumber(item.view_count)}
+                                                        </span>
+                                                    )}
+                                                    <span className="ml-auto">{formatDate(item.crawl_time)}</span>
+                                                </div>
                                             </div>
-                                        </div>
 
                                         {/* Right: Actions */}
                                         <div className="flex items-center gap-2">
-                                            {item.is_alert && !item.is_handled && (
+                                            {item.content_url && (
                                                 <Button
-                                                    variant="outline"
+                                                    variant="ghost"
                                                     size="sm"
-                                                    onClick={() => handleMarkHandled(item.id)}
-                                                    className="text-green-400 border-green-500/30 hover:bg-green-500/10"
+                                                    className="p-2"
+                                                    onClick={() => window.open(item.content_url, '_blank')}
                                                 >
-                                                    <CheckCircle className="w-4 h-4 mr-1" />
-                                                    标记已处理
+                                                    <span className="text-xs mr-1">查看</span>
                                                 </Button>
                                             )}
-                                            {item.is_alert && item.is_handled && (
-                                                <span className="text-xs text-muted-foreground flex items-center gap-1">
-                                                    <CheckCircle className="w-3 h-3 text-green-400" />
-                                                    已处理
-                                                </span>
+                                            
+                                            {item.is_alert && (
+                                                item.is_handled ? (
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        onClick={() => handleMarkHandled(item.id, false)}
+                                                        className="text-green-500 hover:text-green-600 hover:bg-green-500/10"
+                                                    >
+                                                        <CheckCircle className="w-4 h-4 mr-1" />
+                                                        已处理
+                                                    </Button>
+                                                ) : (
+                                                    <Button
+                                                        variant="outline"
+                                                        size="sm"
+                                                        onClick={() => handleMarkHandled(item.id, true)}
+                                                        className="text-orange-400 border-orange-500/30 hover:bg-orange-500/10"
+                                                    >
+                                                        <AlertTriangle className="w-4 h-4 mr-1" />
+                                                        标记处理
+                                                    </Button>
+                                                )
                                             )}
                                         </div>
                                     </div>

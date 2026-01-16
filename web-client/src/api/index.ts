@@ -173,6 +173,7 @@ export interface Account {
     success_rate: number;
     cookies?: string;
     notes?: string;
+    role?: string; // content/data
 }
 
 export interface AccountStats {
@@ -351,6 +352,7 @@ export interface GrowHubContentItem {
     author_id: string;
     author_name: string;
     author_avatar: string;
+    author_url?: string;
     author_fans_count?: number;
     author_follows_count?: number;  // 作者关注数
     author_likes_count?: number;    // 作者获赞数
@@ -486,6 +488,7 @@ export interface Creator {
     id: number;
     platform: string;
     author_id: string;
+    unique_id?: string;
     author_name?: string;
     author_avatar?: string;
     author_url?: string;
@@ -506,6 +509,8 @@ export interface Creator {
     first_seen_at?: string;
     last_updated_at?: string;
     created_at?: string;
+    crawl_status?: string; // new/waiting/profiled/failed
+    last_profile_crawl_at?: string;
 }
 
 export interface CreatorListResponse {
@@ -568,6 +573,10 @@ export interface Hotspot {
     source_keyword?: string;
     publish_time?: string;
     entered_at?: string;
+    video_url?: string;
+    author_id?: string;
+    author_url?: string;
+    author_avatar?: string;
 }
 
 export interface HotspotListResponse {

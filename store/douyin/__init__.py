@@ -29,6 +29,11 @@ from var import source_keyword_var, project_id_var
 from ._store_impl import *
 from .douyin_store_media import *
 
+# 运行时缓存，避免在同一次抓取任务中重复请求同一个博主的主页
+_AUTHOR_CACHE = {}
+_PENDING_PROFILE_REQUESTS = {}
+
+
 
 class DouyinStoreFactory:
     STORES = {
@@ -131,7 +136,7 @@ def _extract_video_download_url(aweme_detail: Dict) -> str:
     url_256_list = video_item.get("play_addr_256", {}).get("url_list", [])
     url_list = video_item.get("play_addr", {}).get("url_list", [])
     actual_url_list = url_h264_list or url_256_list or url_list
-    if not actual_url_list or len(actual_url_list) < 2:
+    if not actual_url_list:
         return ""
     return actual_url_list[-1]
 
@@ -162,34 +167,10 @@ async def update_douyin_aweme(aweme_item: Dict, client=None):
     
     # 修复：如果粉丝数为0且有sec_uid，且提供了client，尝试获取用户详情补充数据
     fans_count = user_info.get("fans", 0)
-    fans_count = user_info.get("fans", 0)
-    if (not fans_count or fans_count == 0):
-        sec_uid = user_info.get("sec_uid")
-        if sec_uid and client:
-            try:
-                utils.logger.info(f"[store.douyin] 🔍 Author '{user_info.get('nickname')}' fans=0, attempting fallback fetch via sec_uid...")
-                # 增加随机延迟避免被风控
-                import random
-                await asyncio.sleep(random.uniform(0.5, 1.5))
-                
-                profile_res = await client.get_user_info(sec_uid)
-                if profile_res and "user" in profile_res:
-                    user_obj = profile_res["user"]
-                    # Update user_info with profile data
-                    found_fans = user_obj.get("follower_count") or user_obj.get("m_stats", {}).get("follower_count") or 0
-                    user_info["fans"] = found_fans
-                    user_info["follows"] = user_obj.get("following_count") or 0
-                    user_info["likes"] = user_obj.get("total_favorited") or 0
-                    # Could also refresh nickname, avatar
-                    user_info["nickname"] = user_obj.get("nickname") or user_info.get("nickname")
-                    user_info["avatar"] = user_obj.get("avatar_thumb", {}).get("url_list", [""])[0] or user_info.get("avatar")
-                    utils.logger.info(f"[store.douyin] ✅ Fallback success! Updated fans: {found_fans}")
-                else:
-                    utils.logger.warning(f"[store.douyin] ⚠️ Fallback fetch returned invalid profile data for sec_uid={sec_uid}")
-            except Exception as e:
-                utils.logger.error(f"[store.douyin] ❌ Failed to fetch user profile fallback: {e}")
-        else:
-            utils.logger.warning(f"[store.douyin] ⚠️ Unable to fetch profile fallback: sec_uid={'Found' if sec_uid else 'Missing'}, client={'Found' if client else 'Missing'}")
+    # [Phase 2 Architecture Change]
+    # Disable synchronous fallback fetch. Profile enrichment is now handled by async ProfileWorker.
+    # The creator will be saved as 'crawl_status=new' by the CreatorService, and picked up later.
+    utils.logger.debug(f"[store.douyin] ⏭ Deferred profile fetch for '{user_info.get('nickname')}' to ProfileWorker")
 
     interact_info = extractor.get_item_statistics(aweme_item)
     
@@ -224,6 +205,7 @@ async def update_douyin_aweme(aweme_item: Dict, client=None):
         "user_fans": str(user_info.get("fans", 0)),
         "user_follows": str(user_info.get("follows", 0)),
         "user_likes": str(user_info.get("likes", 0)),
+        "works_count": str(user_info.get("aweme_count", 0)),
         "user_unique_id": user_info.get("unique_id", ""),
     }
     utils.logger.info(f"[store.douyin.update_douyin_aweme] douyin aweme id:{aweme_id}, title:{save_content_item.get('title')}")

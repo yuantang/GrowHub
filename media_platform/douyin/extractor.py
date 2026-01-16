@@ -80,10 +80,11 @@ class DouyinExtractor:
         # Also try to get from author_stats which exists in some API versions
         a_stats = aweme_info.get("author_stats") or {}
         
-        # 常见路径优先尝试
+        # 常见的路径优先尝试
         fans = author.get("follower_count") or \
                author.get("followers_count") or \
                author.get("fans") or \
+               author.get("fans_count") or \
                a_stats.get("follower_count") or \
                a_stats.get("followers_count") or \
                a_stats.get("fans") or \
@@ -95,10 +96,13 @@ class DouyinExtractor:
             def find_key_recursive(obj, key_patterns):
                  if isinstance(obj, dict):
                      for k, v in obj.items():
-                         if any(p in k for p in key_patterns):
+                         # 匹配关键字且值是合法数字
+                         if any(p in k.lower() for p in key_patterns):
                              if isinstance(v, (int, float)) and v > 0:
                                  return v
-                         # Recurse
+                             if isinstance(v, str) and v.isdigit():
+                                 return int(v)
+                         # 递归
                          res = find_key_recursive(v, key_patterns)
                          if res: return res
                  elif isinstance(obj, list):
@@ -107,8 +111,12 @@ class DouyinExtractor:
                          if res: return res
                  return None
 
-            # 尝试在 author 对象中搜索 "follow" 相关字段
-            found_fans = find_key_recursive(author, ["follower", "fans"])
+            # 尝试在整个 item 中搜索而不仅仅是 author，因为有些 API 把作者统计放在顶层或 stats 下
+            found_fans = find_key_recursive(aweme_info, ["follower_count", "fans_count", "followers_count"])
+            if not found_fans:
+                # 再次扩大搜索范围：只要包含 follower 且是数字
+                found_fans = find_key_recursive(aweme_info, ["follower"])
+            
             if found_fans:
                 fans = found_fans
                 utils.logger.info(f"[DouyinExtractor] Recursively found fans count: {fans}")
@@ -121,6 +129,7 @@ class DouyinExtractor:
         
         follows = author.get("following_count") or author.get("follows_count") or author.get("follows") or a_stats.get("following_count") or a_stats.get("follows_count") or a_stats.get("follows") or m_stats.get("following_count") or m_stats.get("follows_count") or 0
         likes = author.get("total_favorited") or author.get("favorited_count") or author.get("likes") or author.get("interaction") or a_stats.get("total_favorited") or a_stats.get("favorited_count") or a_stats.get("likes") or a_stats.get("interaction") or m_stats.get("total_favorited") or m_stats.get("favorited_count") or 0
+        aweme_count = author.get("aweme_count") or author.get("video_count") or author.get("works_count") or a_stats.get("aweme_count") or a_stats.get("video_count") or m_stats.get("aweme_count") or 0
         
         return {
             "uid": author.get("uid"),
@@ -131,4 +140,5 @@ class DouyinExtractor:
             "fans": fans,
             "follows": follows,
             "likes": likes,
+            "aweme_count": aweme_count
         }

@@ -453,10 +453,11 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
         config.ACCOUNT_ID = account_id
         
         # New filters and sentiment config
-        config.MIN_FANS_COUNT = min_fans
-        config.MAX_FANS_COUNT = max_fans
+        config.MIN_FANS = min_fans
+        config.MAX_FANS = max_fans
         config.REQUIRE_CONTACT = _to_bool(require_contact)
         config.SENTIMENT_KEYWORDS = [k.strip() for k in sentiment_keywords.split(",")] if sentiment_keywords else []
+        config.PURPOSE = purpose
 
         # Set platform-specific ID lists for detail/creator mode
         if specified_id_list:

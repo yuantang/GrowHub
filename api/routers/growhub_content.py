@@ -376,6 +376,7 @@ async def list_contents(
                 "author_id": c.author_id,
                 "author_name": c.author_name,
                 "author_avatar": c.author_avatar,
+                "author_url": f"https://www.douyin.com/user/{c.author_id}" if c.platform == "douyin" or c.platform == "dy" else None,
                 "author_fans_count": c.author_fans_count,
                 "author_follows_count": c.author_follows_count,
                 "author_likes_count": c.author_likes_count,
@@ -450,8 +451,12 @@ async def get_alerts(
 
 
 @router.post("/alerts/{content_id}/handle")
-async def handle_alert(content_id: int, handled_by: str = "system"):
-    """标记预警已处理"""
+async def handle_alert(
+    content_id: int, 
+    handled_by: str = "system",
+    status: bool = Query(True, description="处理状态: true=已处理, false=未处理")
+):
+    """标记预警处理状态"""
     async with get_session() as session:
         result = await session.execute(
             select(GrowHubContent).where(GrowHubContent.id == content_id)
@@ -461,11 +466,17 @@ async def handle_alert(content_id: int, handled_by: str = "system"):
         if not content:
             raise HTTPException(status_code=404, detail="内容不存在")
         
-        content.is_handled = True
-        content.handled_at = datetime.now()
-        content.handled_by = handled_by
+        content.is_handled = status
+        if status:
+            content.handled_at = datetime.now()
+            content.handled_by = handled_by
+        else:
+            content.handled_at = None
+            content.handled_by = None
         
-        return {"message": "预警已标记为已处理"}
+        await session.commit()
+        
+        return {"message": f"预警状态已更新为 {'已处理' if status else '未处理'}"}
 
 
 @router.get("/stats")

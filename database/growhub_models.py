@@ -308,6 +308,20 @@ class GrowHubProject(Base):
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
 
+class AccountRole(enum.Enum):
+    """账号角色"""
+    CONTENT = "content"  # 内容账号（用于搜索、拉列表）
+    DATA = "data"        # 数据账号（用于拉详情、粉丝画像）
+
+
+class CreatorCrawlStatus(enum.Enum):
+    """作者抓取状态机"""
+    NEW = "new"           # 新发现
+    WAITING = "waiting"   # 待抓取
+    PROFILED = "profiled" # 已抓取详情
+    FAILED = "failed"     # 抓取失败
+
+
 class GrowHubAccount(Base):
     """GrowHub 账号池表"""
     __tablename__ = 'growhub_accounts'
@@ -316,6 +330,10 @@ class GrowHubAccount(Base):
     platform = Column(String(50), nullable=False)  # xhs/douyin/...
     account_name = Column(String(255), nullable=False)
     cookies = Column(Text, nullable=False)
+    
+    # 角色与风控
+    role = Column(String(20), default='content')  # content/data
+    proxy_url = Column(String(255), nullable=True) # 绑定的代理IP
     
     # 状态
     status = Column(String(50), default='unknown')  # active/cooldown/expired/banned
@@ -408,6 +426,7 @@ class GrowHubCreator(Base):
     author_id = Column(String(255), nullable=False, index=True)
     
     # 博主基础信息 (可更新)
+    unique_id = Column(String(100))          # 平台账号ID (如抖音号)
     author_name = Column(String(255))
     author_avatar = Column(Text)
     author_url = Column(Text)                # 主页链接
@@ -431,6 +450,11 @@ class GrowHubCreator(Base):
     
     # 业务状态
     status = Column(String(20), default='new')  # new/contacted/cooperating/rejected
+    
+    # 爬虫状态机
+    crawl_status = Column(String(20), default='new')  # new/waiting/profiled/failed
+    last_profile_crawl_at = Column(DateTime, nullable=True)
+    
     notes = Column(Text)                     # 备注
     
     # 来源追踪

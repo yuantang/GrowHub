@@ -122,8 +122,19 @@ async def main() -> None:
     config.MAX_COMMENTS_COUNT = getattr(args, 'max_comments', 0)
     config.MAX_FAVORITES_COUNT = getattr(args, 'max_favorites', 0)
     config.MAX_CONCURRENCY_NUM = getattr(args, 'concurrency_num', 3)
+    config.MIN_FANS = getattr(args, 'min_fans', 0)
+    config.MAX_FANS = getattr(args, 'max_fans', 0)
+    config.REQUIRE_CONTACT = getattr(args, 'require_contact', False)
+    config.PURPOSE = getattr(args, 'purpose', 'general')
     
-    print(f"[Debug] Config loaded - Start Time: {config.START_TIME}, End Time: {config.END_TIME}, Keywords: {config.KEYWORDS}, Project ID: {config.PROJECT_ID}, Dedup Authors: {config.DEDUPLICATE_AUTHORS}, Max Likes: {config.MAX_LIKES_COUNT}, Concurrency: {config.MAX_CONCURRENCY_NUM}")
+    # Handle sentiment_keywords (already parsed in main.py logic below, but let's set it in config too)
+    s_kws = getattr(args, 'sentiment_keywords', "")
+    if isinstance(s_kws, str):
+        config.SENTIMENT_KEYWORDS = [k.strip() for k in s_kws.split(",") if k.strip()]
+    else:
+        config.SENTIMENT_KEYWORDS = s_kws or []
+    
+    print(f"[Debug] Config loaded - Start Time: {config.START_TIME}, End Time: {config.END_TIME}, Keywords: {config.KEYWORDS}, Project ID: {config.PROJECT_ID}, Purpose: {config.PURPOSE}")
 
     # Set context variables
     from var import project_id_var, min_fans_var, max_fans_var, require_contact_var, sentiment_keywords_var, purpose_var

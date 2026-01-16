@@ -71,6 +71,8 @@ class CreatorService:
                     existing.follows_count = data['follows_count']
                 if data.get('works_count'):
                     existing.works_count = data['works_count']
+                if data.get('unique_id'):
+                    existing.unique_id = data['unique_id']
                 
                 # 更新内容计数和平均值
                 existing.content_count = (existing.content_count or 0) + 1
@@ -87,6 +89,7 @@ class CreatorService:
                 creator = GrowHubCreator(
                     platform=platform,
                     author_id=author_id,
+                    unique_id=data.get('unique_id'),
                     author_name=data.get('author_name'),
                     author_avatar=data.get('author_avatar'),
                     author_url=data.get('author_url'),
@@ -99,6 +102,7 @@ class CreatorService:
                     ip_location=data.get('ip_location'),
                     content_count=1,
                     status='new',
+                    crawl_status='new',  # 初始化为待抓取状态，等待 ProfileWorker 补全数据
                     source_project_id=source_project_id,
                     source_keyword=source_keyword,
                     latest_content_id=content_id,
@@ -215,16 +219,12 @@ class CreatorService:
     async def get_stats(self, source_project_id: Optional[int] = None) -> Dict[str, Any]:
         """获取博主统计数据"""
         async with get_session() as session:
-            base_query = select(GrowHubCreator)
+            # Simple Total Query without subquery
+            count_query = select(func.count(GrowHubCreator.id))
             if source_project_id:
-                base_query = base_query.where(GrowHubCreator.source_project_id == source_project_id)
-            
-            # 总数
-            total_result = await session.execute(
-                select(func.count(GrowHubCreator.id)).select_from(
-                    base_query.subquery()
-                )
-            )
+                count_query = count_query.where(GrowHubCreator.source_project_id == source_project_id)
+                
+            total_result = await session.execute(count_query)
             total = total_result.scalar() or 0
             
             # 按状态分组
@@ -257,13 +257,18 @@ class CreatorService:
 
     def _creator_to_dict(self, creator: GrowHubCreator) -> Dict[str, Any]:
         """将博主模型转换为字典"""
+        author_url = creator.author_url
+        if not author_url and creator.platform in ['dy', 'douyin'] and creator.author_id:
+            author_url = f"https://www.douyin.com/user/{creator.author_id}"
+            
         return {
             "id": creator.id,
             "platform": creator.platform,
             "author_id": creator.author_id,
+            "unique_id": creator.unique_id,
             "author_name": creator.author_name,
             "author_avatar": creator.author_avatar,
-            "author_url": creator.author_url,
+            "author_url": author_url,
             "signature": creator.signature,
             "fans_count": creator.fans_count or 0,
             "follows_count": creator.follows_count or 0,
@@ -282,6 +287,82 @@ class CreatorService:
             "last_updated_at": creator.last_updated_at.isoformat() if creator.last_updated_at else None,
             "created_at": creator.created_at.isoformat() if creator.created_at else None
         }
+
+    async def get_creators_to_crawl(self, limit: int = 10, retry_failed: bool = False) -> List[GrowHubCreator]:
+        """获取待抓取详情的博主列表 (Queue Consumer Logic)"""
+        async with get_session() as session:
+            # 状态: new, waiting
+            # 如果开启重试，则包含 failed 且一段时间前的
+            statuses = ['new', 'waiting']
+            if retry_failed:
+                statuses.append('failed')
+            
+            stmt = select(GrowHubCreator).where(
+                and_(
+                    GrowHubCreator.platform.in_(['dy', 'douyin']),
+                    GrowHubCreator.crawl_status.in_(statuses)
+                )
+            ).order_by(GrowHubCreator.last_updated_at.asc()).limit(limit)
+            
+            result = await session.execute(stmt)
+            creators = result.scalars().all()
+            
+            # 立即标记为 waiting 防止并发 (虽然目前单 Worker)
+            for creator in creators:
+                creator.crawl_status = 'waiting'
+                creator.last_updated_at = datetime.now()
+            
+            if creators:
+                await session.commit()
+                
+            return creators
+
+    async def update_creator_profile(self, author_id: str, profile_data: Dict[str, Any]):
+        """更新博主详情 (Profile Worker Callback)"""
+        async with get_session() as session:
+            result = await session.execute(
+                select(GrowHubCreator).where(GrowHubCreator.author_id == author_id)
+            )
+            creator = result.scalar()
+            if not creator:
+                return
+
+            # Update fields
+            creator.fans_count = profile_data.get("fans_count", 0)
+            creator.follows_count = profile_data.get("follows_count", 0)
+            creator.likes_count = profile_data.get("likes_count", 0)
+            creator.works_count = profile_data.get("works_count", 0)
+            
+            if profile_data.get("signature"):
+                creator.signature = profile_data.get("signature")
+            if profile_data.get("nickname"):
+                creator.author_name = profile_data.get("nickname")
+            if profile_data.get("avatar"):
+                creator.author_avatar = profile_data.get("avatar")
+            if profile_data.get("unique_id"):
+                creator.unique_id = profile_data.get("unique_id")
+            if profile_data.get("ip_location"):
+                creator.ip_location = profile_data.get("ip_location")
+
+            # Mark as done
+            creator.crawl_status = 'profiled'
+            creator.last_profile_crawl_at = datetime.now()
+            creator.last_updated_at = datetime.now()
+            
+            await session.commit()
+            utils.logger.info(f"[CreatorService] Profile Updated: {creator.author_name} ({creator.fans_count} fans)")
+
+    async def mark_creator_failed(self, author_id: str, reason: str):
+        """标记博主抓取失败"""
+        async with get_session() as session:
+             result = await session.execute(
+                select(GrowHubCreator).where(GrowHubCreator.author_id == author_id)
+            )
+             creator = result.scalar()
+             if creator:
+                 creator.crawl_status = 'failed'
+                 creator.notes = f"Failed at {datetime.now()}: {reason}"
+                 await session.commit()
 
 
 # 全局单例

@@ -126,7 +126,10 @@ class HotspotService:
     ) -> Dict[str, Any]:
         """获取热点列表"""
         async with get_session() as session:
-            query = select(GrowHubHotspot)
+            # Join with Content
+            query = select(GrowHubHotspot, GrowHubContent).join(
+                GrowHubContent, GrowHubHotspot.content_id == GrowHubContent.id
+            )
             count_query = select(func.count(GrowHubHotspot.id))
             
             # 应用过滤条件
@@ -163,7 +166,15 @@ class HotspotService:
             total = total_result.scalar()
             
             # 排序
-            sort_column = getattr(GrowHubHotspot, sort_by, GrowHubHotspot.heat_score)
+            # Use getattr on model directly.
+            # Support sorting by additional fields
+            if sort_by in ['publish_time', 'entered_at']:
+                 sort_column = getattr(GrowHubHotspot, sort_by)
+            elif sort_by in ['view_count', 'share_count', 'like_count', 'comment_count']:
+                 sort_column = getattr(GrowHubHotspot, sort_by)
+            else:
+                 sort_column = getattr(GrowHubHotspot, sort_by, GrowHubHotspot.heat_score)
+            
             if sort_order == 'desc':
                 query = query.order_by(sort_column.desc())
             else:
@@ -173,11 +184,23 @@ class HotspotService:
             query = query.offset((page - 1) * page_size).limit(page_size)
             
             result = await session.execute(query)
-            hotspots = result.scalars().all()
+            rows = result.all()
+            
+            items = []
+            for idx, (hotspot, content) in enumerate(rows):
+                item = self._hotspot_to_dict(hotspot, idx + 1 + (page - 1) * page_size)
+                # Inject content fields
+                if content:
+                    item['video_url'] = content.video_url
+                    item['author_id'] = content.author_id
+                    item['author_avatar'] = content.author_avatar
+                    if (hotspot.platform == 'douyin' or hotspot.platform == 'dy') and content.author_id:
+                        item['author_url'] = f"https://www.douyin.com/user/{content.author_id}"
+                items.append(item)
             
             return {
                 "total": total,
-                "items": [self._hotspot_to_dict(h, idx + 1 + (page - 1) * page_size) for idx, h in enumerate(hotspots)]
+                "items": items
             }
 
     async def get_daily_ranking(
@@ -191,7 +214,10 @@ class HotspotService:
             rank_date = date.today()
         
         async with get_session() as session:
-            query = select(GrowHubHotspot).where(
+            # Join with Content to get extra fields
+            query = select(GrowHubHotspot, GrowHubContent).join(
+                GrowHubContent, GrowHubHotspot.content_id == GrowHubContent.id
+            ).where(
                 func.date(GrowHubHotspot.rank_date) == rank_date
             )
             
@@ -201,9 +227,21 @@ class HotspotService:
             query = query.order_by(desc(GrowHubHotspot.heat_score)).limit(limit)
             
             result = await session.execute(query)
-            hotspots = result.scalars().all()
+            rows = result.all()
             
-            return [self._hotspot_to_dict(h, idx + 1) for idx, h in enumerate(hotspots)]
+            items = []
+            for idx, (hotspot, content) in enumerate(rows):
+                item = self._hotspot_to_dict(hotspot, idx + 1)
+                # Inject content fields
+                if content:
+                    item['video_url'] = content.video_url
+                    item['author_id'] = content.author_id
+                    item['author_avatar'] = content.author_avatar
+                    if (hotspot.platform == 'douyin' or hotspot.platform == 'dy') and content.author_id:
+                        item['author_url'] = f"https://www.douyin.com/user/{content.author_id}"
+                items.append(item)
+                
+            return items
 
     async def get_stats(self, source_project_id: Optional[int] = None) -> Dict[str, Any]:
         """获取热点统计数据"""

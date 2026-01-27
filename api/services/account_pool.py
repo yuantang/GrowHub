@@ -478,6 +478,26 @@ class AccountPoolService:
         # If valid and nickname returned, update account name?
         # Maybe optional feature. For now just verify.
         return result
+
+    async def mark_account_invalid(self, account_id: str, reason: str = "Invalid"):
+        """标记账号为无效 (Helper)"""
+        if account_id not in self.accounts:
+            return
+            
+        async with self._lock:
+            # Check if expired or banned based on reason keyword
+            status = AccountStatus.EXPIRED
+            if "banned" in reason.lower() or "suspicious" in reason.lower():
+                status = AccountStatus.BANNED
+            
+            await self._update_account_internal(account_id, {
+                "status": status,
+                "health_score": 0,
+                "notes": f"{datetime.now().strftime('%Y-%m-%d %H:%M')}: Marked invalid ({reason})",
+                "fail_count": self.accounts[account_id].fail_count + 1
+            })
+            utils.logger.info(f"[AccountPool] Account {account_id} marked as {status.value}: {reason}")
+    
     
     async def batch_check_health(self, platform: Optional[AccountPlatform] = None, max_concurrency: int = 5, user_id: int = None) -> Dict[str, Any]:
         """批量检查 (Parallel Implementation)"""

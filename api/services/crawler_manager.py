@@ -296,6 +296,10 @@ class CrawlerManager:
         # 任务目的 (驱动数据分流)
         if hasattr(config, 'purpose') and config.purpose:
             cmd.extend(["--purpose", config.purpose])
+            
+        # Pass fallback configuration (A4 Optimization)
+        import config as global_config
+        cmd.extend(["--fallback-to-qrcode", "true" if global_config.ENABLE_QR_LOGIN_FALLBACK else "false"])
 
         return cmd
 

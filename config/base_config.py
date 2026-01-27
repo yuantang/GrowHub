@@ -21,6 +21,12 @@
 PLATFORM = "xhs"  # 平台，xhs | dy | ks | bili | wb | tieba | zhihu
 KEYWORDS = "编程副业,编程兼职"  # 关键词搜索配置，以英文逗号分隔
 LOGIN_TYPE = "qrcode"  # qrcode or phone or cookie
+
+# ==================== 登录行为配置 ====================
+# Cookie 失效时是否自动降级为扫码登录
+# False: 直接报错/使用下一个账号 (推荐用于自动化/无人值守任务)
+# True: 弹出二维码等待用户扫码 (推荐用于人工辅助模式)
+ENABLE_QR_LOGIN_FALLBACK = False
 COOKIES = ""
 PROJECT_ID = 0  # 关联的项目 ID（用于数据过滤）
 CRAWLER_TYPE = (

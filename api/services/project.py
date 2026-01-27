@@ -522,7 +522,19 @@ class ProjectService:
                             break
                         
                         tried_accounts.append(account.id)
-                        self.append_log(project_id, f"✅ 获取到账号: {account.account_name}")
+                        
+                        # A4 优化: 执行前预校验 (减少扫码弹窗概率)
+                        from api.services.account_verification import AccountVerifier
+                        self.append_log(project_id, f"🔍 正在验证账号 {account.account_name} 有效性...")
+                        verify_res = await AccountVerifier.verify(account.platform.value, account.cookies)
+                        
+                        if not verify_res.get("valid"):
+                            reason = verify_res.get("message", "Unknown")
+                            self.append_log(project_id, f"❌ 账号 {account.account_name} 验证失败: {reason}")
+                            await pool.mark_account_invalid(account.id, reason)
+                            continue # Try next account
+                            
+                        self.append_log(project_id, f"✅ 账号验证通过: {account.account_name}")
                         cookies = account.cookies
                     except Exception as e:
                         self.append_log(project_id, f"❌ 获取账号失败: {e}")

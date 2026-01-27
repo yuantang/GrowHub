@@ -410,6 +410,14 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
                 rich_help_panel="Task Configuration",
             ),
         ] = "general",
+        fallback_to_qrcode: Annotated[
+            str,
+            typer.Option(
+                "--fallback-to-qrcode",
+                help="Whether to fallback to QR code login if cookie fails (true/false)",
+                rich_help_panel="Runtime Configuration",
+            ),
+        ] = str(config.ENABLE_QR_LOGIN_FALLBACK),
     ) -> SimpleNamespace:
         """MediaCrawler 命令行入口"""
 
@@ -457,7 +465,9 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
         config.MAX_FANS = max_fans
         config.REQUIRE_CONTACT = _to_bool(require_contact)
         config.SENTIMENT_KEYWORDS = [k.strip() for k in sentiment_keywords.split(",")] if sentiment_keywords else []
+        config.SENTIMENT_KEYWORDS = [k.strip() for k in sentiment_keywords.split(",")] if sentiment_keywords else []
         config.PURPOSE = purpose
+        config.ENABLE_QR_LOGIN_FALLBACK = _to_bool(fallback_to_qrcode)
 
         # Set platform-specific ID lists for detail/creator mode
         if specified_id_list:

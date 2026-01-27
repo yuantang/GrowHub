@@ -151,13 +151,14 @@ class ProjectService:
             
             print(f"[Scheduler Sync] Registered {registered_count}/{len(active_projects)} active projects")
     
-    async def create_project(self, config: ProjectConfig) -> Dict[str, Any]:
+    async def create_project(self, config: ProjectConfig, user_id: int = None) -> Dict[str, Any]:
         """创建监控项目"""
         from database.db_session import get_session
         from database.growhub_models import GrowHubProject
         
         async with get_session() as session:
             project = GrowHubProject(
+                user_id=user_id,
                 name=config.name,
                 description=config.description,
                 keywords=config.keywords,
@@ -206,16 +207,18 @@ class ProjectService:
                 "message": "项目创建成功"
             }
     
-    async def get_project(self, project_id: int) -> Optional[Dict[str, Any]]:
+    async def get_project(self, project_id: int, user_id: int = None) -> Optional[Dict[str, Any]]:
         """获取项目详情"""
         from database.db_session import get_session
         from database.growhub_models import GrowHubProject
         from sqlalchemy import select
         
         async with get_session() as session:
-            result = await session.execute(
-                select(GrowHubProject).where(GrowHubProject.id == project_id)
-            )
+            query = select(GrowHubProject).where(GrowHubProject.id == project_id)
+            if user_id is not None:
+                query = query.where(GrowHubProject.user_id == user_id)
+            
+            result = await session.execute(query)
             project = result.scalar()
             if not project:
                 return None
@@ -250,30 +253,34 @@ class ProjectService:
             return project_dict
 
     
-    async def list_projects(self) -> List[Dict[str, Any]]:
+    async def list_projects(self, user_id: int = None) -> List[Dict[str, Any]]:
         """获取所有项目列表"""
         from database.db_session import get_session
         from database.growhub_models import GrowHubProject
         from sqlalchemy import select, desc
         
         async with get_session() as session:
-            result = await session.execute(
-                select(GrowHubProject).order_by(desc(GrowHubProject.updated_at))
-            )
+            query = select(GrowHubProject)
+            if user_id is not None:
+                query = query.where(GrowHubProject.user_id == user_id)
+            query = query.order_by(desc(GrowHubProject.updated_at))
+            
+            result = await session.execute(query)
             projects = result.scalars().all()
             
             return [self._to_dict(p) for p in projects]
     
-    async def update_project(self, project_id: int, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    async def update_project(self, project_id: int, updates: Dict[str, Any], user_id: int = None) -> Optional[Dict[str, Any]]:
         """更新项目配置"""
         from database.db_session import get_session
         from database.growhub_models import GrowHubProject
         from sqlalchemy import select
         
         async with get_session() as session:
-            result = await session.execute(
-                select(GrowHubProject).where(GrowHubProject.id == project_id)
-            )
+            query = select(GrowHubProject).where(GrowHubProject.id == project_id)
+            if user_id is not None:
+                query = query.where(GrowHubProject.user_id == user_id)
+            result = await session.execute(query)
             project = result.scalar()
             
             if not project:
@@ -302,16 +309,17 @@ class ProjectService:
             
             return self._to_dict(project)
     
-    async def delete_project(self, project_id: int) -> bool:
+    async def delete_project(self, project_id: int, user_id: int = None) -> bool:
         """删除项目"""
         from database.db_session import get_session
         from database.growhub_models import GrowHubProject
         from sqlalchemy import select
         
         async with get_session() as session:
-            result = await session.execute(
-                select(GrowHubProject).where(GrowHubProject.id == project_id)
-            )
+            query = select(GrowHubProject).where(GrowHubProject.id == project_id)
+            if user_id is not None:
+                query = query.where(GrowHubProject.user_id == user_id)
+            result = await session.execute(query)
             project = result.scalar()
             
             if not project:
@@ -323,16 +331,17 @@ class ProjectService:
             await session.delete(project)
             return True
     
-    async def start_project(self, project_id: int) -> Dict[str, Any]:
+    async def start_project(self, project_id: int, user_id: int = None) -> Dict[str, Any]:
         """启动项目（开始自动调度）"""
         from database.db_session import get_session
         from database.growhub_models import GrowHubProject
         from sqlalchemy import select
         
         async with get_session() as session:
-            result = await session.execute(
-                select(GrowHubProject).where(GrowHubProject.id == project_id)
-            )
+            query = select(GrowHubProject).where(GrowHubProject.id == project_id)
+            if user_id is not None:
+                query = query.where(GrowHubProject.user_id == user_id)
+            result = await session.execute(query)
             project = result.scalar()
             
             if not project:
@@ -351,16 +360,17 @@ class ProjectService:
             
             return {"success": True, "message": "项目已启动"}
     
-    async def stop_project(self, project_id: int) -> Dict[str, Any]:
+    async def stop_project(self, project_id: int, user_id: int = None) -> Dict[str, Any]:
         """停止项目"""
         from database.db_session import get_session
         from database.growhub_models import GrowHubProject
         from sqlalchemy import select
         
         async with get_session() as session:
-            result = await session.execute(
-                select(GrowHubProject).where(GrowHubProject.id == project_id)
-            )
+            query = select(GrowHubProject).where(GrowHubProject.id == project_id)
+            if user_id is not None:
+                query = query.where(GrowHubProject.user_id == user_id)
+            result = await session.execute(query)
             project = result.scalar()
             
             if not project:
@@ -372,16 +382,17 @@ class ProjectService:
             
             return {"success": True, "message": "项目已停止"}
     
-    async def run_project_now(self, project_id: int) -> Dict[str, Any]:
+    async def run_project_now(self, project_id: int, user_id: int = None) -> Dict[str, Any]:
         """立即运行项目（手动触发一次）"""
         from database.db_session import get_session
         from database.growhub_models import GrowHubProject
         from sqlalchemy import select
         
         async with get_session() as session:
-            result = await session.execute(
-                select(GrowHubProject).where(GrowHubProject.id == project_id)
-            )
+            query = select(GrowHubProject).where(GrowHubProject.id == project_id)
+            if user_id is not None:
+                query = query.where(GrowHubProject.user_id == user_id)
+            result = await session.execute(query)
             project = result.scalar()
             
             if not project:
@@ -483,11 +494,11 @@ class ProjectService:
                         self.append_log(project_id, f"正在获取 {display_platform} 平台账号 (尝试 {retry_num + 1}/{MAX_ACCOUNT_RETRIES})...")
                         
                         # 获取所有可用账号中未尝试过的 (Sticky Sessions: 传入 project_id)
-                        account = await pool.get_available_account(plat_enum, exclude_ids=tried_accounts, project_id=project_id)
+                        account = await pool.get_available_account(plat_enum, exclude_ids=tried_accounts, project_id=project_id, user_id=project.user_id)
                         
                         if not account and retry_num == 0:
                             # 如果是第一次尝试且没有可用账号，检查是否有账号即将结束冷却 (Wait up to 15s if an account is almost ready)
-                            all_accounts = await pool.get_all_accounts(plat_enum)
+                            all_accounts = await pool.get_all_accounts(plat_enum, user_id=project.user_id)
                             now = datetime.now()
                             soon_available = [a for a in all_accounts if a.id not in tried_accounts and a.status == AccountStatus.ACTIVE and a.cooldown_until and now < a.cooldown_until < now + timedelta(seconds=20)]
                             
@@ -501,7 +512,7 @@ class ProjectService:
                         if not account:
                             if retry_num == 0:
                                 # 检查是否是因为所有账号都在冷却
-                                all_accounts = await pool.get_all_accounts(plat_enum)
+                                all_accounts = await pool.get_all_accounts(plat_enum, user_id=project.user_id)
                                 if not all_accounts:
                                     self.append_log(project_id, f"❌ 平台 {display_platform} 尚未配置任何账号，请前往账号中心添加")
                                 else:
@@ -828,7 +839,7 @@ class ProjectService:
         print(f"[Project] 已取消调度任务: {project.name}")
     
     async def get_project_contents(self, project_id: int, page: int = 1, page_size: int = 20, 
-                                 filters: Dict[str, Any] = None) -> Dict[str, Any]:
+                                 filters: Dict[str, Any] = None, user_id: int = None) -> Dict[str, Any]:
         """获取项目关联的内容列表"""
         filters = filters or {}
         from database.db_session import get_session
@@ -837,9 +848,10 @@ class ProjectService:
         
         async with get_session() as session:
             # 1. 获取项目
-            result = await session.execute(
-                select(GrowHubProject).where(GrowHubProject.id == project_id)
-            )
+            query = select(GrowHubProject).where(GrowHubProject.id == project_id)
+            if user_id is not None:
+                query = query.where(GrowHubProject.user_id == user_id)
+            result = await session.execute(query)
             project = result.scalar()
             if not project:
                 return {"items": [], "total": 0, "error": "Project not found"}
@@ -911,7 +923,7 @@ class ProjectService:
                 "page_size": page_size
             }
             
-    async def get_project_stats_chart(self, project_id: int, days: int = 7) -> Dict[str, Any]:
+    async def get_project_stats_chart(self, project_id: int, days: int = 7, user_id: int = None) -> Dict[str, Any]:
         """获取项目图表统计数据"""
         from database.db_session import get_session
         from database.growhub_models import GrowHubProject, GrowHubContent
@@ -919,9 +931,10 @@ class ProjectService:
         
         async with get_session() as session:
             # 1. 获取项目
-            result = await session.execute(
-                select(GrowHubProject).where(GrowHubProject.id == project_id)
-            )
+            query = select(GrowHubProject).where(GrowHubProject.id == project_id)
+            if user_id is not None:
+                query = query.where(GrowHubProject.user_id == user_id)
+            result = await session.execute(query)
             project = result.scalar()
             if not project or not project.keywords:
                 return {"dates": [], "sentiment_trend": [], "platform_dist": []}

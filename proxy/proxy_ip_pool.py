@@ -56,15 +56,24 @@ class ProxyIpPool:
         self.proxy_list: List[IpInfoModel] = []
         self.ip_provider: ProxyProvider = ip_provider
         self.current_proxy: IpInfoModel | None = None  # Currently used proxy
+        self.account_proxy_map: Dict[str, IpInfoModel] = {}  # Account-IP Affinity map
+        
+        # I1 Fix: IP Blacklist to avoid reusing blocked IPs
+        self.ip_blacklist: set = set()
+        self.ip_failure_count: Dict[str, int] = {}  # Track failure count per IP
+        self.blacklist_threshold: int = 3  # Block IP after 3 failures
 
     async def load_proxies(self) -> None:
         """
-        Load IP proxies
+        Load IP proxies, filtering out blacklisted IPs
         Returns:
 
         """
-        self.proxy_list = await self.ip_provider.get_proxy(self.ip_pool_count)
-        self.account_proxy_map: Dict[str, IpInfoModel] = {} # Account-IP Affinity map
+        all_proxies = await self.ip_provider.get_proxy(self.ip_pool_count)
+        # Filter out blacklisted IPs
+        self.proxy_list = [p for p in all_proxies if f"{p.ip}:{p.port}" not in self.ip_blacklist]
+        if len(all_proxies) > len(self.proxy_list):
+            utils.logger.info(f"🚫 [ProxyIpPool] Filtered out {len(all_proxies) - len(self.proxy_list)} blacklisted IPs")
 
     async def _is_valid_proxy(self, proxy: IpInfoModel) -> bool:
         """
@@ -218,6 +227,37 @@ class ProxyIpPool:
         self.proxy_list = []
         await self.load_proxies()
 
+    def mark_ip_failed(self, ip: str, port: int) -> bool:
+        """
+        Mark an IP as failed. Returns True if IP was blacklisted.
+        
+        Args:
+            ip: IP address
+            port: Port number
+        Returns:
+            bool: True if IP was added to blacklist
+        """
+        ip_key = f"{ip}:{port}"
+        self.ip_failure_count[ip_key] = self.ip_failure_count.get(ip_key, 0) + 1
+        
+        if self.ip_failure_count[ip_key] >= self.blacklist_threshold:
+            self.ip_blacklist.add(ip_key)
+            utils.logger.warning(f"🚫 [ProxyIpPool] IP {ip_key} blacklisted after {self.ip_failure_count[ip_key]} failures")
+            return True
+        return False
+
+    def mark_ip_success(self, ip: str, port: int):
+        """
+        Mark an IP as successful, reset its failure count.
+        
+        Args:
+            ip: IP address
+            port: Port number
+        """
+        ip_key = f"{ip}:{port}"
+        if ip_key in self.ip_failure_count:
+            self.ip_failure_count[ip_key] = 0
+
 
 IpProxyProvider: Dict[str, ProxyProvider] = {
     ProviderNameEnum.KUAI_DAILI_PROVIDER.value: new_kuai_daili_proxy(),
@@ -227,15 +267,64 @@ IpProxyProvider: Dict[str, ProxyProvider] = {
 
 async def create_ip_pool(ip_pool_count: int, enable_validate_ip: bool) -> ProxyIpPool:
     """
-    Create IP proxy pool
+    Create IP proxy pool with dynamic config support from DB
     :param ip_pool_count: Number of IPs in the pool
     :param enable_validate_ip: Whether to enable IP proxy validation
     :return:
     """
+    from database.db_session import get_session
+    from database.growhub_models import GrowHubSystemConfig
+    from sqlalchemy import select
+    
+    # Try to load dynamic config from DB
+    provider_name = config.IP_PROXY_PROVIDER_NAME
+    provider_instance = None
+    
+    try:
+        async with get_session() as session:
+            result = await session.execute(
+                select(GrowHubSystemConfig).where(GrowHubSystemConfig.config_key == "proxy_config")
+            )
+            db_config = result.scalar_one_or_none()
+            
+            if db_config and db_config.config_value:
+                val = db_config.config_value
+                if val.get("enable_proxy"):
+                    provider_name = val.get("provider", "none")
+                    if provider_name == "kuaidaili":
+                        from proxy.providers.kuaidl_proxy import KuaiDaiLiProxy
+                        provider_instance = KuaiDaiLiProxy(
+                            kdl_user_name=val.get("kdl_user_name", ""),
+                            kdl_user_pwd=val.get("kdl_user_pwd", ""),
+                            kdl_secret_id=val.get("kdl_secret_id", ""),
+                            kdl_signature=val.get("kdl_signature", "")
+                        )
+                        utils.logger.info(f"🚀 [ProxyIpPool] Using Dynamic Proxy Config: KuaiDaili")
+                    elif provider_name == "wandouhttp":
+                        from proxy.providers.wandou_http_proxy import WandouHttpProxy
+                        provider_instance = WandouHttpProxy(
+                            app_key=val.get("wandou_app_key", "")
+                        )
+                        utils.logger.info(f"🚀 [ProxyIpPool] Using Dynamic Proxy Config: WandouHTTP")
+                    elif provider_name == "none":
+                        utils.logger.info(f"⚠️ [ProxyIpPool] Dynamic Config: Proxy disabled (none)")
+                        return None
+    except Exception as e:
+        utils.logger.error(f"[ProxyIpPool] Error loading dynamic config: {e}")
+
+    # Fallback to static config if no dynamic provider instance created
+    if not provider_instance:
+        if not config.ENABLE_IP_PROXY:
+            return None
+        provider_instance = IpProxyProvider.get(provider_name)
+
+    if not provider_instance:
+        return None
+
     pool = ProxyIpPool(
         ip_pool_count=ip_pool_count,
         enable_validate_ip=enable_validate_ip,
-        ip_provider=IpProxyProvider.get(config.IP_PROXY_PROVIDER_NAME),
+        ip_provider=provider_instance,
     )
     await pool.load_proxies()
     return pool

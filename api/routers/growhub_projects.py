@@ -6,6 +6,9 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any, Union
 from datetime import datetime
+from fastapi import Depends
+from api.auth import deps
+from database.growhub_models import GrowHubUser
 
 router = APIRouter(prefix="/growhub/projects", tags=["GrowHub - 监控项目"])
 
@@ -153,7 +156,7 @@ class ProjectResponse(BaseModel):
 # ==================== API Endpoints ====================
 
 @router.get("/dashboard/stats")
-async def get_dashboard_stats():
+async def get_dashboard_stats(current_user: GrowHubUser = Depends(deps.get_current_user)):
     """获取全局看板统计数据"""
     from api.services.project import get_project_service
     from database.db_session import get_session
@@ -162,7 +165,7 @@ async def get_dashboard_stats():
     from datetime import datetime, timedelta
     
     service = get_project_service()
-    projects = await service.list_projects()
+    projects = await service.list_projects(user_id=current_user.id)
     
     # 计算统计
     running_count = sum(1 for p in projects if p.get("is_active"))
@@ -205,17 +208,17 @@ async def get_dashboard_stats():
 
 
 @router.get("", response_model=List[ProjectResponse])
-async def list_projects():
+async def list_projects(current_user: GrowHubUser = Depends(deps.get_current_user)):
     """获取所有监控项目"""
     from api.services.project import get_project_service
     
     service = get_project_service()
-    projects = await service.list_projects()
+    projects = await service.list_projects(user_id=current_user.id)
     return projects
 
 
 @router.post("")
-async def create_project(data: ProjectCreateRequest):
+async def create_project(data: ProjectCreateRequest, current_user: GrowHubUser = Depends(deps.get_current_user)):
     """创建监控项目"""
     from api.services.project import get_project_service, ProjectConfig
     
@@ -254,17 +257,17 @@ async def create_project(data: ProjectCreateRequest):
         max_concurrency=data.max_concurrency,
     )
     
-    result = await service.create_project(config)
+    result = await service.create_project(config, user_id=current_user.id)
     return result
 
 
 @router.get("/{project_id}", response_model=ProjectResponse)
-async def get_project(project_id: int):
+async def get_project(project_id: int, current_user: GrowHubUser = Depends(deps.get_current_user)):
     """获取项目详情"""
     from api.services.project import get_project_service
     
     service = get_project_service()
-    project = await service.get_project(project_id)
+    project = await service.get_project(project_id, user_id=current_user.id)
     
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
@@ -273,14 +276,14 @@ async def get_project(project_id: int):
 
 
 @router.put("/{project_id}")
-async def update_project(project_id: int, data: ProjectUpdateRequest):
+async def update_project(project_id: int, data: ProjectUpdateRequest, current_user: GrowHubUser = Depends(deps.get_current_user)):
     """更新项目配置"""
     from api.services.project import get_project_service
     
     service = get_project_service()
     
     updates = data.model_dump(exclude_unset=True)
-    result = await service.update_project(project_id, updates)
+    result = await service.update_project(project_id, updates, user_id=current_user.id)
     
     if not result:
         raise HTTPException(status_code=404, detail="项目不存在")
@@ -289,12 +292,12 @@ async def update_project(project_id: int, data: ProjectUpdateRequest):
 
 
 @router.delete("/{project_id}")
-async def delete_project(project_id: int):
+async def delete_project(project_id: int, current_user: GrowHubUser = Depends(deps.get_current_user)):
     """删除项目"""
     from api.services.project import get_project_service
     
     service = get_project_service()
-    success = await service.delete_project(project_id)
+    success = await service.delete_project(project_id, user_id=current_user.id)
     
     if not success:
         raise HTTPException(status_code=404, detail="项目不存在")
@@ -303,12 +306,12 @@ async def delete_project(project_id: int):
 
 
 @router.post("/{project_id}/start")
-async def start_project(project_id: int):
+async def start_project(project_id: int, current_user: GrowHubUser = Depends(deps.get_current_user)):
     """启动项目（开始自动调度）"""
     from api.services.project import get_project_service
     
     service = get_project_service()
-    result = await service.start_project(project_id)
+    result = await service.start_project(project_id, user_id=current_user.id)
     
     if not result.get("success"):
         raise HTTPException(status_code=400, detail=result.get("error"))
@@ -317,12 +320,12 @@ async def start_project(project_id: int):
 
 
 @router.post("/{project_id}/stop")
-async def stop_project(project_id: int):
+async def stop_project(project_id: int, current_user: GrowHubUser = Depends(deps.get_current_user)):
     """停止项目"""
     from api.services.project import get_project_service
     
     service = get_project_service()
-    result = await service.stop_project(project_id)
+    result = await service.stop_project(project_id, user_id=current_user.id)
     
     if not result.get("success"):
         raise HTTPException(status_code=400, detail=result.get("error"))
@@ -331,7 +334,7 @@ async def stop_project(project_id: int):
 
 
 @router.get("/{project_id}/preflight")
-async def check_project_preflight(project_id: int):
+async def check_project_preflight(project_id: int, current_user: GrowHubUser = Depends(deps.get_current_user)):
     """
     执行前置检查 - 检查项目是否具备运行条件
     返回所有必要条件的状态，帮助用户了解缺少什么配置
@@ -341,7 +344,7 @@ async def check_project_preflight(project_id: int):
     import os
     
     service = get_project_service()
-    project = await service.get_project(project_id)
+    project = await service.get_project(project_id, user_id=current_user.id)
     
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
@@ -494,12 +497,12 @@ async def check_project_preflight(project_id: int):
 
 
 @router.post("/{project_id}/run")
-async def run_project_now(project_id: int):
+async def run_project_now(project_id: int, current_user: GrowHubUser = Depends(deps.get_current_user)):
     """立即运行项目"""
     from api.services.project import get_project_service
     
     service = get_project_service()
-    result = await service.run_project_now(project_id)
+    result = await service.run_project_now(project_id, user_id=current_user.id)
     
     if not result.get("success"):
         raise HTTPException(status_code=400, detail=result.get("error"))
@@ -508,16 +511,20 @@ async def run_project_now(project_id: int):
 
 
 @router.get("/{project_id}/logs")
-async def get_project_logs(project_id: int):
+async def get_project_logs(project_id: int, current_user: GrowHubUser = Depends(deps.get_current_user)):
     """获取项目最近的运行日志"""
     from api.services.project import get_project_service
     service = get_project_service()
+    # Verify ownership
+    project = await service.get_project(project_id, user_id=current_user.id)
+    if not project:
+         raise HTTPException(status_code=404, detail="Project not found")
     logs = await service.get_project_logs(project_id)
     return {"logs": logs}
 
 
 @router.get("/templates/list")
-async def get_project_templates():
+async def get_project_templates(current_user: GrowHubUser = Depends(deps.get_current_user)):
     """获取项目模板"""
     return {
         "templates": [
@@ -562,7 +569,7 @@ async def get_project_templates():
 
 
 @router.get("/platforms/options")
-async def get_platform_options():
+async def get_platform_options(current_user: GrowHubUser = Depends(deps.get_current_user)):
     """获取可用平台选项"""
     return {
         "platforms": [
@@ -577,7 +584,7 @@ async def get_platform_options():
 
 
 @router.get("/schedule/presets")
-async def get_schedule_presets():
+async def get_schedule_presets(current_user: GrowHubUser = Depends(deps.get_current_user)):
     """获取调度预设"""
     return {
         "interval_presets": [
@@ -604,7 +611,8 @@ async def get_project_contents(
     page_size: int = Query(20, ge=1, le=100),
     platform: Optional[str] = None,
     sentiment: Optional[str] = None,
-    deduplicate_authors: Optional[bool] = None
+    deduplicate_authors: Optional[bool] = None,
+    current_user: GrowHubUser = Depends(deps.get_current_user)
 ):
     """获取项目内容列表"""
     from api.services.project import get_project_service
@@ -619,7 +627,7 @@ async def get_project_contents(
     if deduplicate_authors is not None:
         filters["deduplicate_authors"] = deduplicate_authors
         
-    result = await service.get_project_contents(project_id, page, page_size, filters)
+    result = await service.get_project_contents(project_id, page, page_size, filters, user_id=current_user.id)
     
     if "error" in result:
          raise HTTPException(status_code=404, detail=result["error"])
@@ -628,11 +636,11 @@ async def get_project_contents(
 
 
 @router.get("/{project_id}/stats-chart")
-async def get_project_stats_chart(project_id: int, days: int = Query(7, ge=1, le=30)):
+async def get_project_stats_chart(project_id: int, days: int = Query(7, ge=1, le=30), current_user: GrowHubUser = Depends(deps.get_current_user)):
     """获取项目统计图表数据"""
     from api.services.project import get_project_service
     
     service = get_project_service()
-    result = await service.get_project_stats_chart(project_id, days)
+    result = await service.get_project_stats_chart(project_id, days, user_id=current_user.id)
     
     return result

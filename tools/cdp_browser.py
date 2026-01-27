@@ -109,10 +109,16 @@ class CDPBrowserManager:
             browser_path = await self._get_browser_path()
 
             # 2. Get available port
-            self.debug_port = self.launcher.find_available_port(config.CDP_DEBUG_PORT)
+            self.debug_port = config.CDP_DEBUG_PORT
 
-            # 3. Launch browser
-            await self._launch_browser(browser_path, headless, user_agent)
+            # 3. Check if browser is already running on this port
+            if await self._test_cdp_connection(self.debug_port):
+                utils.logger.info(f"[CDPBrowserManager] Detected existing browser on port {self.debug_port}, skipping launch.")
+            else:
+                # Find available port if default is not accessible (though typically we want the specific one for reuse)
+                self.debug_port = self.launcher.find_available_port(config.CDP_DEBUG_PORT)
+                # 3. Launch browser
+                await self._launch_browser(browser_path, headless, user_agent)
 
             # 4. Register cleanup handlers (ensure cleanup on abnormal exit)
             self._register_cleanup_handlers()

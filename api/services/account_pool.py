@@ -67,6 +67,7 @@ class AccountInfo(BaseModel):
     last_proxy_id: Optional[str] = None
     proxy_config: Optional[Dict[str, Any]] = None
     last_project_id: Optional[int] = None
+    user_id: Optional[int] = None
     
     # 时间戳
     created_at: datetime = datetime.now()
@@ -101,13 +102,15 @@ class AccountPoolService:
         self._panic_threshold = 5 # 10分钟内失败5次即触发熔断
         self._panic_window_seconds = 600
         
-        # 配置
+        # 配置 - A2/A3 优化: 使用更长的冷却时间和每日上限
+        import config
         self.config = {
-            "default_cooldown_seconds": 60,
+            "default_cooldown_seconds": getattr(config, 'ACCOUNT_COOLDOWN_SECONDS', 300),  # A2: 5分钟冷却
             "max_consecutive_fails": 3,
             "health_decay_on_fail": 10,
             "health_recovery_on_success": 5,
             "min_health_for_use": 30,
+            "max_daily_requests": getattr(config, 'ACCOUNT_MAX_DAILY_REQUESTS', 500),  # A3: 每日上限
         }
 
     async def initialize(self):
@@ -155,6 +158,7 @@ class AccountPoolService:
             last_proxy_id=model.last_proxy_id,
             proxy_config=model.proxy_config,
             last_project_id=getattr(model, 'last_project_id', None),
+            user_id=getattr(model, 'user_id', None),
             created_at=model.created_at or datetime.now(),
             updated_at=model.updated_at or datetime.now(),
             notes=model.notes
@@ -212,6 +216,7 @@ class AccountPoolService:
             last_proxy_id=info.last_proxy_id,
             proxy_config=info.proxy_config,
             last_project_id=info.last_project_id,
+            user_id=info.user_id,
             notes=info.notes,
             created_at=info.created_at,
             updated_at=datetime.now()
@@ -321,7 +326,7 @@ class AccountPoolService:
         """获取单个账号 (Read from Memory)"""
         return self.accounts.get(account_id)
     
-    async def get_all_accounts(self, platform: Optional[AccountPlatform] = None) -> List[AccountInfo]:
+    async def get_all_accounts(self, platform: Optional[AccountPlatform] = None, user_id: int = None) -> List[AccountInfo]:
         """获取所有账号 (Async version to allow sync)"""
         if (datetime.now() - self._last_sync).total_seconds() > 30:
             await self.sync_from_db()
@@ -329,9 +334,11 @@ class AccountPoolService:
         accounts = list(self.accounts.values())
         if platform:
             accounts = [a for a in accounts if a.platform == platform]
+        if user_id is not None:
+            accounts = [a for a in accounts if a.user_id == user_id]
         return accounts
     
-    async def get_available_account(self, platform: AccountPlatform, exclude_ids: List[str] = None, project_id: Optional[int] = None) -> Optional[AccountInfo]:
+    async def get_available_account(self, platform: AccountPlatform, exclude_ids: List[str] = None, project_id: Optional[int] = None, user_id: int = None) -> Optional[AccountInfo]:
         """获取可用账号"""
         if await self.is_platform_panicked(platform):
             utils.logger.error(f"⚠️ [AccountPool] Platform {platform.value} is in PANIC mode due to high failure rate. No accounts will be assigned.")
@@ -344,8 +351,13 @@ class AccountPoolService:
         exclude_ids = exclude_ids or []
         
         candidates = []
+        today = now.date()
+        max_daily = self.config.get("max_daily_requests", 500)
+        
         for a in self.accounts.values():
             if a.platform != platform: 
+                continue
+            if user_id is not None and a.user_id != user_id:
                 continue
             if a.id in exclude_ids: continue
             
@@ -354,7 +366,14 @@ class AccountPoolService:
             health_ok = (a.health_score >= self.config["min_health_for_use"])
             cd_ok = (a.cooldown_until is None or a.cooldown_until < now)
             
-            if is_active and health_ok and cd_ok:
+            # R6 Fix: Check daily usage limit
+            daily_ok = True
+            if a.last_used and a.last_used.date() == today:
+                if a.use_count >= max_daily:
+                    daily_ok = False
+                    utils.logger.debug(f"[AccountPool] Account {a.id} reached daily limit ({a.use_count}/{max_daily})")
+            
+            if is_active and health_ok and cd_ok and daily_ok:
                 candidates.append(a)
         
         if not candidates:
@@ -460,9 +479,9 @@ class AccountPoolService:
         # Maybe optional feature. For now just verify.
         return result
     
-    async def batch_check_health(self, platform: Optional[AccountPlatform] = None, max_concurrency: int = 5) -> Dict[str, Any]:
+    async def batch_check_health(self, platform: Optional[AccountPlatform] = None, max_concurrency: int = 5, user_id: int = None) -> Dict[str, Any]:
         """批量检查 (Parallel Implementation)"""
-        accounts = await self.get_all_accounts(platform)
+        accounts = await self.get_all_accounts(platform, user_id=user_id)
         
         results = {
             "total": len(accounts), "checked": 0, "active": 0, 
@@ -496,9 +515,9 @@ class AccountPoolService:
         
         return results
     
-    async def get_statistics(self, platform: Optional[AccountPlatform] = None) -> Dict[str, Any]:
+    async def get_statistics(self, platform: Optional[AccountPlatform] = None, user_id: int = None) -> Dict[str, Any]:
         """统计信息"""
-        accounts = await self.get_all_accounts(platform)
+        accounts = await self.get_all_accounts(platform, user_id=user_id)
         
         if not accounts:
             return {

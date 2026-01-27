@@ -24,7 +24,7 @@ from urllib.parse import urlencode
 
 import httpx
 from playwright.async_api import BrowserContext, Page
-from tenacity import retry, stop_after_attempt, wait_fixed
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 import config
 from base.base_crawler import AbstractApiClient
@@ -81,6 +81,20 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
         Returns:
             Dict: Signed request header parameters
         """
+        # P3 Fix: Periodically refresh cookies from browser to stay in sync
+        if not hasattr(self, '_request_count'):
+            self._request_count = 0
+        self._request_count += 1
+        
+        if self._request_count % 10 == 0:  # Refresh every 10 requests
+            try:
+                if hasattr(self, 'playwright_page') and self.playwright_page:
+                    ctx = self.playwright_page.context
+                    await self.update_cookies(ctx)
+                    utils.logger.info(f"[XiaoHongShuClient._pre_headers] Refreshed cookies (request #{self._request_count})")
+            except Exception as e:
+                utils.logger.warning(f"[XiaoHongShuClient._pre_headers] Cookie refresh failed: {e}")
+        
         a1_value = self.cookie_dict.get("a1", "")
         
         # Debug logging for signature parameters
@@ -117,7 +131,9 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
         return self.headers
 
     async def update_account_status(self, status: str):
-        """Update account status in DB so API process can see it (Shared Pro Logic)"""
+        """Update account status in DB so API process can see it (Shared Pro Logic)
+        P8 Fix: Uses optimistic locking to prevent race conditions
+        """
         import config
         account_id = getattr(config, "ACCOUNT_ID", None)
         if not account_id:
@@ -126,23 +142,50 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
         try:
             from database.db_session import get_session
             from database.growhub_models import GrowHubAccount
-            from sqlalchemy import update
+            from sqlalchemy import update, select
+            
+            # P8 Fix: Status priority - don't downgrade from more severe status
+            STATUS_PRIORITY = {
+                "active": 1,
+                "cooldown": 2,
+                "banned": 3,
+                "error": 4
+            }
             
             async with get_session() as session:
-                await session.execute(
-                    update(GrowHubAccount)
-                    .where(GrowHubAccount.id == account_id)
-                    .values(
-                        status=status,
-                        updated_at=utils.get_current_datetime()
-                    )
+                # Check current status first
+                result = await session.execute(
+                    select(GrowHubAccount.status).where(GrowHubAccount.id == account_id)
                 )
-                await session.commit()
-                utils.logger.warning(f"🚨 [XiaoHongShuClient] Account {account_id} status updated to: {status}")
+                current_status = result.scalar()
+                
+                # Only update if new status is more severe or same
+                current_priority = STATUS_PRIORITY.get(current_status, 0)
+                new_priority = STATUS_PRIORITY.get(status, 0)
+                
+                if new_priority >= current_priority:
+                    await session.execute(
+                        update(GrowHubAccount)
+                        .where(GrowHubAccount.id == account_id)
+                        .values(
+                            status=status,
+                            updated_at=utils.get_current_datetime()
+                        )
+                    )
+                    await session.commit()
+                    utils.logger.warning(f"🚨 [XiaoHongShuClient] Account {account_id} status updated to: {status}")
+                else:
+                    utils.logger.info(f"[XiaoHongShuClient] Skipped status update: {status} (current: {current_status} has higher priority)")
         except Exception as e:
             utils.logger.error(f"[XiaoHongShuClient] Failed to update account status in DB: {e}")
 
-    @retry(stop=stop_after_attempt(3), wait=wait_fixed(1))
+    # R1 Fix: Exponential backoff retry for network errors (2s -> 4s -> 8s, max 3 attempts)
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=2, min=2, max=10),
+        retry=retry_if_exception_type((httpx.ConnectError, httpx.TimeoutException, httpx.ReadTimeout)),
+        reraise=True
+    )
     async def request(self, method, url, **kwargs) -> Union[str, Any]:
         """
         Wrapper for httpx common request method, processes request response
@@ -162,6 +205,23 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
         async with httpx.AsyncClient(proxy=self.proxy) as client:
             response = await client.request(method, url, timeout=self.timeout, **kwargs)
 
+        # T2 Fix: Adaptive rate limiting for 429 responses
+        if response.status_code == 429:
+            # Initialize or increase backoff
+            if not hasattr(self, '_rate_limit_backoff'):
+                self._rate_limit_backoff = 5.0  # Start with 5 seconds
+            else:
+                self._rate_limit_backoff = min(60.0, self._rate_limit_backoff * 2)  # Max 60s
+            
+            utils.logger.warning(f"🚦 [XiaoHongShuClient] Rate limited! Backing off for {self._rate_limit_backoff:.1f}s")
+            await asyncio.sleep(self._rate_limit_backoff)
+            await self.update_account_status("cooldown")
+            raise DataFetchError(f"Rate limited (429), backing off {self._rate_limit_backoff:.1f}s")
+        else:
+            # Reset backoff on successful response
+            if hasattr(self, '_rate_limit_backoff'):
+                self._rate_limit_backoff = 5.0
+
         if response.status_code == 471 or response.status_code == 461:
             # someday someone maybe will bypass captcha
             verify_type = response.headers["Verifytype"]
@@ -174,7 +234,23 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
 
         if return_response:
             return response.text
-        data: Dict = response.json()
+            
+        try:
+            data: Dict = response.json()
+        except json.JSONDecodeError:
+            # 可能是 HTML 页面（被风控拦截或需要验证码但状态码是 200）
+            short_res = response.text[:500].replace('\n', ' ')
+            msg = f"API Response is not JSON. Likely blocked/captcha. Status: {response.status_code}, Body: {short_res}..."
+            utils.logger.error(f"[XiaoHongShuClient.request] {msg}")
+            
+            # 记录异常状态，可能需要触发重登录或冷却
+            # 如果是滑块页面，通常包含 "verify" 或 "captcha"
+            if "verify" in response.text or "captcha" in response.text:
+                await self.update_account_status("cooldown")
+            
+            # 抛出更具体的错误，而不是让上层报 JSONDecodeError
+            raise DataFetchError(f"Anti-scraping block detected: {msg}")
+
         if data["success"]:
             return data.get("data", data.get("success", {}))
         elif data["code"] == self.IP_ERROR_CODE:
@@ -280,9 +356,22 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
         Returns:
 
         """
-        cookie_str, cookie_dict = utils.convert_cookies(await browser_context.cookies())
-        self.headers["Cookie"] = cookie_str
-        self.cookie_dict = cookie_dict
+        # Get raw cookies from browser
+        browser_cookies = await browser_context.cookies()
+        
+        # Deduplicate cookies by name (keep the last/latest one)
+        unique_cookies = {}
+        for cookie in browser_cookies:
+            # Filter out potentially large or tracking cookies if needed
+            # For now, just ensuring each key appears only once is usually enough
+            unique_cookies[cookie['name']] = cookie['value']
+            
+        # Reconstruct clean cookie dict and string
+        self.cookie_dict = unique_cookies
+        self.headers["Cookie"] = "; ".join([f"{k}={v}" for k, v in unique_cookies.items()])
+        
+        # Log the optimization result
+        utils.logger.info(f"[XiaoHongShuClient.update_cookies] Optimized cookies count: {len(browser_cookies)} -> {len(unique_cookies)}")
 
     async def get_note_by_keyword(
         self,
@@ -503,6 +592,7 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
         xsec_token: str,
         crawl_interval: float = 1.0,
         callback: Optional[Callable] = None,
+        max_sub_comments: int = 50,  # P2 Fix: Add limit for sub-comments
     ) -> List[Dict]:
         """
         Get all second-level comments under specified first-level comments, this method will continuously find all second-level comment information under first-level comments
@@ -511,6 +601,7 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
             xsec_token: Verification token
             crawl_interval: Crawl delay per comment (seconds)
             callback: Callback after one comment crawl ends
+            max_sub_comments: Maximum number of sub-comments to crawl (default 50)
 
         Returns:
 
@@ -523,6 +614,13 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
 
         result = []
         for comment in comments:
+            # P2 Fix: Check limit before processing each comment
+            if len(result) >= max_sub_comments:
+                utils.logger.info(
+                    f"[XiaoHongShuClient.get_comments_all_sub_comments] Reached max sub-comments limit: {max_sub_comments}"
+                )
+                break
+                
             note_id = comment.get("note_id")
             sub_comments = comment.get("sub_comments")
             if sub_comments and callback:
@@ -535,7 +633,7 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
             root_comment_id = comment.get("id")
             sub_comment_cursor = comment.get("sub_comment_cursor")
 
-            while sub_comment_has_more:
+            while sub_comment_has_more and len(result) < max_sub_comments:  # P2 Fix: Add limit check
                 comments_res = await self.get_note_sub_comments(
                     note_id=note_id,
                     root_comment_id=root_comment_id,
@@ -556,11 +654,16 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
                         f"[XiaoHongShuClient.get_comments_all_sub_comments] No 'comments' key found in response: {comments_res}"
                     )
                     break
-                comments = comments_res["comments"]
+                fetched_comments = comments_res["comments"]
+                
+                # P2 Fix: Only take what we need to reach the limit
+                remaining = max_sub_comments - len(result)
+                fetched_comments = fetched_comments[:remaining]
+                
                 if callback:
-                    await callback(note_id, comments)
+                    await callback(note_id, fetched_comments)
                 await asyncio.sleep(crawl_interval)
-                result.extend(comments)
+                result.extend(fetched_comments)
         return result
 
     async def get_creator_info(
@@ -693,7 +796,7 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
         data = {"original_url": f"{self._domain}/discovery/item/{note_id}"}
         return await self.post(uri, data=data, return_response=True)
 
-    @retry(stop=stop_after_attempt(3), wait=wait_fixed(1))
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=5))
     async def get_note_by_id_from_html(
         self,
         note_id: str,

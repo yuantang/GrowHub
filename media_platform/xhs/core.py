@@ -61,12 +61,42 @@ class XiaoHongShuCrawler(AbstractCrawler):
 
     def __init__(self) -> None:
         self.index_url = "https://www.xiaohongshu.com"
-        # self.user_agent = utils.get_user_agent()
-        self.user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+        # R2 Fix: Randomize User-Agent on each crawler session
+        self.user_agent = utils.get_user_agent()
         self.cdp_manager = None
         self.ip_proxy_pool = None  # Proxy IP pool for automatic proxy refresh
         self.checkpoint_manager = CheckpointManager()
         self.xhs_extractor = XiaoHongShuExtractor()
+        
+        # P9 Fix: Track current checkpoint for graceful shutdown
+        self._current_checkpoint: Optional[CrawlerCheckpoint] = None
+        self._shutdown_requested = False
+        self._setup_signal_handlers()
+
+    def _setup_signal_handlers(self):
+        """P9 Fix: Setup signal handlers for graceful shutdown"""
+        import signal
+        
+        def signal_handler(signum, frame):
+            utils.logger.warning(f"🛑 [XiaoHongShuCrawler] Received signal {signum}, requesting graceful shutdown...")
+            self._shutdown_requested = True
+        
+        # Register signal handlers for SIGINT (Ctrl+C) and SIGTERM
+        try:
+            signal.signal(signal.SIGINT, signal_handler)
+            signal.signal(signal.SIGTERM, signal_handler)
+        except Exception as e:
+            utils.logger.warning(f"[XiaoHongShuCrawler] Could not set signal handlers: {e}")
+    
+    async def _save_checkpoint_on_shutdown(self, checkpoint: CrawlerCheckpoint, page: int, total_count: int):
+        """P9 Fix: Save checkpoint when shutdown is requested"""
+        if checkpoint:
+            checkpoint.current_page = page
+            checkpoint.total_notes_fetched = total_count
+            checkpoint.status = CheckpointStatus.PAUSED
+            checkpoint.last_update = datetime.now()
+            await self.checkpoint_manager.save_checkpoint(checkpoint)
+            utils.logger.info(f"💾 [XiaoHongShuCrawler] Checkpoint saved on shutdown: Page {page}, Notes {total_count}")
 
     def is_note_qualified(self, note_detail: Dict) -> bool:
         """Check if note meets the filtering criteria"""
@@ -86,7 +116,9 @@ class XiaoHongShuCrawler(AbstractCrawler):
 
                     if config.START_TIME:
                         fmt = "%Y-%m-%d" if len(config.START_TIME) == 10 else "%Y-%m-%d %H:%M:%S"
+                        # P5 Fix: Parse as local time for consistent timezone handling
                         start_dt = datetime.strptime(config.START_TIME, fmt)
+                        # Use local timestamp (datetime.timestamp() uses local timezone)
                         start_ts = start_dt.timestamp() * 1000
                         if note_ts < start_ts:
                             utils.logger.info(f"⏭️ [Filter] Note {note_detail.get('note_id')} ignored. Time {datetime.fromtimestamp(note_ts/1000)} < {config.START_TIME}")
@@ -96,9 +128,11 @@ class XiaoHongShuCrawler(AbstractCrawler):
                         fmt = "%Y-%m-%d" if len(config.END_TIME) == 10 else "%Y-%m-%d %H:%M:%S"
                         end_dt = datetime.strptime(config.END_TIME, fmt)
                         if len(config.END_TIME) == 10:
-                            end_dt = end_dt + timedelta(days=1)
+                            # P5 Fix: Add 1 day to include the entire end date
+                            end_dt = end_dt + timedelta(days=1, seconds=-1)  # End of the day
                         end_ts = end_dt.timestamp() * 1000
                         if note_ts > end_ts:
+                            utils.logger.info(f"⏭️ [Filter] Note {note_detail.get('note_id')} ignored. Time {datetime.fromtimestamp(note_ts/1000)} > {config.END_TIME}")
                             return False
             except Exception as e:
                 utils.logger.error(f"[Filter] Time check error for note {note_detail.get('note_id')}: {e}")
@@ -233,6 +267,9 @@ class XiaoHongShuCrawler(AbstractCrawler):
             search_id = get_search_id()
             total_crawled_count = 0
             
+            # P4 Fix: Create shared semaphore at keyword level for consistent concurrency control
+            shared_semaphore = asyncio.Semaphore(config.MAX_CONCURRENCY_NUM)
+            
             # Pro Feature: Load or create checkpoint
             checkpoint = await self.checkpoint_manager.find_matching_checkpoint(
                 platform="xhs",
@@ -255,8 +292,17 @@ class XiaoHongShuCrawler(AbstractCrawler):
             
             checkpoint.status = CheckpointStatus.RUNNING
             checkpoint.last_update = datetime.now()
+            
+            # P9 Fix: Track current checkpoint for graceful shutdown
+            self._current_checkpoint = checkpoint
 
             while True:
+                # P9 Fix: Check for graceful shutdown request
+                if self._shutdown_requested:
+                    utils.logger.warning(f"🛑 [XiaoHongShuCrawler.search] Shutdown requested, saving checkpoint and exiting...")
+                    await self._save_checkpoint_on_shutdown(checkpoint, page, total_crawled_count)
+                    return  # Exit the entire search method
+                
                 # Check limit
                 if config.CRAWLER_MAX_NOTES_COUNT > 0 and total_crawled_count >= config.CRAWLER_MAX_NOTES_COUNT:
                     utils.logger.info(f"[XiaoHongShuCrawler.search] Reached max notes count: {config.CRAWLER_MAX_NOTES_COUNT}")
@@ -307,13 +353,13 @@ class XiaoHongShuCrawler(AbstractCrawler):
                         page += 1
                         continue
 
-                    semaphore = asyncio.Semaphore(config.MAX_CONCURRENCY_NUM)
+                    # P4 Fix: Use shared semaphore instead of creating new one per page
                     task_list = [
                         self.get_note_detail_async_task(
                             note_id=post_item.get("id"),
                             xsec_source=post_item.get("xsec_source"),
                             xsec_token=post_item.get("xsec_token"),
-                            semaphore=semaphore,
+                            semaphore=shared_semaphore,
                         ) for post_item in new_items
                     ]
                     note_details = await asyncio.gather(*task_list)
@@ -367,9 +413,9 @@ class XiaoHongShuCrawler(AbstractCrawler):
                     page += 1
                     utils.logger.info(f"[XiaoHongShuCrawler.search] Saved {saved_count_in_this_batch} notes. Total: {total_crawled_count}")
                     
-                    # Sleep after each page navigation
-                    await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
-                    utils.logger.info(f"[XiaoHongShuCrawler.search] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after page {page-1}")
+                    # Sleep after each page navigation with randomization
+                    actual_sleep = await utils.random_sleep(config.CRAWLER_MAX_SLEEP_SEC)
+                    utils.logger.info(f"[XiaoHongShuCrawler.search] Random sleep {actual_sleep:.2f}s after page {page-1}")
                 except Exception as e:
                     utils.logger.error(f"[XiaoHongShuCrawler.search] Error in search loop: {e}")
                     checkpoint.status = CheckpointStatus.FAILED
@@ -453,8 +499,8 @@ class XiaoHongShuCrawler(AbstractCrawler):
                 page += 1
                 
                 # Sleep between pages
-                await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
-                utils.logger.info(f"[XiaoHongShuCrawler.get_homefeed] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds")
+                actual_sleep = await utils.random_sleep(config.CRAWLER_MAX_SLEEP_SEC)
+                utils.logger.info(f"[XiaoHongShuCrawler.get_homefeed] Random sleep {actual_sleep:.2f}s")
                 
             except DataFetchError as e:
                 utils.logger.error(f"[XiaoHongShuCrawler.get_homefeed] Data fetch error: {e}")
@@ -587,8 +633,8 @@ class XiaoHongShuCrawler(AbstractCrawler):
                 note_detail.update({"xsec_token": xsec_token, "xsec_source": xsec_source})
 
                 # Sleep after fetching note detail
-                await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
-                utils.logger.info(f"[get_note_detail_async_task] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after fetching note {note_id}")
+                actual_sleep = await utils.random_sleep(config.CRAWLER_MAX_SLEEP_SEC)
+                utils.logger.info(f"[get_note_detail_async_task] Random sleep {actual_sleep:.2f}s after note {note_id}")
 
                 return note_detail
 

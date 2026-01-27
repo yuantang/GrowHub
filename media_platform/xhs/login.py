@@ -249,8 +249,12 @@ class XiaoHongShuLogin(AbstractLogin):
         cookies_to_inject = []
         essential_cookies = ["web_session", "a1", "webId", "gid", "xsecappid", "acw_tc", "abRequestId"]
         
+        # Deduplicate cookie_dict - although dicts have unique keys, ensure we don't have redundant logic
+        seen_cookies = set()
+        
         for name, value in cookie_dict.items():
-            if value:  # Only inject non-empty cookies
+            if value and name not in seen_cookies:  # Only inject non-empty cookies and avoid duplicates
+                seen_cookies.add(name)
                 cookies_to_inject.append({
                     'name': name,
                     'value': value,

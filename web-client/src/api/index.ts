@@ -620,7 +620,59 @@ export const fetchHotspot = (id: number) =>
 export const deleteHotspot = (id: number) =>
     api.delete(`/growhub/hotspots/${id}`);
 
-export default api;
+// ============ Auth API ============
+
+export interface User {
+    id: number;
+    username: string;
+    email: string | null;
+    role: "admin" | "user";
+    status: "active" | "disabled" | "pending";
+    created_at: string;
+}
+
+export interface AuthResponse {
+    access_token: string;
+    token_type: string;
+    user: User; // Backend login endpoint returns access_token, but we might need a separate call for user details or modify backend to return user
+}
+
+// Interceptor to inject token
+api.interceptors.request.use((config) => {
+    const token = localStorage.getItem('token');
+    if (token) {
+        config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+});
+
+// Interceptor to handle 401
+api.interceptors.response.use(
+    (response) => response,
+    (error) => {
+        if (error.response?.status === 401) {
+            localStorage.removeItem('token');
+            localStorage.removeItem('user');
+            // Redirect will be handled by Context or Router
+            if (!window.location.pathname.startsWith('/login') && !window.location.pathname.startsWith('/register')) {
+                 window.location.href = '/login';
+            }
+        }
+        return Promise.reject(error);
+    }
+);
+
+export const login = (data: FormData) =>
+    api.post<AuthResponse>('/auth/login', data).then(res => res.data);
+
+export const register = (data: any) =>
+    api.post<User>('/auth/register', data).then(res => res.data);
+
+export const fetchCurrentUser = () =>
+    api.get<User>('/auth/me').then(res => res.data);
+
+
+
 // ============ Notification API ============
 export interface NotificationChannel {
     id: number;
@@ -632,3 +684,34 @@ export interface NotificationChannel {
 
 export const fetchNotificationChannels = () =>
     api.get<NotificationChannel[]>('/growhub/notifications/channels').then(res => Array.isArray(res.data) ? res.data : (res.data as any).items || []);
+
+
+// --- Admin User Management ---
+export const getAdminUsers = async (status?: string) => {
+  const params = status ? { status } : {};
+  const response = await api.get('/admin/users', { params });
+  return response.data;
+};
+
+export const approveUser = async (userId: number) => {
+  const response = await api.patch(`/admin/users/${userId}/approve`);
+  return response.data;
+};
+
+export const disableUser = async (userId: number) => {
+  const response = await api.patch(`/admin/users/${userId}/disable`);
+  return response.data;
+};
+
+export const deleteUser = async (userId: number) => {
+  const response = await api.delete(`/admin/users/${userId}`);
+  return response.data;
+};
+
+export const updateUserRole = async (userId: number, role: "admin" | "user") => {
+  const response = await api.patch(`/admin/users/${userId}/role?role=${role}`);
+  return response.data;
+};
+
+export default api;
+

@@ -49,8 +49,14 @@ ENABLE_SIGN_SERVER: bool = False
 # ==================== System & Browser Fingerprint Constants ====================
 # Centralized source of truth for Anti-Bot Fingerprinting
 # MUST match exactly between Browser Context and API Headers
-DEFAULT_USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
-BROWSER_VERSION = "126.0.0.0"
+
+# P7 Fix: Use multiple Chrome versions and randomly select at startup
+import random
+_CHROME_VERSIONS = ["126.0.0.0", "127.0.0.0", "128.0.0.0", "129.0.0.0", "130.0.0.0", "131.0.0.0"]
+_SELECTED_CHROME_VERSION = random.choice(_CHROME_VERSIONS)
+
+DEFAULT_USER_AGENT = f"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{_SELECTED_CHROME_VERSION} Safari/537.36"
+BROWSER_VERSION = _SELECTED_CHROME_VERSION
 BROWSER_NAME = "Chrome"
 OS_NAME = "Mac OS"
 OS_VERSION = "10.15.7"
@@ -174,11 +180,15 @@ STOP_WORDS_FILE = "./docs/hit_stopwords.txt"
 # 中文字体文件路径
 FONT_PATH = "./docs/STZHONGS.TTF"
 
-# 爬取间隔时间
-CRAWLER_MAX_SLEEP_SEC = 2
+# 爬取间隔时间（基础值，会加入随机抖动）
+CRAWLER_MAX_SLEEP_SEC = 3  # A2 优化: 从 2s 增加到 3s
 
 # 全局频率限制 (每秒请求数 TPS/RPS)
 GLOBAL_TPS_LIMIT = 1.0  # 建议保持在 1.0~2.0 之间，降低风控风险
+
+# A2 优化: 账号冷却时间配置
+ACCOUNT_COOLDOWN_SECONDS = 300  # 默认 5 分钟冷却
+ACCOUNT_MAX_DAILY_REQUESTS = 500  # A3 优化: 单账号每日请求上限
 
 # ==================== HomeFeed 首页推荐配置 ====================
 # 首页推荐最大爬取页数

@@ -47,7 +47,7 @@ class DouYinLogin(AbstractLogin):
         self.browser_context = browser_context
         self.context_page = context_page
         self.login_phone = login_phone
-        self.scan_qrcode_time = 60
+        self.scan_qrcode_time = 120
         self.cookie_str = cookie_str
 
     async def begin(self):
@@ -251,11 +251,11 @@ class DouYinLogin(AbstractLogin):
             # Show QR code
             await self.login_by_qrcode()
             
-            # Wait for user to scan QR code (up to 60 seconds)
-            utils.logger.info("[DouYinLogin._trigger_qr_login] ⚠️ Please scan QR code to login (60 seconds timeout)...")
+            # Wait for user to scan QR code (up to self.scan_qrcode_time seconds)
+            utils.logger.info(f"[DouYinLogin._trigger_qr_login] ⚠️ Please scan QR code to login ({self.scan_qrcode_time} seconds timeout)...")
             utils.logger.info("[DouYinLogin._trigger_qr_login] QR码已显示，请使用抖音APP扫描二维码登录！")
             
-            for i in range(60):
+            for i in range(self.scan_qrcode_time):
                 await asyncio.sleep(1)
                 try:
                     current_title = await self.context_page.title()
@@ -272,7 +272,7 @@ class DouYinLogin(AbstractLogin):
                     pass
                 
                 if i % 10 == 0 and i > 0:
-                    utils.logger.info(f"[DouYinLogin._trigger_qr_login] Waiting for QR scan... {60-i}s remaining")
+                    utils.logger.info(f"[DouYinLogin._trigger_qr_login] Waiting for QR scan... {self.scan_qrcode_time-i}s remaining")
             
             utils.logger.error("[DouYinLogin._trigger_qr_login] QR login timed out")
             return False
@@ -361,7 +361,7 @@ class DouYinLogin(AbstractLogin):
         base64_qrcode_img = await utils.find_login_qrcode(
             self.context_page,
             selector=qrcode_img_selector,
-            timeout=60 * 1000
+            timeout=self.scan_qrcode_time * 1000
         )
         if not base64_qrcode_img:
             utils.logger.info("[DouYinLogin.login_by_qrcode] login qrcode not found please confirm ...")
@@ -385,7 +385,7 @@ class DouYinLogin(AbstractLogin):
         # Check if there is slider verification
         await self.check_page_display_slider(move_step=10, slider_level="easy")
         cache_client = CacheFactory.create_cache(config.CACHE_TYPE_MEMORY)
-        max_get_sms_code_time = 60 * 2  # Maximum time to get verification code is 2 minutes
+        max_get_sms_code_time = self.scan_qrcode_time * 2  # Give more time for SMS
         while max_get_sms_code_time > 0:
             utils.logger.info(f"[DouYinLogin.login_by_mobile] get douyin sms code from redis remaining time {max_get_sms_code_time}s ...")
             await asyncio.sleep(1)

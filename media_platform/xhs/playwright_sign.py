@@ -179,6 +179,13 @@ async def sign_xs_with_playwright(
     sign_str = _build_sign_string(uri, data, method)
     md5_str = _md5_hex(sign_str)
     x3_value = await call_mnsv2(page, sign_str, md5_str)
+    
+    # P1 Fix: Validate signature before proceeding
+    if not x3_value:
+        from tools import utils
+        utils.logger.error("[sign_xs_with_playwright] Signature generation failed: mnsv2 returned empty")
+        raise ValueError("Signature generation failed: mnsv2 returned empty. Page JS may not have loaded properly.")
+    
     data_type = "object" if isinstance(data, (dict, list)) else "string"
     return _build_xs_payload(x3_value, data_type)
 

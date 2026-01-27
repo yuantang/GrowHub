@@ -46,6 +46,9 @@ from .routers.growhub_system import router as growhub_system_router
 from .routers.growhub_projects import router as growhub_projects_router
 from .routers.growhub_creators import router as growhub_creators_router
 from .routers.growhub_hotspots import router as growhub_hotspots_router
+from .routers.growhub_settings import router as growhub_settings_router
+from .routers.auth import router as auth_router
+from .routers.growhub_users import router as growhub_users_router
 
 app = FastAPI(
     title="GrowHub API",
@@ -111,6 +114,9 @@ app.include_router(growhub_system_router, prefix="/api")
 app.include_router(growhub_projects_router, prefix="/api")
 app.include_router(growhub_creators_router, prefix="/api")
 app.include_router(growhub_hotspots_router, prefix="/api")
+app.include_router(growhub_settings_router, prefix="/api")
+app.include_router(auth_router, prefix="/api/auth", tags=["Authentication"])
+app.include_router(growhub_users_router, prefix="/api/admin", tags=["Admin"])
 
 # Phase 2: 监控项目模块
 # (Moved to top imports)
@@ -122,8 +128,11 @@ async def startup_event():
     """Application startup event"""
     # Database Migration
     from sqlalchemy import text
-    from database.db_session import get_session
+    from database.db_session import get_session, create_tables
     
+    # Initialize Database Tables
+    await create_tables()
+
     async with get_session() as session:
         try:
             await session.execute(text("SELECT crawl_date_range FROM growhub_projects LIMIT 1"))
@@ -134,6 +143,20 @@ async def startup_event():
                 await session.commit()
             except Exception as e:
                 print(f"Migration Failed (crawl_date_range): {e}")
+
+        # Migration: Add user_id to tables
+        tables_to_migrate = ['growhub_keywords', 'growhub_projects', 'growhub_accounts']
+        for table in tables_to_migrate:
+            try:
+                # Check if column exists
+                await session.execute(text(f"SELECT user_id FROM {table} LIMIT 1"))
+            except Exception:
+                print(f"Migrating: Adding user_id to {table}")
+                try:
+                    await session.execute(text(f"ALTER TABLE {table} ADD COLUMN user_id INTEGER"))
+                    await session.commit()
+                except Exception as e:
+                    print(f"Migration Failed (user_id for {table}): {e}")
 
         try:
             await session.execute(text("SELECT max_concurrency FROM growhub_projects LIMIT 1"))

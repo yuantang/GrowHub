@@ -39,6 +39,30 @@ from playwright.async_api import Cookie, Page
 from . import utils
 
 
+async def random_sleep(base_seconds: float = 2.0, jitter_range: tuple = (0.5, 2.0)) -> float:
+    """
+    随机化爬取间隔，降低被风控识别的风险
+    
+    Args:
+        base_seconds: 基础间隔时间（秒）
+        jitter_range: 抖动范围 (min_multiplier, max_multiplier)
+        
+    Returns:
+        实际等待的秒数
+    """
+    import asyncio
+    
+    jitter = random.uniform(jitter_range[0], jitter_range[1])
+    actual_sleep = base_seconds * jitter
+    
+    # 额外加入微小随机延迟（0-500ms），模拟人类行为
+    micro_delay = random.uniform(0, 0.5)
+    actual_sleep += micro_delay
+    
+    await asyncio.sleep(actual_sleep)
+    return actual_sleep
+
+
 async def find_login_qrcode(page: Page, selector: str, timeout: int = 30000) -> str:
     """find login qrcode image from target selector"""
     try:

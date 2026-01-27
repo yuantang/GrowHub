@@ -2,7 +2,9 @@
 # GrowHub Account Pool API - 账号池管理
 # Phase 2 Week 9: 账号资产管理
 
-from fastapi import APIRouter, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Depends
+from api.auth import deps
+from database.growhub_models import GrowHubUser
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 from datetime import datetime
@@ -48,10 +50,10 @@ class BatchAddRequest(BaseModel):
 # ==================== API Endpoints ====================
 
 @router.get("/statistics")
-async def get_statistics(platform: Optional[AccountPlatform] = None):
+async def get_statistics(platform: Optional[AccountPlatform] = None, current_user: GrowHubUser = Depends(deps.get_current_user)):
     """获取账号统计信息"""
     pool = get_account_pool()
-    return await pool.get_statistics(platform)
+    return await pool.get_statistics(platform, user_id=current_user.id)
 
 
 @router.get("/", include_in_schema=False)
@@ -59,11 +61,12 @@ async def get_statistics(platform: Optional[AccountPlatform] = None):
 async def list_accounts(
     platform: Optional[AccountPlatform] = None,
     status: Optional[AccountStatus] = None,
-    group: Optional[str] = None
+    group: Optional[str] = None,
+    current_user: GrowHubUser = Depends(deps.get_current_user)
 ):
     """获取账号列表"""
     pool = get_account_pool()
-    accounts = await pool.get_all_accounts(platform)
+    accounts = await pool.get_all_accounts(platform, user_id=current_user.id)
     
     if status:
         accounts = [a for a in accounts if a.status == status]
@@ -87,7 +90,7 @@ async def list_accounts(
 
 
 @router.post("/")
-async def add_account(request: AddAccountRequest):
+async def add_account(request: AddAccountRequest, current_user: GrowHubUser = Depends(deps.get_current_user)):
     """添加单个账号"""
     pool = get_account_pool()
     
@@ -99,7 +102,8 @@ async def add_account(request: AddAccountRequest):
         group=request.group,
         tags=request.tags,
         notes=request.notes,
-        status=AccountStatus.UNKNOWN
+        status=AccountStatus.UNKNOWN,
+        user_id=current_user.id
     )
     
     created = await pool.add_account(account)
@@ -107,7 +111,7 @@ async def add_account(request: AddAccountRequest):
 
 
 @router.post("/batch")
-async def batch_add_accounts(request: BatchAddRequest):
+async def batch_add_accounts(request: BatchAddRequest, current_user: GrowHubUser = Depends(deps.get_current_user)):
     """批量添加账号"""
     pool = get_account_pool()
     
@@ -121,7 +125,8 @@ async def batch_add_accounts(request: BatchAddRequest):
             platform=request.platform,
             account_name=acc_data.get('name', f'{request.platform.value}_account'),
             cookies=acc_data['cookies'],
-            status=AccountStatus.UNKNOWN
+            status=AccountStatus.UNKNOWN,
+            user_id=current_user.id
         )
         await pool.add_account(account)
         added += 1
@@ -130,21 +135,26 @@ async def batch_add_accounts(request: BatchAddRequest):
 
 
 @router.get("/{account_id}")
-async def get_account(account_id: str):
+async def get_account(account_id: str, current_user: GrowHubUser = Depends(deps.get_current_user)):
     """获取账号详情"""
     pool = get_account_pool()
     account = pool.get_account(account_id)
     
-    if not account:
+    if not account or (account.user_id and account.user_id != current_user.id):
         raise HTTPException(status_code=404, detail="账号不存在")
     
     return account.dict()
 
 
 @router.put("/{account_id}")
-async def update_account(account_id: str, request: UpdateAccountRequest):
+async def update_account(account_id: str, request: UpdateAccountRequest, current_user: GrowHubUser = Depends(deps.get_current_user)):
     """更新账号"""
     pool = get_account_pool()
+    
+    # Verify ownership
+    account = pool.get_account(account_id)
+    if not account or (account.user_id and account.user_id != current_user.id):
+        raise HTTPException(status_code=404, detail="账号不存在")
     
     updates = request.dict(exclude_unset=True)
     updated = await pool.update_account(account_id, updates)
@@ -156,9 +166,15 @@ async def update_account(account_id: str, request: UpdateAccountRequest):
 
 
 @router.delete("/{account_id}")
-async def delete_account(account_id: str):
+async def delete_account(account_id: str, current_user: GrowHubUser = Depends(deps.get_current_user)):
     """删除账号"""
     pool = get_account_pool()
+    
+    # Verify ownership
+    account = pool.get_account(account_id)
+    if not account or (account.user_id and account.user_id != current_user.id):
+        raise HTTPException(status_code=404, detail="账号不存在")
+        
     success = await pool.delete_account(account_id)
     
     if not success:
@@ -168,9 +184,14 @@ async def delete_account(account_id: str):
 
 
 @router.post("/{account_id}/check")
-async def check_account_health(account_id: str):
+async def check_account_health(account_id: str, current_user: GrowHubUser = Depends(deps.get_current_user)):
     """检查单个账号健康状态"""
     pool = get_account_pool()
+    
+    account = pool.get_account(account_id)
+    if not account or (account.user_id and account.user_id != current_user.id):
+        raise HTTPException(status_code=404, detail="账号不存在")
+        
     result = await pool.check_account_health(account_id)
     
     if not result.get("success", True) and result.get("error") == "账号不存在":
@@ -185,18 +206,18 @@ async def check_account_health(account_id: str):
 
 
 @router.post("/check-all")
-async def batch_check_health(platform: Optional[AccountPlatform] = None):
+async def batch_check_health(platform: Optional[AccountPlatform] = None, current_user: GrowHubUser = Depends(deps.get_current_user)):
     """批量检查账号健康状态"""
     pool = get_account_pool()
-    results = await pool.batch_check_health(platform)
+    results = await pool.batch_check_health(platform, user_id=current_user.id)
     return results
 
 
 @router.post("/get-available")
-async def get_available_account(platform: AccountPlatform, project_id: Optional[int] = Query(None)):
+async def get_available_account(platform: AccountPlatform, project_id: Optional[int] = Query(None), current_user: GrowHubUser = Depends(deps.get_current_user)):
     """获取一个可用账号（用于任务执行）"""
     pool = get_account_pool()
-    account = await pool.get_available_account(platform, project_id=project_id)
+    account = await pool.get_available_account(platform, project_id=project_id, user_id=current_user.id)
     
     if not account:
         raise HTTPException(
@@ -227,10 +248,10 @@ async def mark_account_used(
 
 
 @router.get("/groups/list")
-async def list_groups():
+async def list_groups(current_user: GrowHubUser = Depends(deps.get_current_user)):
     """获取所有分组"""
     pool = get_account_pool()
-    accounts = await pool.get_all_accounts()
+    accounts = await pool.get_all_accounts(user_id=current_user.id)
     
     groups = set()
     for acc in accounts:
@@ -299,7 +320,7 @@ async def start_qr_login(request: QRLoginStartRequest):
 
 
 @router.get("/qr-login/status/{session_id}")
-async def get_qr_login_status(session_id: str):
+async def get_qr_login_status(session_id: str, current_user: GrowHubUser = Depends(deps.get_current_user)):
     """
     查询扫码登录状态
     返回: pending(等待扫码) / scanned(已扫未确认) / success(成功) / expired(过期) / error(失败)
@@ -326,7 +347,8 @@ async def get_qr_login_status(session_id: str):
             account_name=result.get("account_name") or f"{platform_str}_扫码登录",
             cookies=result["cookies"],
             status=AccountStatus.ACTIVE,
-            notes="通过扫码登录添加"
+            notes="通过扫码登录添加",
+            user_id=current_user.id
         )
         
         created = await pool.add_account(account)

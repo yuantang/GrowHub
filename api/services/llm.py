@@ -11,29 +11,48 @@ from enum import Enum
 from pydantic import BaseModel
 
 
-# ==================== 配置 ====================
+# ==================== 配置与动态加载 ====================
+
+async def get_llm_config() -> Dict[str, Any]:
+    """从数据库获取最新的 LLM 配置"""
+    from database.db_session import get_session
+    from database.growhub_models import GrowHubSystemConfig
+    from sqlalchemy import select
+    import json
+    
+    default_config = {
+        "provider": "openrouter",
+        "openrouter_key": os.getenv("OPENROUTER_API_KEY", ""),
+        "deepseek_key": os.getenv("DEEPSEEK_API_KEY", ""),
+        "ollama_url": os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
+        "model": "google/gemini-2.0-flash-exp:free"
+    }
+    
+    try:
+        async with get_session() as session:
+            result = await session.execute(
+                select(GrowHubSystemConfig).where(GrowHubSystemConfig.config_key == "llm_config")
+            )
+            config_obj = result.scalar_one_or_none()
+            if config_obj and config_obj.config_value:
+                # 合并配置
+                stored_config = config_obj.config_value
+                if isinstance(stored_config, str):
+                    stored_config = json.loads(stored_config)
+                return {**default_config, **stored_config}
+    except Exception as e:
+        print(f"Error loading LLM config from DB: {e}")
+    
+    return default_config
 
 class LLMProvider(str, Enum):
     OPENROUTER = "openrouter"
     DEEPSEEK = "deepseek"
     OLLAMA = "ollama"
 
-
-# API Keys and URLs
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "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")
+# API Base URLs
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-
-DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
-
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-
-# Default models
-DEFAULT_MODELS = {
-    LLMProvider.OPENROUTER: "google/gemini-2.0-flash-exp:free",
-    LLMProvider.DEEPSEEK: "deepseek-chat",
-    LLMProvider.OLLAMA: "qwen2.5:7b",
-}
 
 
 # ==================== Prompt 模板 ====================
@@ -94,33 +113,46 @@ REWRITE_STYLES = {
 
 async def call_llm(
     prompt: str,
-    provider: LLMProvider = LLMProvider.OPENROUTER,
+    provider: Optional[LLMProvider] = None,
     model: Optional[str] = None,
     temperature: float = 0.7,
     max_tokens: int = 2000
 ) -> str:
     """
-    统一的 LLM 调用接口
+    统一的 LLM 调用接口，动态读取配置
     """
-    model = model or DEFAULT_MODELS.get(provider)
+    config = await get_llm_config()
     
-    if provider == LLMProvider.OPENROUTER:
-        return await _call_openrouter(prompt, model, temperature, max_tokens)
-    elif provider == LLMProvider.DEEPSEEK:
-        return await _call_deepseek(prompt, model, temperature, max_tokens)
-    elif provider == LLMProvider.OLLAMA:
-        return await _call_ollama(prompt, model, temperature, max_tokens)
+    # 确定供应商和模型
+    final_provider = provider or config.get("provider", "openrouter")
+    final_model = model or config.get("model")
+    
+    # 如果没传模型名，给个兜底
+    if not final_model:
+        if final_provider == "openrouter":
+            final_model = "google/gemini-2.0-flash-exp:free"
+        elif final_provider == "deepseek":
+            final_model = "deepseek-chat"
+        elif final_provider == "ollama":
+            final_model = "qwen2.5:7b"
+
+    if final_provider == "openrouter":
+        return await _call_openrouter(prompt, final_model, config.get("openrouter_key"), temperature, max_tokens)
+    elif final_provider == "deepseek":
+        return await _call_deepseek(prompt, final_model, config.get("deepseek_key"), temperature, max_tokens)
+    elif final_provider == "ollama":
+        return await _call_ollama(prompt, final_model, config.get("ollama_url"), temperature, max_tokens)
     else:
-        raise ValueError(f"Unsupported provider: {provider}")
+        raise ValueError(f"Unsupported provider: {final_provider}")
 
 
-async def _call_openrouter(prompt: str, model: str, temperature: float, max_tokens: int) -> str:
+async def _call_openrouter(prompt: str, model: str, api_key: str, temperature: float, max_tokens: int) -> str:
     """Call OpenRouter API"""
-    if not OPENROUTER_API_KEY:
-        raise ValueError("OPENROUTER_API_KEY not set")
+    if not api_key:
+        raise ValueError("OpenRouter API Key 未配置，请在设置中通过环境变量设置")
     
     headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Authorization": f"Bearer {api_key}",
         "HTTP-Referer": "http://localhost:8040",
         "X-Title": "GrowHub",
         "Content-Type": "application/json"
@@ -151,13 +183,13 @@ async def _call_openrouter(prompt: str, model: str, temperature: float, max_toke
         raise Exception("No response from OpenRouter")
 
 
-async def _call_deepseek(prompt: str, model: str, temperature: float, max_tokens: int) -> str:
+async def _call_deepseek(prompt: str, model: str, api_key: str, temperature: float, max_tokens: int) -> str:
     """Call DeepSeek API"""
-    if not DEEPSEEK_API_KEY:
-        raise ValueError("DEEPSEEK_API_KEY not set. Please set it in environment variables.")
+    if not api_key:
+        raise ValueError("DeepSeek API Key 未配置")
     
     headers = {
-        "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+        "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json"
     }
     
@@ -186,7 +218,7 @@ async def _call_deepseek(prompt: str, model: str, temperature: float, max_tokens
         raise Exception("No response from DeepSeek")
 
 
-async def _call_ollama(prompt: str, model: str, temperature: float, max_tokens: int) -> str:
+async def _call_ollama(prompt: str, model: str, base_url: str, temperature: float, max_tokens: int) -> str:
     """Call local Ollama API"""
     data = {
         "model": model,
@@ -201,7 +233,7 @@ async def _call_ollama(prompt: str, model: str, temperature: float, max_tokens: 
     async with httpx.AsyncClient() as client:
         try:
             response = await client.post(
-                f"{OLLAMA_BASE_URL}/api/generate",
+                f"{base_url}/api/generate",
                 json=data,
                 timeout=120.0
             )
@@ -212,7 +244,7 @@ async def _call_ollama(prompt: str, model: str, temperature: float, max_tokens: 
             result = response.json()
             return result.get('response', '').strip()
         except httpx.ConnectError:
-            raise Exception("Ollama service not running. Please start Ollama first.")
+            raise Exception(f"无法连接到 Ollama 服务: {base_url}")
 
 
 # ==================== 智能评论生成 ====================
@@ -436,32 +468,74 @@ async def get_keyword_suggestions(
     """
     if mode == 'risk':
         prompt = f"""
-        你是一位危机公关专家。
-        请针对品牌或话题 "{keyword}" 生成 15 个**中文**负面或预警关键词。
-        关注点包括：差评、避雷、吐槽、假货、副作用、质量差、智商税、坑人、虚假宣传、退款。
-        请直接返回一个 JSON 字符串数组，不要包含 ```json 或其他 Markdown 格式。
-        示例: ["避雷", "假货", "智商税"]
+        你是一位资深公共关系与舆情风控专家。请针对关键词 "{keyword}" 预测可能出现的**负面舆情**和**风险预警词**。
+        我们的目的是为了及时发现用户的不满或潜在危机，请从以下 4 个核心维度进行反向挖掘（每个维度 4-5 个词）：
+
+        1. **产品缺陷/质量问题**：(如：烂脸、假货、质量差、有毒、异响、甚至爆炸)。
+        2. **服务槽点/体验差**：(如：客服态度差、不退款、发货慢、霸王条款、智商税)。
+        3. **负面情绪/宣泄词**：(如：避雷、恶心、无语、垃圾、后悔、被坑)。
+        4. **合规与安全风险**：(如：侵权、违规、封号、副作用、致癌、不安全)。
+
+        ### 输出强制要求：
+        - 必须输出为一个**纯 JSON 字符串数组**。
+        - 词汇必须简短有力（2-4字为主），直击痛点。
+        - **请将上述 4 个维度的所有词汇合并到一个数组中**。
+        - 结果必须是扁平的字符串列表。
+        - 示例格式：["避雷", "假货", "退款", "智商税", "副作用", ...]
         """
     else:
         prompt = f"""
-        你是一位社交媒体内容营销专家。
-        请针对品牌或话题 "{keyword}" 生成 15 个**中文**热门关联词、长尾词或流量词。
-        关注点包括：热门话题、种草、测评、爆款、推荐、好用、教程。
-        请直接返回一个 JSON 字符串数组，不要包含 ```json 或其他 Markdown 格式。
-        示例: ["测评", "推荐", "好物"]
+        你是一位关键词联想专家。请针对中文关键词 "{keyword}" 生成一份高质量的联想词库。
+        请严格遵循以下 5 个维度进行深度挖掘，每个维度寻找 6-8 个最具代表性的词汇：
+
+        1. **动作/行为类**：与 "{keyword}" 相关的具体动作或行为（如：深蹲、冥想、打坐）。
+        2. **场景/环境类**："{keyword}" 可能出现的高频场景（如：健身房、卧室、凌晨）。
+        3. **感受/心理状态类**："{keyword}" 带来的核心感受或情绪（如：多巴胺、焦虑、平静、内耗）。
+        4. **工具/辅助类**：执行 "{keyword}" 过程中的必备道具（如：瑜伽垫、香薰、白噪音）。
+        5. **延伸概念/哲学类**：相关的深层理念或文化符号（如：自律、潜意识、极简主义）。
+
+        ### 输出强制要求：
+        - 必须输出为一个**纯 JSON 字符串数组**。
+        - **请将上述 5 个维度的所有词汇合并到一个数组中**，不要包含分类标题，也不要包含任何解释文字。
+        - 结果必须是扁平的字符串列表。
+        - 示例格式：["词汇1", "词汇2", "词汇3", "词汇4", ...]
         """
     
     try:
-        response = await call_llm(prompt, LLMProvider.OPENROUTER, model, temperature=0.7)
+        # 使用 call_llm 自动读取配置，不再硬编码 provider
+        # 增加 temperature 以提高发散度
+        content = await call_llm(prompt, temperature=0.8)
         
-        match = re.search(r'\[.*?\]', response, re.DOTALL)
-        if match:
-            keywords = json.loads(match.group(0))
-            if isinstance(keywords, list):
-                return [str(k) for k in keywords if isinstance(k, (str, int))]
+        # 预处理：尝试清理 Markdown 代码块标记
+        cleaned_content = content.replace("```json", "").replace("```", "").strip()
         
-        return []
-        
+        try:
+            # 尝试直接解析
+            return json.loads(cleaned_content)
+        except json.JSONDecodeError:
+            # 如果解析失败，尝试用正则提取数组部分
+            import re
+            match = re.search(r'\[.*\]', cleaned_content, re.DOTALL)
+            if match:
+                try:
+                    return json.loads(match.group())
+                except:
+                    pass
+            
+            # 如果还是失败（例如 AI 输出的是带编号的列表），尝试行级清理
+            lines = content.split('\n')
+            words = []
+            import re
+            for line in lines:
+                # 提取 "- 词汇" 或 "1. 词汇" 格式
+                # 移除行首的数字、点、破折号和空格
+                clean_line = re.sub(r'^[\d\-\.\s\*]+', '', line).strip()
+                # 简单的过滤：去除非中文行、过长的句子
+                if clean_line and len(clean_line) < 15 and not clean_line.startswith(('维度', '类别', '###')):
+                    words.append(clean_line)
+            
+            return words if words else []
+            
     except Exception as e:
         print(f"Keyword generation error: {e}")
         return []

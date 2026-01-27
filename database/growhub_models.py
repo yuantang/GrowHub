@@ -39,12 +39,28 @@ class ProjectPurpose(enum.Enum):
     GENERAL = "general"       # 通用（全量入数据管理）
 
 
+class GrowHubUser(Base):
+    """用户表"""
+    __tablename__ = 'growhub_users'
+    
+    id = Column(Integer, primary_key=True)
+    username = Column(String(50), unique=True, nullable=False, index=True)
+    email = Column(String(100), nullable=True)
+    password_hash = Column(String(255), nullable=False)
+    role = Column(String(20), default='user')  # user/admin
+    status = Column(String(20), default='active')  # active/disabled
+    
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
 class GrowHubKeyword(Base):
     """GrowHub 关键词表"""
     __tablename__ = 'growhub_keywords'
     
     id = Column(Integer, primary_key=True)
     keyword = Column(String(255), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey('growhub_users.id'), nullable=True, index=True)
     level = Column(Integer, nullable=False, default=1)  # 1:品牌词 2:品类词 3:情绪词
     parent_id = Column(Integer, ForeignKey('growhub_keywords.id'), nullable=True)
     
@@ -243,6 +259,7 @@ class GrowHubProject(Base):
     
     id = Column(Integer, primary_key=True)
     name = Column(String(255), nullable=False)
+    user_id = Column(Integer, ForeignKey('growhub_users.id'), nullable=True, index=True)
     description = Column(Text)
     
     # 关键词配置
@@ -328,6 +345,7 @@ class GrowHubAccount(Base):
     
     id = Column(String(50), primary_key=True)  # UUID
     platform = Column(String(50), nullable=False)  # xhs/douyin/...
+    user_id = Column(Integer, ForeignKey('growhub_users.id'), nullable=True, index=True)
     account_name = Column(String(255), nullable=False)
     cookies = Column(Text, nullable=False)
     
@@ -511,3 +529,11 @@ class GrowHubHotspot(Base):
     publish_time = Column(DateTime)          # 内容发布时间
     entered_at = Column(DateTime, server_default=func.now())  # 入池时间
 
+
+class GrowHubSystemConfig(Base):
+    """GrowHub 全局系统配置表"""
+    __tablename__ = 'growhub_system_configs'
+    
+    config_key = Column(String(100), primary_key=True)
+    config_value = Column(JSON, nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())

@@ -93,7 +93,7 @@ class DouYinCrawler(AbstractCrawler):
 
             # 初始化 Client
             self.dy_client = DouYinClient(
-                timeout=config.CRAWLER_MAX_SLEEP_SEC, # Adjust timeout
+                timeout=60, # Standard API timeout
                 headers={
                     "User-Agent": self.user_agent, 
                     "Referer": "https://www.douyin.com/",
@@ -105,14 +105,21 @@ class DouYinCrawler(AbstractCrawler):
 
             # 登录逻辑
             if config.LOGIN_TYPE == "qrcode" or config.LOGIN_TYPE == "phone" or config.LOGIN_TYPE == "cookie":
-                login_obj = DouYinLogin(
-                    login_type=config.LOGIN_TYPE,
-                    login_phone="",
-                    browser_context=self.browser_context,
-                    context_page=self.context_page,
-                    cookie_str=config.COOKIES,
-                )
-                await login_obj.begin()
+                # 先检查是否已经处于登录状态，避免重复弹出扫码
+                is_logged_in = await self.dy_client.pong(browser_context=self.browser_context)
+                if is_logged_in:
+                    utils.logger.info("[DouYinCrawler] 检测到浏览器已处于登录状态，跳过扫码流程 🚀")
+                else:
+                    login_obj = DouYinLogin(
+                        login_type=config.LOGIN_TYPE,
+                        login_phone="",
+                        browser_context=self.browser_context,
+                        context_page=self.context_page,
+                        cookie_str=config.COOKIES,
+                    )
+                    await login_obj.begin()
+                
+                # 无论是否重新登录，都要同步最新的 Cookie 到 API Client
                 await self.dy_client.update_cookies(browser_context=self.browser_context)
 
             # Login Only Mode

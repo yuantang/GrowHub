@@ -186,3 +186,4 @@ nohup.out
 *.db
 accounts*.json
 *.log
+browser-plugin/node_modules/

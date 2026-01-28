@@ -508,10 +508,13 @@ class ProjectService:
                                 else:
                                     self.append_log(project_id, f"[插件] 搜索无结果或超时")
                         
-                        # Update project stats
-                        duration = (datetime.now() - start_time_local).total_seconds()
-                        project.total_crawled = (project.total_crawled or 0) + total_crawled_items
-                        await session.commit()
+                        # Update project stats in a new session (fix session scope bug)
+                        async with get_session() as update_session:
+                            duration = (datetime.now() - start_time_local).total_seconds()
+                            proj = await update_session.get(GrowHubProject, project_id)
+                            if proj:
+                                proj.total_crawled = (proj.total_crawled or 0) + total_crawled_items
+                                await update_session.commit()
                         
                         self.append_log(project_id, f"✅ 插件采集完成: {total_crawled_items} 条, 耗时 {duration:.1f}s")
                         return {

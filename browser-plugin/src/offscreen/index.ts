@@ -216,52 +216,98 @@ async function handleFetchTask(task: any) {
   await addLog(`Starting task: ${taskName}`);
   
   const startTime = Date.now();
+  const MAX_RETRIES = 3;
+  const REQUEST_TIMEOUT = 30000; // 30 seconds
   
-  try {
-    const fetchOptions: RequestInit = {
-      method: task.request.method,
-      headers: task.request.headers,
-      credentials: 'include', 
-    };
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
     
-    if (task.request.body && task.request.method !== 'GET') {
-      fetchOptions.body = task.request.body;
+    try {
+      const fetchOptions: RequestInit = {
+        method: task.request.method,
+        headers: task.request.headers,
+        credentials: 'include',
+        signal: controller.signal,
+      };
+      
+      if (task.request.body && task.request.method !== 'GET') {
+        fetchOptions.body = task.request.body;
+      }
+      
+      const response = await fetch(task.request.url, fetchOptions);
+      clearTimeout(timeoutId);
+      
+      const body = await response.text();
+      
+      // Login expiration detection
+      const loginExpired = response.status === 401 || response.status === 403 ||
+        body.includes('请登录') || body.includes('login required') ||
+        body.includes('need_login') || body.includes('"success":false');
+      
+      if (loginExpired) {
+        await addLog(`⚠️ Login expired for ${task.platform}`);
+        await chrome.storage.local.set({ 
+          [`${task.platform}_login_expired`]: true,
+          activeTask: null 
+        });
+        // Notify background to show badge warning
+        chrome.runtime.sendMessage({ 
+          type: 'LOGIN_EXPIRED', 
+          platform: task.platform 
+        }).catch(() => {});
+      }
+      
+      // Success - send result
+      const result = {
+        type: 'TASK_RESULT',
+        task_id: task.task_id,
+        success: !loginExpired,
+        response: {
+          status: response.status,
+          headers: Object.fromEntries(response.headers.entries()),
+          body: body
+        },
+        duration_ms: Date.now() - startTime,
+        login_expired: loginExpired,
+      };
+      
+      ws?.send(JSON.stringify(result));
+      
+      const { taskCount = 0 } = await chrome.storage.local.get('taskCount');
+      await chrome.storage.local.set({ taskCount: taskCount + 1, activeTask: null });
+      
+      await addLog(`Task completed: ${taskName} (${response.status})${loginExpired ? ' ⚠️ Login Expired' : ''}`);
+      return; // Success, exit function
+      
+    } catch (e: any) {
+      clearTimeout(timeoutId);
+      
+      const isTimeout = e.name === 'AbortError';
+      const isRetryable = isTimeout || e.message.includes('network') || e.message.includes('fetch');
+      
+      if (attempt < MAX_RETRIES && isRetryable) {
+        const delay = Math.pow(2, attempt - 1) * 1000; // Exponential backoff: 1s, 2s, 4s
+        await addLog(`Task failed (attempt ${attempt}/${MAX_RETRIES}): ${isTimeout ? 'Timeout' : e.message}. Retrying in ${delay/1000}s...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      }
+      
+      // Final failure
+      console.error('[GrowHub Offscreen] Task failed:', e);
+      await chrome.storage.local.set({ activeTask: null });
+      await addLog(`Task failed: ${taskName} - ${isTimeout ? 'Request timeout (30s)' : e.message}`);
+      
+      ws?.send(JSON.stringify({
+        type: 'TASK_RESULT',
+        task_id: task.task_id,
+        success: false,
+        error: isTimeout ? 'Request timeout after 30s' : (e.message || 'Unknown error'),
+        duration_ms: Date.now() - startTime,
+        retries: attempt - 1,
+      }));
+      return;
     }
-    
-    const response = await fetch(task.request.url, fetchOptions);
-    const body = await response.text();
-    
-    const result = {
-      type: 'TASK_RESULT',
-      task_id: task.task_id,
-      success: true,
-      response: {
-        status: response.status,
-        headers: Object.fromEntries(response.headers.entries()),
-        body: body
-      },
-      duration_ms: Date.now() - startTime
-    };
-    
-    ws?.send(JSON.stringify(result));
-    
-    const { taskCount = 0 } = await chrome.storage.local.get('taskCount');
-    await chrome.storage.local.set({ taskCount: taskCount + 1, activeTask: null });
-    
-    await addLog(`Task completed: ${taskName} (${response.status})`);
-    
-  } catch (e: any) {
-    console.error('[GrowHub Offscreen] Task failed:', e);
-    await chrome.storage.local.set({ activeTask: null });
-    await addLog(`Task failed: ${taskName} - ${e.message}`);
-    
-    ws?.send(JSON.stringify({
-      type: 'TASK_RESULT',
-      task_id: task.task_id,
-      success: false,
-      error: e.message || 'Unknown error',
-      duration_ms: Date.now() - startTime
-    }));
   }
 }
 

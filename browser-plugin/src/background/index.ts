@@ -190,6 +190,18 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         sendResponse({ connected: !!data.isConnected });
       });
       return true; // Async response
+      
+    case 'LOGIN_EXPIRED':
+      // Handle login expiration notification from offscreen
+      addLog(`⚠️ Login expired for platform: ${message.platform}`);
+      chrome.action.setBadgeText({ text: '!' });
+      chrome.action.setBadgeBackgroundColor({ color: '#f59e0b' }); // Orange warning
+      // Store the expiration status for popup to display
+      chrome.storage.local.set({ 
+        [`${message.platform}_login_expired`]: true,
+        lastLoginWarning: { platform: message.platform, time: Date.now() }
+      });
+      break;
   }
 });
 

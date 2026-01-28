@@ -63,6 +63,7 @@ class ProjectCreateRequest(BaseModel):
     min_fans: int = Field(default=0, ge=0, description="博主最小粉丝数")
     max_fans: int = Field(default=0, ge=0, description="博主最大粉丝数,0=不限")
     require_contact: bool = Field(default=False, description="是否要求有联系方式")
+    use_plugin: bool = Field(default=False, description="是否优先使用浏览器插件")
 
 
 class ProjectUpdateRequest(BaseModel):
@@ -100,6 +101,7 @@ class ProjectUpdateRequest(BaseModel):
     min_fans: Optional[int] = Field(None, ge=0)
     max_fans: Optional[int] = Field(None, ge=0)
     require_contact: Optional[bool] = None
+    use_plugin: Optional[bool] = None
 
 
 class ProjectResponse(BaseModel):
@@ -137,6 +139,7 @@ class ProjectResponse(BaseModel):
     min_fans: int = 0
     max_fans: int = 0
     require_contact: bool = False
+    use_plugin: bool = False
     
     # 运行状态
     last_run_at: Optional[str]
@@ -255,6 +258,7 @@ async def create_project(data: ProjectCreateRequest, current_user: GrowHubUser =
         alert_channels=data.alert_channels,
         purpose=data.purpose,
         max_concurrency=data.max_concurrency,
+        use_plugin=data.use_plugin,
     )
     
     result = await service.create_project(config, user_id=current_user.id)

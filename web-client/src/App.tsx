@@ -19,11 +19,26 @@ import SettingsPage from "@/pages/SettingsPage";
 import CreatorsPage from "@/pages/CreatorsPage";
 import SentimentPage from "@/pages/SentimentPage";
 import UserManagementPage from "@/pages/admin/UserManagementPage";
+import PluginStatusPage from "@/pages/PluginStatusPage";
+import AnalyticsDashboardPage from "@/pages/AnalyticsDashboardPage";
 
 import { AuthProvider } from "@/contexts/AuthContext";
 import LoginPage from "@/pages/LoginPage";
 import RegisterPage from "@/pages/RegisterPage";
 import ProtectedRoute from "@/components/ProtectedRoute";
+import { useAuth } from "@/contexts/AuthContext";
+
+const AdminRoute = ({ children }: { children: React.ReactNode }) => {
+  const { user, isLoading } = useAuth();
+
+  if (isLoading) return <div>Loading...</div>;
+
+  if (!user || user.role !== "admin") {
+    return <Navigate to="/" replace />;
+  }
+
+  return <>{children}</>;
+};
 
 function App() {
   return (
@@ -58,8 +73,28 @@ function App() {
             <Route path="account-pool" element={<AccountPoolPage />} />
             <Route path="notifications" element={<NotificationPage />} />
             <Route path="rules" element={<RulesPage />} />
-            <Route path="settings" element={<SettingsPage />} />
-            <Route path="admin/users" element={<UserManagementPage />} />
+            <Route path="notifications" element={<NotificationPage />} />
+            <Route path="rules" element={<RulesPage />} />
+            <Route path="plugin-status" element={<PluginStatusPage />} />
+            <Route path="analytics" element={<AnalyticsDashboardPage />} />
+
+            {/* Admin Only Routes */}
+            <Route
+              path="settings"
+              element={
+                <AdminRoute>
+                  <SettingsPage />
+                </AdminRoute>
+              }
+            />
+            <Route
+              path="admin/users"
+              element={
+                <AdminRoute>
+                  <UserManagementPage />
+                </AdminRoute>
+              }
+            />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         </Routes>

@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Dict, Any, Optional
 from database.db_session import get_session
-from database.growhub_models import GrowHubSystemConfig
+from database.growhub_models import GrowHubSystemConfig, GrowHubUser
 from sqlalchemy import select, update
 from datetime import datetime
+from api.auth import deps
 
 router = APIRouter(prefix="/growhub/settings", tags=["GrowHub - Settings"])
 
@@ -15,8 +16,11 @@ class SettingUpdate(BaseModel):
     config_value: Dict[str, Any]
 
 @router.get("/{config_key}")
-async def get_setting(config_key: str):
-    """获取指定配置"""
+async def get_setting(
+    config_key: str,
+    current_user: GrowHubUser = Depends(deps.get_current_active_admin)
+):
+    """获取指定配置 (Admin Only)"""
     async with get_session() as session:
         result = await session.execute(
             select(GrowHubSystemConfig).where(GrowHubSystemConfig.config_key == config_key)
@@ -29,8 +33,11 @@ async def get_setting(config_key: str):
 
 @router.post("")
 @router.post("/")
-async def update_setting(data: SettingUpdate):
-    """更新配置"""
+async def update_setting(
+    data: SettingUpdate,
+    current_user: GrowHubUser = Depends(deps.get_current_active_admin)
+):
+    """更新配置 (Admin Only)"""
     try:
         async with get_session() as session:
             result = await session.execute(
@@ -61,8 +68,11 @@ async def update_setting(data: SettingUpdate):
 
 @router.post("/proxy/test")
 @router.post("/proxy/test/")
-async def test_proxy(config_data: Dict[str, Any]):
-    """测试代理连接"""
+async def test_proxy(
+    config_data: Dict[str, Any],
+    current_user: GrowHubUser = Depends(deps.get_current_active_admin)
+):
+    """测试代理连接 (Admin Only)"""
     import httpx
     provider = config_data.get("provider")
     try:
@@ -130,7 +140,10 @@ async def test_proxy(config_data: Dict[str, Any]):
             
 @router.post("/llm/test")
 @router.post("/llm/test/")
-async def test_llm_connection(config_data: Dict[str, Any]):
+async def test_llm_connection(
+    config_data: Dict[str, Any],
+    current_user: GrowHubUser = Depends(deps.get_current_active_admin)
+):
     """测试 AI 模型连接"""
     from api.services.llm import call_llm, LLMProvider
     

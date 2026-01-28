@@ -58,6 +58,9 @@ class ProjectConfig(BaseModel):
     
     # 任务目的
     purpose: str = "general"
+    
+    # 插件配置
+    use_plugin: bool = False  # 优先使用浏览器插件采集
 
 
 class ProjectInfo(BaseModel):
@@ -79,6 +82,7 @@ class ProjectInfo(BaseModel):
     alert_on_negative: bool
     alert_on_hotspot: bool
     alert_channels: List[str]
+    use_plugin: bool = False
     
     # 运行状态
     last_run_at: Optional[datetime]
@@ -189,6 +193,7 @@ class ProjectService:
                 alert_channels=config.alert_channels,
                 purpose=config.purpose,
                 max_concurrency=config.max_concurrency,
+                use_plugin=config.use_plugin,
             )
             session.add(project)
             await session.flush()
@@ -411,25 +416,31 @@ class ProjectService:
         from api.services.crawler_manager import crawler_manager
         from api.schemas import CrawlerStartRequest
         from api.services.account_pool import get_account_pool, AccountPlatform
+        from tools import utils  # Add missing import
         
-        async with get_session() as session:
-            result = await session.execute(
-                select(GrowHubProject).where(GrowHubProject.id == project_id)
-            )
-            project = result.scalar()
-            
-            if not project:
-                print(f"[Project] 项目 {project_id} 不存在")
-                return
-            
-            project.last_run_at = datetime.now()
-            project.run_count = (project.run_count or 0) + 1
-            await session.commit()  # Persist run statistics immediately
-            
-            # 清空旧日志并开始记录
-            self._project_logs[project_id] = []
-            self.append_log(project_id, f"开始执行任务: {project.name}")
-            self.append_log(project_id, f"关键词: {project.keywords}")
+        # 调试日志：确认进入执行函数
+        utils.logger.info(f"[Project-{project_id}] 进入 execute_project 任务执行器")
+        
+        try:
+            async with get_session() as session:
+                result = await session.execute(
+                    select(GrowHubProject).where(GrowHubProject.id == project_id)
+                )
+                project = result.scalar()
+                
+                if not project:
+                    utils.logger.error(f"[Project-{project_id}] 项目不存在")
+                    return
+                
+                utils.logger.info(f"[Project-{project_id}] 正在更新最后运行时间...")
+                project.last_run_at = datetime.now()
+                project.run_count = (project.run_count or 0) + 1
+                await session.commit()
+                
+                # 初始化日志
+                self._project_logs[project_id] = []
+                self.append_log(project_id, f"开始执行任务: {project.name}")
+                self.append_log(project_id, f"关键词: {project.keywords}")
             # Explicitly log sentiment keywords
             self.append_log(project_id, f"舆情词: {project.sentiment_keywords or '无'}")
             
@@ -440,6 +451,79 @@ class ProjectService:
             # start_time_utc for DB queries, start_time_local for duration logging
             start_time_utc = datetime.now(timezone.utc).replace(tzinfo=None)
             start_time_local = datetime.now()
+            
+            # ===== Plugin-based Execution Path =====
+            # Check if project prefers plugin and if a plugin is online
+            if getattr(project, 'use_plugin', False):
+                self.append_log(project_id, "项目配置为优先使用浏览器插件采集")
+                
+                try:
+                    from api.services.plugin_crawler_service import get_plugin_crawler_service
+                    from api.routers.plugin_websocket import get_plugin_manager
+                    
+                    plugin_service = get_plugin_crawler_service()
+                    plugin_manager = get_plugin_manager()
+                    
+                    # Find an online user's plugin (prefer the project owner)
+                    user_id = str(project.user_id) if project.user_id else None
+                    online_users = plugin_manager.get_online_users()
+                    
+                    if user_id and user_id in online_users:
+                        plugin_user_id = user_id
+                        self.append_log(project_id, f"使用项目所有者的插件 (user_id: {user_id})")
+                    elif online_users:
+                        plugin_user_id = online_users[0]
+                        self.append_log(project_id, f"项目主人插件离线，使用其他在线插件 (user_id: {plugin_user_id})")
+                    else:
+                        plugin_user_id = None
+                        self.append_log(project_id, "⚠️ 没有在线的浏览器插件，回退到服务端采集")
+                    
+                    if plugin_user_id:
+                        # Execute via plugin
+                        for platform in platforms:
+                            normalized_plat = {
+                                "douyin": "dy", "bilibili": "bili", 
+                                "weibo": "wb", "kuaishou": "ks"
+                            }.get(platform, platform)
+                            
+                            for keyword in (project.keywords or []):
+                                self.append_log(project_id, f"[插件] 搜索 {platform}: {keyword}")
+                                
+                                notes = await plugin_service.search_notes(
+                                    user_id=plugin_user_id,
+                                    platform=normalized_plat,
+                                    keyword=keyword,
+                                    page=1
+                                )
+                                
+                                if notes:
+                                    self.append_log(project_id, f"[插件] 获取到 {len(notes)} 条笔记")
+                                    saved = await plugin_service.save_notes_to_db(
+                                        platform=normalized_plat,
+                                        notes=notes,
+                                        project_id=project_id
+                                    )
+                                    total_crawled_items += saved
+                                    self.append_log(project_id, f"[插件] 已入库 {saved} 条")
+                                else:
+                                    self.append_log(project_id, f"[插件] 搜索无结果或超时")
+                        
+                        # Update project stats
+                        duration = (datetime.now() - start_time_local).total_seconds()
+                        project.total_crawled = (project.total_crawled or 0) + total_crawled_items
+                        await session.commit()
+                        
+                        self.append_log(project_id, f"✅ 插件采集完成: {total_crawled_items} 条, 耗时 {duration:.1f}s")
+                        return {
+                            "status": "success",
+                            "method": "plugin",
+                            "crawled": total_crawled_items
+                        }
+                        
+                except Exception as e:
+                    self.append_log(project_id, f"⚠️ 插件采集失败: {e}, 回退到服务端采集")
+            
+            # ===== Server-side Execution Path =====
             
             
             MAX_ACCOUNT_RETRIES = 3  # 最大账号切换次数
@@ -800,6 +884,18 @@ class ProjectService:
                     project.next_run_at = datetime.now() + timedelta(seconds=interval)
                 except:
                     pass
+            
+            # 记录结束
+            self.append_log(project_id, "🏁 任务正常结束")
+            
+        except Exception as e:
+            utils.logger.error(f"[Project-{project_id}] 任务执行出现异常: {e}")
+            import traceback
+            utils.logger.error(traceback.format_exc())
+            try:
+                self.append_log(project_id, f"❌ 任务因异常中断: {e}")
+            except:
+                pass
     
     async def _register_scheduler_task(self, project):
         """注册调度任务"""
@@ -1070,6 +1166,7 @@ class ProjectService:
             "require_contact": project.require_contact or False,
             "min_fans": project.min_fans or 0,
             "max_fans": project.max_fans or 0,
+            "use_plugin": project.use_plugin or False,
             
             # Advanced Filters
             "min_likes": project.min_likes or 0,

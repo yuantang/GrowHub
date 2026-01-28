@@ -14,6 +14,8 @@ import {
   AlertTriangle,
   Bell,
   UserCog,
+  Plug,
+  BarChart3,
 } from "lucide-react";
 import { cn } from "@/utils/cn";
 
@@ -35,6 +37,7 @@ const Layout: React.FC = () => {
     { to: "/creators", icon: Users, label: "达人博主" },
     { to: "/hotspots", icon: Flame, label: "热点排行" },
     { to: "/sentiment", icon: AlertTriangle, label: "舆情监控" },
+    { to: "/analytics", icon: BarChart3, label: "数据分析" },
 
     // 工具
     { to: "/ai-creator", icon: Sparkles, label: "AI 创作" },
@@ -42,10 +45,11 @@ const Layout: React.FC = () => {
     // 系统配置
     { to: "/account-pool", icon: Shield, label: "账号池" },
     { to: "/notifications", icon: Bell, label: "通知配置" },
-    { to: "/settings", icon: Settings, label: "系统设置" },
+    { to: "/plugin-status", icon: Plug, label: "插件状态" },
   ];
 
   if (user?.role === "admin") {
+    navItems.push({ to: "/settings", icon: Settings, label: "系统设置" });
     navItems.push({ to: "/admin/users", icon: UserCog, label: "用户管理" });
   }
 

@@ -215,6 +215,62 @@ export const fetchAccountsOverview = () =>
 export const fetchAIKeywords = (keyword: string, mode: 'risk' | 'trend', model?: string) =>
     api.post<{ keywords: string[] }>('/ai/suggest', { keyword, mode, model }).then(res => res.data.keywords);
 
+// ============ GrowHub Account Pool API ============
+export interface GrowHubAccount {
+    id: string;
+    platform: string;
+    account_name: string;
+    cookies: string;
+    status: string;
+    health_score: number;
+    use_count: number;
+    success_count: number;
+    fail_count: number;
+    last_used?: string;
+    last_check?: string;
+    group: string;
+    tags: string[];
+    notes?: string;
+}
+
+export interface GrowHubAccountStats {
+    total: number;
+    by_status: Record<string, number>;
+    by_platform: Record<string, number>;
+    avg_health: number;
+    total_uses: number;
+    success_rate: number;
+}
+
+export const fetchGrowHubAccounts = (platform?: string, status?: string) =>
+    api.get<{ items: GrowHubAccount[] }>('/growhub/accounts/', { params: cleanParams({ platform, status }) }).then(res => res.data);
+
+export const fetchGrowHubAccountStats = () =>
+    api.get<GrowHubAccountStats>('/growhub/accounts/statistics').then(res => res.data);
+export const fetchGrowHubAccount = (accountId: string) =>
+    api.get<GrowHubAccount>(`/growhub/accounts/${accountId}`).then(res => res.data);
+
+export const addGrowHubAccount = (data: Partial<GrowHubAccount>) =>
+    api.post('/growhub/accounts/', data).then(res => res.data);
+
+export const checkGrowHubAccountHealth = (accountId: string) =>
+    api.post(`/growhub/accounts/${accountId}/check`).then(res => res.data);
+
+export const checkAllGrowHubAccounts = () =>
+    api.post('/growhub/accounts/check-all').then(res => res.data);
+
+export const deleteGrowHubAccount = (accountId: string) =>
+    api.delete(`/growhub/accounts/${accountId}`).then(res => res.data);
+
+export const startGrowHubQRLogin = (platform: string) =>
+    api.post('/growhub/accounts/qr-login/start', { platform }).then(res => res.data);
+
+export const getGrowHubQRLoginStatus = (sessionId: string) =>
+    api.get(`/growhub/accounts/qr-login/status/${sessionId}`).then(res => res.data);
+
+export const cancelGrowHubQRLogin = (sessionId: string) =>
+    api.post(`/growhub/accounts/qr-login/cancel/${sessionId}`).then(res => res.data);
+
 // ============ Project API ============
 
 export interface Project {
@@ -238,6 +294,7 @@ export interface Project {
     alert_on_new_content: boolean;
     alert_on_hotspot: boolean;
     alert_channels: (string | number)[];
+    use_plugin: boolean;
     // Stats
     total_crawled: number;
     total_alerts: number;
@@ -271,11 +328,32 @@ export interface Project {
 }
 
 
+export const fetchProjects = () =>
+    api.get<Project[]>('/growhub/projects').then(res => res.data);
+
+export const createProject = (data: any) =>
+    api.post<Project>('/growhub/projects', data).then(res => res.data);
+
 export const fetchProject = (id: number) =>
     api.get<Project>(`/growhub/projects/${id}`).then(res => res.data);
 
 export const updateProject = (id: number, data: Partial<Project>) =>
     api.put<{ message: string; project: Project }>(`/growhub/projects/${id}`, data).then(res => res.data);
+
+export const deleteProject = (id: number) =>
+    api.delete(`/growhub/projects/${id}`).then(res => res.data);
+
+export const startProject = (id: number) =>
+    api.post(`/growhub/projects/${id}/start`).then(res => res.data);
+
+export const stopProject = (id: number) =>
+    api.post(`/growhub/projects/${id}/stop`).then(res => res.data);
+
+export const runProjectImmediately = (id: number) =>
+    api.post(`/growhub/projects/${id}/run`).then(res => res.data);
+
+export const fetchProjectPreflight = (id: number) =>
+    api.get(`/growhub/projects/${id}/preflight`).then(res => res.data);
 
 // ============ Project Detail API ============
 export interface ProjectContentFilters {
@@ -292,6 +370,7 @@ export interface ProjectContentItem {
     url: string;
     author: string;
     author_id?: string;
+    author_unique_id?: string;
     author_avatar?: string;
     author_fans?: number;
     author_likes?: number;
@@ -685,6 +764,9 @@ export interface NotificationChannel {
 export const fetchNotificationChannels = () =>
     api.get<NotificationChannel[]>('/growhub/notifications/channels').then(res => Array.isArray(res.data) ? res.data : (res.data as any).items || []);
 
+export const fetchProjectPlatforms = () =>
+    api.get<{ platforms: Platform[] }>('/growhub/projects/platforms/options').then(res => res.data.platforms);
+
 
 // --- Admin User Management ---
 export const getAdminUsers = async (status?: string) => {
@@ -712,6 +794,65 @@ export const updateUserRole = async (userId: number, role: "admin" | "user") => 
   const response = await api.patch(`/admin/users/${userId}/role?role=${role}`);
   return response.data;
 };
+
+// ============ Analytics API ============
+
+export interface KeywordTrendPoint {
+    date: string;
+    count: number;
+}
+
+export interface KeywordTrendResponse {
+    keyword: string;
+    trend: KeywordTrendPoint[];
+    total: number;
+}
+
+export interface CreatorLeaderboardItem {
+    author_id: string;
+    author_name: string;
+    author_avatar: string | null;
+    platform: string;
+    content_count: number;
+    total_likes: number;
+    total_comments: number;
+    avg_engagement: number;
+}
+
+export interface CollectionStatsResponse {
+    total_contents: number;
+    today_contents: number;
+    week_contents: number;
+    month_contents: number;
+    by_platform: Record<string, number>;
+    by_sentiment: Record<string, number>;
+}
+
+export interface PlatformDistributionItem {
+    platform: string;
+    count: number;
+    percentage: number;
+}
+
+export const fetchKeywordTrends = (days = 7, limit = 5, projectId?: number) =>
+    api.get<KeywordTrendResponse[]>('/growhub/analytics/keyword-trends', {
+        params: cleanParams({ days, limit, project_id: projectId })
+    }).then(res => res.data);
+
+export const fetchCreatorLeaderboard = (days = 30, limit = 10, platform?: string, sortBy?: string) =>
+    api.get<CreatorLeaderboardItem[]>('/growhub/analytics/creator-leaderboard', {
+        params: cleanParams({ days, limit, platform, sort_by: sortBy })
+    }).then(res => res.data);
+
+export const fetchCollectionStats = (projectId?: number) =>
+    api.get<CollectionStatsResponse>('/growhub/analytics/collection-stats', {
+        params: cleanParams({ project_id: projectId })
+    }).then(res => res.data);
+
+export const fetchPlatformDistribution = (days = 30, projectId?: number) =>
+    api.get<PlatformDistributionItem[]>('/growhub/analytics/platform-distribution', {
+        params: cleanParams({ days, project_id: projectId })
+    }).then(res => res.data);
 
 export default api;
 

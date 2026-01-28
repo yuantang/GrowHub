@@ -34,9 +34,7 @@ import {
   AlertTriangle,
   Save,
   Search,
-  MessageSquare,
   Zap,
-  Users,
 } from "lucide-react";
 import {
   LineChart,
@@ -1450,6 +1448,28 @@ const ProjectDetailPage: React.FC = () => {
                         className="text-sm cursor-pointer font-medium text-violet-500"
                       >
                         必须包含联系方式 (微信/手机/邮箱)
+                      </label>
+                    </div>
+
+                    <div className="flex items-center gap-2 pt-2">
+                      <input
+                        type="checkbox"
+                        id="usePluginEdit"
+                        checked={editForm.use_plugin === true}
+                        onChange={(e) =>
+                          setEditForm({
+                            ...editForm,
+                            use_plugin: e.target.checked,
+                          })
+                        }
+                        className="w-4 h-4 cursor-pointer"
+                      />
+                      <label
+                        htmlFor="usePluginEdit"
+                        className="text-sm cursor-pointer font-bold text-indigo-600 flex items-center gap-1"
+                      >
+                        <Zap className="w-3.5 h-3.5" />
+                        优先使用浏览器插件采集数据 (更彻底，不易被封)
                       </label>
                     </div>
                   </div>

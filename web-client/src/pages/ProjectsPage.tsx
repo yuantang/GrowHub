@@ -15,8 +15,6 @@ import {
   Loader2,
   Zap,
   Sparkles,
-  Save,
-  Settings,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -24,12 +22,17 @@ import { MultiSelect } from "@/components/ui/MultiSelect";
 import {
   fetchAIKeywords,
   ProjectPurposeLabels,
-  fetchPlatforms, // Added based on usage in component
+  fetchProjectPlatforms,
   fetchNotificationChannels,
+  fetchProjects as apiFetchProjects,
+  createProject as apiCreateProject,
+  startProject,
+  stopProject,
+  runProjectImmediately,
+  fetchProjectPreflight,
+  deleteProject as apiDeleteProject,
   type NotificationChannel,
 } from "@/api";
-
-const API_BASE = "/api";
 
 interface Project {
   id: number;
@@ -57,6 +60,7 @@ interface Project {
   today_alerts: number;
   created_at?: string;
   is_running?: boolean;
+  use_plugin: boolean;
   // 博主筛选
   min_fans?: number;
   max_fans?: number;
@@ -400,41 +404,24 @@ const ProjectsPage: React.FC = () => {
     deduplicate_authors: false,
     purpose: "general", // 任务目的
     alert_channels: [] as (string | number)[],
+    use_plugin: false,
   });
 
   useEffect(() => {
     fetchProjects();
-    fetchPlatforms();
+    fetchProjectPlatforms().then(setPlatforms);
     fetchNotificationChannels().then(setNotificationChannels);
   }, []);
 
   const fetchProjects = async () => {
     try {
       setLoading(true);
-      const response = await fetch(`${API_BASE}/growhub/projects`);
-      const data = await response.json();
-      if (Array.isArray(data)) {
-        setProjects(data);
-      } else {
-        console.error("API returned non-array data:", data);
-        setProjects([]);
-      }
+      const data = await apiFetchProjects();
+      setProjects(data);
     } catch (error) {
       console.error("Failed to fetch projects:", error);
     } finally {
       setLoading(false);
-    }
-  };
-
-  const fetchPlatforms = async () => {
-    try {
-      const response = await fetch(
-        `${API_BASE}/growhub/projects/platforms/options`,
-      );
-      const data = await response.json();
-      setPlatforms(data.platforms || []);
-    } catch (error) {
-      console.error("Failed to fetch platforms:", error);
     }
   };
 
@@ -451,6 +438,7 @@ const ProjectsPage: React.FC = () => {
     }
 
     try {
+      // ... normalize platforms and prepare payload existing logic ...
       const platformNormalize: Record<string, string> = {
         douyin: "dy",
         bilibili: "bili",
@@ -482,47 +470,45 @@ const ProjectsPage: React.FC = () => {
         alert_on_new_content: newProject.alert_on_new_content,
         alert_on_hotspot: newProject.alert_on_hotspot,
         alert_channels: newProject.alert_channels,
+        use_plugin: newProject.use_plugin,
       };
 
-      const response = await fetch(`${API_BASE}/growhub/projects`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+      await apiCreateProject(payload);
 
-      if (response.ok) {
-        setShowCreateModal(false);
-        setNewProject({
-          name: "",
-          description: "",
-          keywords: "",
-          platforms: ["xhs"],
-          crawler_type: "search",
-          crawl_limit: 20,
-          crawl_date_range: 7,
-          schedule_type: "interval",
-          schedule_value: "3600",
-          alert_on_negative: true,
-          alert_on_new_content: false,
-          alert_on_hotspot: false,
-          auto_start: false,
-          min_likes: 0,
-          max_likes: 0,
-          min_comments: 0,
-          max_comments: 0,
-          min_shares: 0,
-          max_shares: 0,
-          min_favorites: 0,
-          max_favorites: 0,
-          min_fans: 0,
-          max_fans: 0,
-          require_contact: false,
-          sentiment_keywords: "",
-          enable_comments: true,
-          deduplicate_authors: false,
-        });
-        fetchProjects();
-      }
+      setShowCreateModal(false);
+      setNewProject({
+        name: "",
+        description: "",
+        keywords: "",
+        platforms: ["xhs"],
+        crawler_type: "search",
+        crawl_limit: 20,
+        crawl_date_range: 7,
+        schedule_type: "interval",
+        schedule_value: "3600",
+        alert_on_negative: true,
+        alert_on_new_content: false,
+        alert_on_hotspot: false,
+        auto_start: false,
+        min_likes: 0,
+        max_likes: 0,
+        min_comments: 0,
+        max_comments: 0,
+        min_shares: 0,
+        max_shares: 0,
+        min_favorites: 0,
+        max_favorites: 0,
+        min_fans: 0,
+        max_fans: 0,
+        require_contact: false,
+        sentiment_keywords: "",
+        enable_comments: true,
+        deduplicate_authors: false,
+        purpose: "general",
+        alert_channels: [],
+        use_plugin: false,
+      });
+      fetchProjects();
     } catch (error) {
       console.error("Failed to create project:", error);
     }
@@ -531,10 +517,11 @@ const ProjectsPage: React.FC = () => {
   const toggleProject = async (project: Project) => {
     setActionLoading(project.id);
     try {
-      const endpoint = project.is_active ? "stop" : "start";
-      await fetch(`${API_BASE}/growhub/projects/${project.id}/${endpoint}`, {
-        method: "POST",
-      });
+      if (project.is_active) {
+        await stopProject(project.id);
+      } else {
+        await startProject(project.id);
+      }
       fetchProjects();
     } catch (error) {
       console.error("Failed to toggle project:", error);
@@ -566,10 +553,7 @@ const ProjectsPage: React.FC = () => {
 
     try {
       // 先进行前置检查
-      const preflightRes = await fetch(
-        `${API_BASE}/growhub/projects/${project.id}/preflight`,
-      );
-      const preflight = await preflightRes.json();
+      const preflight = await fetchProjectPreflight(project.id);
 
       if (!preflight.can_run) {
         // 有阻断项，显示检查结果
@@ -585,9 +569,7 @@ const ProjectsPage: React.FC = () => {
       // 检查通过，执行任务
       setRunningProjects((prev) => new Set(prev).add(project.id));
 
-      await fetch(`${API_BASE}/growhub/projects/${project.id}/run`, {
-        method: "POST",
-      });
+      await runProjectImmediately(project.id);
 
       // 执行成功后，等待一段时间后刷新数据
       setTimeout(() => {
@@ -616,9 +598,7 @@ const ProjectsPage: React.FC = () => {
     setRunningProjects((prev) => new Set(prev).add(project.id));
 
     try {
-      await fetch(`${API_BASE}/growhub/projects/${project.id}/run`, {
-        method: "POST",
-      });
+      await runProjectImmediately(project.id);
       setTimeout(() => {
         setRunningProjects((prev) => {
           const next = new Set(prev);
@@ -636,9 +616,7 @@ const ProjectsPage: React.FC = () => {
     if (!confirm(`确定要删除项目"${project.name}"吗？`)) return;
 
     try {
-      await fetch(`${API_BASE}/growhub/projects/${project.id}`, {
-        method: "DELETE",
-      });
+      await apiDeleteProject(project.id);
       fetchProjects();
     } catch (error) {
       console.error("Failed to delete project:", error);
@@ -790,10 +768,7 @@ const ProjectsPage: React.FC = () => {
                     {/* Keywords */}
                     <div className="flex flex-col gap-2 mb-3">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <Search
-                          className="w-3.5 h-3.5 text-muted-foreground"
-                          title="关键词"
-                        />
+                        <Search className="w-3.5 h-3.5 text-muted-foreground" />
                         {project.keywords.slice(0, 5).map((kw, idx) => (
                           <span
                             key={idx}
@@ -811,10 +786,7 @@ const ProjectsPage: React.FC = () => {
                       {project.sentiment_keywords &&
                         (project.sentiment_keywords as string[]).length > 0 && (
                           <div className="flex items-center gap-2 flex-wrap">
-                            <AlertTriangle
-                              className="w-3.5 h-3.5 text-amber-500"
-                              title="舆情词"
-                            />
+                            <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
                             {(project.sentiment_keywords as string[])
                               .slice(0, 5)
                               .map((kw, idx) => (
@@ -913,7 +885,6 @@ const ProjectsPage: React.FC = () => {
                         size="sm"
                         onClick={() => runProjectNow(project)}
                         disabled={actionLoading === project.id}
-                        title="立即执行"
                       >
                         {actionLoading === project.id ? (
                           <Loader2 className="w-4 h-4 animate-spin" />
@@ -926,7 +897,6 @@ const ProjectsPage: React.FC = () => {
                         size="sm"
                         onClick={() => toggleProject(project)}
                         disabled={actionLoading === project.id}
-                        title={project.is_active ? "停止" : "启动"}
                       >
                         {project.is_active ? (
                           <Pause className="w-4 h-4 text-yellow-500" />
@@ -939,7 +909,6 @@ const ProjectsPage: React.FC = () => {
                         size="sm"
                         onClick={() => deleteProject(project)}
                         className="text-red-500 hover:text-red-600"
-                        title="删除"
                       >
                         <Trash2 className="w-4 h-4" />
                       </Button>
@@ -1009,13 +978,13 @@ const ProjectsPage: React.FC = () => {
                   }
                   className="w-full px-3 py-2 bg-background border border-border rounded-lg"
                 >
-                  {Object.entries(ProjectPurposeLabels).map(
-                    ([value, label]) => (
-                      <option key={value} value={value}>
-                        {label}
-                      </option>
-                    ),
-                  )}
+                  {Object.entries(
+                    ProjectPurposeLabels as Record<string, string>,
+                  ).map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
                 </select>
                 <p className="text-xs text-muted-foreground mt-1">
                   "找达人博主"数据入博主池，"找热点排行"数据入热点池，"舆情监控"触发预警
@@ -1095,19 +1064,26 @@ const ProjectsPage: React.FC = () => {
                   监控平台 *
                 </label>
                 <div className="flex flex-wrap gap-2">
-                  {platforms.map((p) => (
-                    <button
-                      key={p.value}
-                      onClick={() => togglePlatform(p.value)}
-                      className={`px-3 py-2 rounded-lg border transition-colors ${
-                        newProject.platforms.includes(p.value)
-                          ? "bg-primary/10 border-primary text-primary"
-                          : "bg-background border-border hover:border-primary/50"
-                      }`}
-                    >
-                      {p.icon} {p.label}
-                    </button>
-                  ))}
+                  {platforms.map((p) => {
+                    const mapped = PLATFORM_MAP[p.value] || {
+                      label: p.label,
+                      icon: p.icon === "book-open" ? "📕" : p.icon,
+                    };
+                    return (
+                      <button
+                        key={p.value}
+                        type="button"
+                        onClick={() => togglePlatform(p.value)}
+                        className={`px-3 py-2 rounded-lg border transition-colors flex items-center gap-2 ${
+                          newProject.platforms.includes(p.value)
+                            ? "bg-primary/10 border-primary text-primary"
+                            : "bg-background border-border hover:border-primary/50"
+                        }`}
+                      >
+                        <span>{mapped.icon}</span> {mapped.label}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -1436,6 +1412,27 @@ const ProjectsPage: React.FC = () => {
                       className="text-sm cursor-pointer"
                     >
                       同时抓取评论内容
+                    </label>
+                  </div>
+                  <div className="flex items-center gap-2 pt-2">
+                    <input
+                      type="checkbox"
+                      id="usePlugin"
+                      checked={newProject.use_plugin === true}
+                      onChange={(e) =>
+                        setNewProject({
+                          ...newProject,
+                          use_plugin: e.target.checked,
+                        })
+                      }
+                      className="w-4 h-4 cursor-pointer"
+                    />
+                    <label
+                      htmlFor="usePlugin"
+                      className="text-sm cursor-pointer font-bold text-indigo-600 flex items-center gap-1"
+                    >
+                      <Zap className="w-3.5 h-3.5" />
+                      优先使用浏览器插件采集数据 (更彻底，不易被封)
                     </label>
                   </div>
                 </div>

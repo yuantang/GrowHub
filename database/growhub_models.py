@@ -317,6 +317,8 @@ class GrowHubProject(Base):
     today_crawled = Column(Integer, default=0)  # 今日抓取
     today_alerts = Column(Integer, default=0)   # 今日预警
     
+    use_plugin = Column(Boolean, default=False)  # 优先使用浏览器插件采集
+    
     # 内部任务ID（关联调度器）
     scheduler_task_id = Column(String(50), nullable=True)
     
@@ -537,3 +539,41 @@ class GrowHubSystemConfig(Base):
     config_key = Column(String(100), primary_key=True)
     config_value = Column(JSON, nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class PluginTaskStatus(enum.Enum):
+    """插件任务状态"""
+    PENDING = "pending"      # 待执行
+    RUNNING = "running"      # 执行中
+    COMPLETED = "completed"  # 已完成
+    FAILED = "failed"        # 失败
+    CANCELLED = "cancelled"  # 已取消
+
+
+class PluginTask(Base):
+    """插件任务表 - 管理通过浏览器插件执行的采集任务"""
+    __tablename__ = 'plugin_tasks'
+    
+    id = Column(Integer, primary_key=True)
+    task_id = Column(String(50), unique=True, index=True)  # UUID for tracking
+    user_id = Column(Integer, ForeignKey('growhub_users.id'), nullable=False)
+    project_id = Column(Integer, ForeignKey('growhub_projects.id'), nullable=True)
+    
+    # 任务配置
+    platform = Column(String(20))  # xhs, dy, bilibili, kuaishou
+    task_type = Column(String(30))  # fetch_url, search_notes, get_detail
+    url = Column(Text)
+    params = Column(JSON)  # 额外参数（关键词、数量等）
+    
+    # 任务状态
+    status = Column(String(20), default="pending", index=True)
+    priority = Column(Integer, default=0)  # 优先级，越高越先执行
+    
+    # 结果
+    result = Column(JSON)
+    error_message = Column(Text)
+    
+    # 时间戳
+    created_at = Column(DateTime, server_default=func.now())
+    dispatched_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)

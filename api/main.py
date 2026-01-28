@@ -49,6 +49,11 @@ from .routers.growhub_hotspots import router as growhub_hotspots_router
 from .routers.growhub_settings import router as growhub_settings_router
 from .routers.auth import router as auth_router
 from .routers.growhub_users import router as growhub_users_router
+from .routers.growhub_plugin import router as growhub_plugin_router
+from .routers.plugin_websocket import router as plugin_ws_router
+from .routers.debug_plugin import router as debug_plugin_router
+from .routers.plugin_tasks import router as plugin_tasks_router
+from .routers.growhub_analytics import router as growhub_analytics_router
 
 app = FastAPI(
     title="GrowHub API",
@@ -63,11 +68,14 @@ WEBUI_DIR = os.path.join(os.path.dirname(__file__), "webui")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:5173",  # Vite dev server
-        "http://localhost:3000",  # Production / Docker
+        "http://localhost:5173",
+        "http://localhost:5174",
+        "http://localhost:5175",
         "http://127.0.0.1:5173",
+        "http://127.0.0.1:5174",
+        "http://127.0.0.1:5175",
+        "http://localhost:3000",
         "http://127.0.0.1:3000",
-        "*",  # Allow all for Docker deployment
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -117,6 +125,11 @@ app.include_router(growhub_hotspots_router, prefix="/api")
 app.include_router(growhub_settings_router, prefix="/api")
 app.include_router(auth_router, prefix="/api/auth", tags=["Authentication"])
 app.include_router(growhub_users_router, prefix="/api/admin", tags=["Admin"])
+app.include_router(growhub_plugin_router)  # Plugin API (no prefix, already has /api/plugin)
+app.include_router(plugin_ws_router)  # Plugin WebSocket (no prefix, already has /ws/plugin)
+app.include_router(debug_plugin_router) # Debug Plugin Inspection
+app.include_router(plugin_tasks_router, prefix="/api") # Plugin Task Queue Management
+app.include_router(growhub_analytics_router, prefix="/api") # Analytics Dashboard
 
 # Phase 2: 监控项目模块
 # (Moved to top imports)

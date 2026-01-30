@@ -479,6 +479,7 @@ const AccountPoolPage: React.FC = () => {
                 <th className="p-4">状态</th>
                 <th className="p-4">健康度</th>
                 <th className="p-4">使用统计</th>
+                <th className="p-4">最后更新</th>
                 <th className="p-4">Cookie</th>
                 <th className="p-4">操作</th>
               </tr>
@@ -487,7 +488,7 @@ const AccountPoolPage: React.FC = () => {
               {filteredAccounts.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={7}
+                    colSpan={8}
                     className="p-12 text-center text-muted-foreground"
                   >
                     <Users className="w-12 h-12 mx-auto mb-3 opacity-30" />
@@ -540,6 +541,11 @@ const AccountPoolPage: React.FC = () => {
                         <div className="text-muted-foreground">
                           成功: {acc.success_count} / 失败: {acc.fail_count}
                         </div>
+                      </td>
+                      <td className="p-4 text-sm text-muted-foreground">
+                        {acc.updated_at
+                          ? new Date(acc.updated_at).toLocaleString()
+                          : "从未"}
                       </td>
                       <td className="p-4">
                         <div className="flex items-center gap-2">

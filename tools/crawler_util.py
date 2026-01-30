@@ -127,6 +127,14 @@ def show_qrcode(qr_code) -> None:  # type: ignore
 
 
 def get_user_agent() -> str:
+    # Try to use configured user agent first (from GrowHub sync)
+    try:
+        import config
+        if hasattr(config, "DEFAULT_USER_AGENT") and config.DEFAULT_USER_AGENT:
+            return config.DEFAULT_USER_AGENT
+    except ImportError:
+        pass
+
     ua_list = [
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/104.0.5112.79 Safari/537.36",

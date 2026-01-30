@@ -7,6 +7,8 @@ import {
   updateProject,
   fetchAIKeywords,
   fetchNotificationChannels,
+  runProjectImmediately,
+  fetchProjectLogs,
 } from "@/api";
 import type {
   Project,
@@ -427,10 +429,9 @@ const ProjectDetailPage: React.FC = () => {
 
   const loadLogs = async () => {
     try {
-      const res = await fetch(`/api/growhub/projects/${projectId}/logs`);
-      const data = await res.json();
-      if (data.logs) {
-        setLogs(data.logs);
+      const logsData = await fetchProjectLogs(projectId);
+      if (logsData) {
+        setLogs(logsData);
       }
     } catch (e) {
       console.error(e);
@@ -627,9 +628,7 @@ const ProjectDetailPage: React.FC = () => {
             size="sm"
             onClick={async () => {
               try {
-                await fetch(`/api/growhub/projects/${projectId}/run`, {
-                  method: "POST",
-                });
+                await runProjectImmediately(projectId);
                 alert('任务已启动！可在"内容列表"中查看新抓取的内容。');
                 loadProjectData();
               } catch (e) {

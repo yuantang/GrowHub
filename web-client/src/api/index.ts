@@ -231,6 +231,7 @@ export interface GrowHubAccount {
     group: string;
     tags: string[];
     notes?: string;
+    updated_at?: string;
 }
 
 export interface GrowHubAccountStats {
@@ -331,6 +332,9 @@ export interface Project {
 export const fetchProjects = () =>
     api.get<Project[]>('/growhub/projects').then(res => res.data);
 
+export const fetchDashboardStats = () =>
+    api.get<any>('/growhub/projects/dashboard/stats').then(res => res.data);
+
 export const createProject = (data: any) =>
     api.post<Project>('/growhub/projects', data).then(res => res.data);
 
@@ -354,6 +358,9 @@ export const runProjectImmediately = (id: number) =>
 
 export const fetchProjectPreflight = (id: number) =>
     api.get(`/growhub/projects/${id}/preflight`).then(res => res.data);
+
+export const fetchProjectLogs = (id: number) =>
+    api.get<{ logs: string[] }>(`/growhub/projects/${id}/logs`).then(res => res.data.logs);
 
 // ============ Project Detail API ============
 export interface ProjectContentFilters {

@@ -20,7 +20,6 @@ import CreatorsPage from "@/pages/CreatorsPage";
 import SentimentPage from "@/pages/SentimentPage";
 import UserManagementPage from "@/pages/admin/UserManagementPage";
 import PluginStatusPage from "@/pages/PluginStatusPage";
-import AnalyticsDashboardPage from "@/pages/AnalyticsDashboardPage";
 
 import { AuthProvider } from "@/contexts/AuthContext";
 import LoginPage from "@/pages/LoginPage";
@@ -76,7 +75,6 @@ function App() {
             <Route path="notifications" element={<NotificationPage />} />
             <Route path="rules" element={<RulesPage />} />
             <Route path="plugin-status" element={<PluginStatusPage />} />
-            <Route path="analytics" element={<AnalyticsDashboardPage />} />
 
             {/* Admin Only Routes */}
             <Route

@@ -41,6 +41,11 @@ dependencies = [
     "apscheduler==3.11.2",
     "tzlocal==5.3.1",
     "loguru>=0.7.3",
+    "python-jose[cryptography]==3.5.0",
+    "passlib[bcrypt]==1.7.4",
+    "email-validator>=2.0.0",
+    "python-multipart>=0.0.9",
+    "opencv-python-headless>=4.11.0.86",
 ]
 
 [[tool.uv.index]]

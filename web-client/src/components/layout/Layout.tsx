@@ -15,7 +15,6 @@ import {
   Bell,
   UserCog,
   Plug,
-  BarChart3,
 } from "lucide-react";
 import { cn } from "@/utils/cn";
 
@@ -37,7 +36,6 @@ const Layout: React.FC = () => {
     { to: "/creators", icon: Users, label: "达人博主" },
     { to: "/hotspots", icon: Flame, label: "热点排行" },
     { to: "/sentiment", icon: AlertTriangle, label: "舆情监控" },
-    { to: "/analytics", icon: BarChart3, label: "数据分析" },
 
     // 工具
     { to: "/ai-creator", icon: Sparkles, label: "AI 创作" },

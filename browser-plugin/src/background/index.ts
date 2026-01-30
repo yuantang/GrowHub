@@ -1,6 +1,6 @@
 // GrowHub Browser Plugin - Background Service Worker
 
-console.log('[GrowHub] Service Worker started');
+console.log('[GrowHub] Service Worker started (V2 - Strict Intercept)');
 
 // ==========================================
 // 1. Offscreen Document Management
@@ -95,8 +95,38 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   }
 });
 
-// 2. Port Management & Persistent Connection
 // ==========================================
+// 2. Lifecycle & Cookie Listeners
+// ==========================================
+
+chrome.cookies.onChanged.addListener((changeInfo) => {
+  const { cookie, removed } = changeInfo;
+  
+  // Platform mapping for sync
+  const platformMap: Record<string, string> = {
+    'xiaohongshu.com': 'xhs',
+    'douyin.com': 'dy',
+    'bilibili.com': 'bili',
+    'weibo.com': 'wb',
+    'weibo.cn': 'wb',
+    'kuaishou.com': 'ks'
+  };
+  
+  const matchedDomain = Object.keys(platformMap).find(d => cookie.domain.includes(d));
+  
+  if (matchedDomain) {
+    const platform = platformMap[matchedDomain];
+    console.log(`[GrowHub] Cookie changed for ${platform}: ${cookie.name} (removed: ${removed})`);
+    chrome.storage.local.set({ lastCookieChange: Date.now() });
+    
+    // Debounced sync for all cookies of the platform
+    if (cookieSyncTimeout) clearTimeout(cookieSyncTimeout);
+    cookieSyncTimeout = setTimeout(syncCookies, 2000);
+
+    // Immediate sync intent via offscreen for specific platforms if needed
+    // chrome.runtime.sendMessage({ type: 'SYNC_COOKIES_TO_BACKEND', platform }).catch(() => {});
+  }
+});
 
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name === 'offscreen-keep-alive') {
@@ -112,16 +142,116 @@ chrome.runtime.onConnect.addListener((port) => {
 // 3. Message Handling
 // ==========================================
 
+// ==========================================
+// 3. Message Handling
+// ==========================================
+
+// Track pending captures: { [platform]: { resolve, reject, timer } }
+const pendingCaptures: Record<string, any> = {};
+
+async function handleNavigateAndCapture(message: any, sendResponse: (response: any) => void) {
+  try {
+    const { url, platform, waitPattern } = message;
+    console.log(`[GrowHub Background] NAVIGATE_START | Plat=${platform} | URL=${url}`);
+    
+    // 1. Find or Open Tab
+    const matchPattern = platform === 'dy' ? '*://*.douyin.com/*' : '*://*.xiaohongshu.com/*';
+    const tabs = await chrome.tabs.query({ url: matchPattern });
+    let tabId = tabs.find(t => t.active)?.id || tabs[0]?.id;
+    
+    if (tabId) {
+        await chrome.tabs.update(tabId, { url, active: true });
+    } else {
+        const newTab = await chrome.tabs.create({ url, active: true });
+        tabId = newTab.id;
+    }
+
+    // 2. Setup Capture Promise (Race condition handled by offscreen timeout usually, but we add local timeout too)
+    // We return "PENDING" immediately so Offscreen knows we started.
+    // The actual data will be sent via WebSocket from Offscreen when we notify it later? 
+    // ACTUALLY: The Offscreen is waiting on `runtime.sendMessage`. 
+    // We can keep this connection open if it's short, OR we return "OK" and let Offscreen poll/wait.
+    // BUT: `sendResponse` is for the Offscreen script. We can keep it pending!
+    
+    // Store the sendResponse to call it when data arrives
+    if (pendingCaptures[platform]) {
+        clearTimeout(pendingCaptures[platform].timer);
+        // Maybe reject old one?
+    }
+
+    pendingCaptures[platform] = {
+        sendResponse,
+        timer: setTimeout(() => {
+            if (pendingCaptures[platform]) {
+                try {
+                   pendingCaptures[platform].sendResponse({ success: false, error: 'Capture timeout (Background)' });
+                } catch (e) {}
+                delete pendingCaptures[platform];
+                addLog(`Timeout: Capture for ${platform} abandoned`, 'warn');
+            }
+        }, 60000)
+    };
+    
+    // Note: We MUST NOT return a value here because handleNavigateAndCapture 
+    // is called by onMessage which returns true.
+  } catch (e: any) {
+    console.error('[GrowHub] handleNavigateAndCapture error:', e);
+    sendResponse({ success: false, error: e.message });
+  }
+}
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   // HEARTBEAT: Silent unless debugging
   if (message.type === 'KEEP_ALIVE') {
     addLog('[HEARTBEAT] SW Alive');
     return;
   }
+  
+  // NAVIGATE & CAPTURE
+  if (message.type === 'NAVIGATE_AND_CAPTURE') {
+    handleNavigateAndCapture(message, sendResponse);
+    return true; // KEEP CHANNEL OPEN for async response
+  }
 
-  // Handle centralized logging from Offscreen
+  // DATA INTERCEPTED (From Content Script)
+  if (message.type === 'INTERCEPTED_DATA') {
+     const { platform, payload } = message;
+     addLog(`Intercepted Data Recv: ${platform} (${payload?.body?.length || 0} bytes)`);
+     
+     // Save for local inspection
+     chrome.storage.local.set({ 
+       lastCapture: {
+         platform,
+         url: payload.url,
+         dataLength: payload.body?.length || 0,
+         isSSR: !!payload.isSSR,
+         timestamp: Date.now(),
+         // Keep a preview of the body (first 1000 chars) or full if reasonable
+         bodyPreview: payload.body?.substring(0, 1000)
+       }
+     });
+
+     if (pendingCaptures[platform]) {
+         const { sendResponse, timer } = pendingCaptures[platform];
+         clearTimeout(timer);
+         
+         const isSSR = payload.isSSR;
+         addLog(`Resolving capture for ${platform} (SSR=${!!isSSR})`, 'success');
+         
+         sendResponse({ success: true, data: payload });
+         delete pendingCaptures[platform];
+     } else {
+         addLog(`No pending capture for ${platform}, caching data...`, 'info');
+     }
+     return; // No response needed to content script
+  }
+
+
+  // Handle centralized logging from any source (Offscreen or Content Scripts)
   if (message.type === 'LOG' && message.message) {
-    addLog(`[Offscreen] ${message.message}`);
+    const level = message.level || 'info';
+    const msg = message.source ? `[${message.source}] ${message.message}` : message.message;
+    addLog(msg, level as any);
     return;
   }
 
@@ -191,9 +321,30 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       });
       return true; // Async response
       
+    case 'SHOW_NOTIFICATION':
+      chrome.notifications.create(message.id || Date.now().toString(), {
+        type: 'basic',
+        iconUrl: '/icons/icon128.png',
+        title: message.title || 'GrowHub 通知',
+        message: message.message || '',
+        priority: 2
+      });
+      break;
+
+    case 'UPDATE_PLATFORM_PROFILE':
+      // Receive passive update from content script
+      if (message.platform && message.data) {
+        chrome.storage.local.get('platformProfiles').then(({ platformProfiles = {} }) => {
+          const newState = { ...platformProfiles, [message.platform]: message.data };
+          chrome.storage.local.set({ platformProfiles: newState });
+          console.log(`[GrowHub] Updated profile from content script for ${message.platform}`);
+        });
+      }
+      break;
+
     case 'LOGIN_EXPIRED':
       // Handle login expiration notification from offscreen
-      addLog(`⚠️ Login expired for platform: ${message.platform}`);
+      addLog(`⚠️ Login expired for platform: ${message.platform}`, 'warn');
       chrome.action.setBadgeText({ text: '!' });
       chrome.action.setBadgeBackgroundColor({ color: '#f59e0b' }); // Orange warning
       // Store the expiration status for popup to display
@@ -213,23 +364,14 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 // TARGET_DOMAINS removed, replaced by platformConfigs in syncCookies
 let cookieSyncTimeout: ReturnType<typeof setTimeout> | null = null;
 
-chrome.cookies.onChanged.addListener((changeInfo) => {
-  const { cookie } = changeInfo;
-  // Check if it's one of our target domains
-  const isTarget = ['.xiaohongshu.com', '.douyin.com', '.kuaishou.com', '.bilibili.com'].some(d => cookie.domain.includes(d.replace('.', '')));
-  if (!isTarget) return;
-
-  if (cookieSyncTimeout) clearTimeout(cookieSyncTimeout);
-  cookieSyncTimeout = setTimeout(syncCookies, 2000);
-});
 
 // Atomic Log Queue to prevent storage race conditions
-let logQueue: string[] = [];
+let logQueue: any[] = [];
 let isProcessingQueue = false;
 
-async function addLog(message: string) {
+async function addLog(message: string, level: 'info' | 'warn' | 'error' | 'success' = 'info') {
   const timestamp = new Date().toLocaleTimeString();
-  logQueue.push(`[${timestamp}] ${message}`);
+  logQueue.push({ message, level, timestamp });
   processLogQueue();
 }
 
@@ -242,7 +384,9 @@ async function processLogQueue() {
     logQueue = [];
     
     const { logs = [] } = await chrome.storage.local.get('logs');
-    const newLogs = [...toProcess.reverse(), ...logs].slice(0, 100);
+    // Ensure all logs are objects (compatibility)
+    const normalizedLogs = logs.map((l: any) => typeof l === 'string' ? { message: l, level: 'info', timestamp: '' } : l);
+    const newLogs = [...toProcess.reverse(), ...normalizedLogs].slice(0, 100);
     await chrome.storage.local.set({ logs: newLogs });
   } catch (err) {
     console.error('[GrowHub] Log queue error:', err);
@@ -302,10 +446,16 @@ async function syncCookies() {
   }
   
   try {
+    const fingerprint = {
+      userAgent: navigator.userAgent,
+      language: navigator.language,
+      platform: navigator.platform
+    };
+
     const res = await fetch(`${serverUrl}/api/plugin/sync-cookies`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiToken}` },
-      body: JSON.stringify({ cookies: allCookies })
+      body: JSON.stringify({ cookies: allCookies, fingerprint })
     });
     if (res.ok) { 
       addLog('✅ Cookies synced successfully!');

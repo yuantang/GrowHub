@@ -42,9 +42,9 @@ function reportStatus(type: 'OFFSCREEN_ALIVE' | 'WS_CONNECTED' | 'WS_DISCONNECTE
   }
 }
 
-function addLog(message: string) {
+function addLog(message: string, level: 'info' | 'warn' | 'error' | 'success' = 'info') {
   // ATOMIC LOGGING: Delegate to Background to avoid storage race
-  chrome.runtime.sendMessage({ type: 'LOG', message }).catch(() => {
+  chrome.runtime.sendMessage({ type: 'LOG', message, level }).catch(() => {
     console.error('[GrowHub Offscreen] Failed to send log:', message);
   });
 }
@@ -62,12 +62,38 @@ function addLog(message: string) {
   addLog(`Script execution starting (V4). URL Params: url=${hasUrl}, token=${hasToken}`);
   reportStatus('OFFSCREEN_ALIVE');
 
+  // V5: Initial Profile Fetch
+  fetchAndUpdateProfiles();
+
   // Trigger connection after a brief delay
   setTimeout(() => {
     addLog('Auto-triggering connect() from IIFE');
     connect();
   }, 1000);
+
+  // V5: Periodic Profile Refresh (every 5 minutes)
+  setInterval(fetchAndUpdateProfiles, 5 * 60 * 1000);
 })();
+
+async function fetchAndUpdateProfiles() {
+  const { fetchPlatformProfile, PLATFORM_DOMAINS } = await import("../utils/platforms");
+  const platforms = Object.keys(PLATFORM_DOMAINS);
+  const profiles: Record<string, any> = {};
+
+  addLog(`🔄 Pre-fetching profiles for ${platforms.length} platforms...`);
+  
+  for (const platform of platforms) {
+    try {
+      const profile = await fetchPlatformProfile(platform);
+      if (profile.isLoggedIn) {
+        profiles[platform] = profile;
+      }
+    } catch (e) {}
+  }
+
+  await chrome.storage.local.set({ platformProfiles: profiles });
+  addLog(`✨ Profile cache updated (${Object.keys(profiles).length} accounts online)`);
+}
 
 // ==========================================
 // 3. WebSocket Logic (Singleton)
@@ -162,6 +188,21 @@ async function connect() {
           ws?.send(JSON.stringify({ type: 'PONG' }));
         } else if (message.type === 'FETCH_TASK') {
           await handleFetchTask(message);
+        } else if (message.type === "BATCH_FETCH") {
+          const tasks = message.tasks || [];
+          addLog(`Received batch of ${tasks.length} tasks`, 'info');
+          // Process sequentially to avoid heavy rate limits
+          (async () => {
+            for (const task of tasks) {
+              try {
+                await handleFetchTask(task);
+                // Simple delay between batch items
+                await new Promise(resolve => setTimeout(resolve, 1000));
+              } catch (e: any) {
+                addLog(`Batch task ${task.task_id} failed: ${e.message}`, 'error');
+              }
+            }
+          })();
         } else if (message.type === 'TASK_QUEUE') {
           // Store task queue for Popup to display
           await chrome.storage.local.set({ taskQueue: message.tasks || [] });
@@ -208,16 +249,46 @@ function updateConnectionStatus(connected: boolean) {
 // 4. Task Handling
 // ==========================================
 
+async function updateTaskStatus(taskId: string, status: string, message?: string) {
+  try {
+    const { taskQueue = [] } = await chrome.storage.local.get('taskQueue');
+    const task = taskQueue.find((t: any) => t.task_id === taskId);
+    const updated = taskQueue.map((t: any) => 
+      t.task_id === taskId ? { ...t, status } : t
+    );
+    await chrome.storage.local.set({ taskQueue: updated });
+
+    if (status === 'completed') {
+      await addLog(`Task ${taskId} completed successfully!`, 'success');
+      chrome.runtime.sendMessage({
+        type: 'SHOW_NOTIFICATION',
+        title: '任务完成 ✅',
+        message: `${task?.task_type || '采集任务'} 已成功完成`
+      });
+    } else if (status === 'failed') {
+      await addLog(`Task ${taskId} failed: ${message || 'Unknown error'}`, 'error');
+      chrome.runtime.sendMessage({
+        type: 'SHOW_NOTIFICATION',
+        title: '任务失败 ❌',
+        message: `${task?.task_type || '采集任务'} 执行失败: ${message || ''}`
+      });
+    }
+  } catch (e) {
+    console.error('[Offscreen] Failed to update task status:', e);
+  }
+}
+
 async function handleFetchTask(task: any) {
-  const taskName = `${task.platform.toUpperCase()} ${task.request.method} ${task.request.url.split('/').pop()}`;
+  const taskName = `${task.platform.toUpperCase()} ${task.task_type || (task.request?.method + ' ' + task.request?.url.split('/').pop())}`;
   console.log('[GrowHub Offscreen] Executing task:', task.task_id, taskName);
   
+  await updateTaskStatus(task.task_id, 'running');
   await chrome.storage.local.set({ activeTask: taskName });
   await addLog(`Starting task: ${taskName}`);
   
   const startTime = Date.now();
   const MAX_RETRIES = 3;
-  const REQUEST_TIMEOUT = 30000; // 30 seconds
+  const REQUEST_TIMEOUT = 60000; // 60 seconds
   
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     const controller = new AbortController();
@@ -231,6 +302,71 @@ async function handleFetchTask(task: any) {
         signal: controller.signal,
       };
       
+      // STRATEGY: Navigate & Capture (Passive Interception)
+      // For Douyin Search, we drive the browser to the search page and wait for the network spy to catch the data.
+      if (task.platform === 'dy' && (task.request.url.includes('/web/search/item/') || task.request.url.includes('/general/search/single/'))) {
+         addLog(`🧭 Navigating to Search Page...`);
+         
+         try {
+             // Extract keyword from URL or Body
+             const urlObj = new URL(task.request.url);
+             const keyword = urlObj.searchParams.get('keyword');
+             
+             if (!keyword) {
+                 throw new Error('Could not extract keyword for navigation');
+             }
+             
+             const targetUrl = `https://www.douyin.com/search/${encodeURIComponent(keyword)}`;
+             
+             const captureResult = await chrome.runtime.sendMessage({
+                 type: 'NAVIGATE_AND_CAPTURE',
+                 platform: 'dy',
+                 url: targetUrl,
+                 waitPattern: 'general/search/single'
+             });
+             
+             if (captureResult && captureResult.success && captureResult.data) {
+                  const body = captureResult.data.body;
+                  await addLog(`✅ Intercepted search data!`);
+
+                  const result = {
+                    type: 'TASK_RESULT',
+                    task_id: task.task_id,
+                    success: true,
+                    response: {
+                      status: 200,
+                      headers: {},
+                      body: body
+                    },
+                    duration_ms: Date.now() - startTime,
+                    login_expired: false,
+                    source: 'intercept'
+                  };
+                  
+                  ws?.send(JSON.stringify(result));
+                  await updateTaskStatus(task.task_id, 'completed');
+                  const { taskCount = 0 } = await chrome.storage.local.get('taskCount');
+                  await chrome.storage.local.set({ taskCount: taskCount + 1, activeTask: null, lastSync: Date.now() });
+                  return;
+             } else {
+                 throw new Error(captureResult?.error || 'Capture failed');
+             }
+         } catch (err: any) {
+             addLog(`Navigation capture failed: ${err.message}.`, 'error');
+             // Do not fallback to fetch, just fail
+             const result = {
+                type: 'TASK_RESULT',
+                task_id: task.task_id,
+                success: false,
+                error: err.message,
+                duration_ms: Date.now() - startTime
+             };
+             ws?.send(JSON.stringify(result));
+             await updateTaskStatus(task.task_id, 'failed');
+             return;
+         }
+      }
+
       if (task.request.body && task.request.method !== 'GET') {
         fetchOptions.body = task.request.body;
       }
@@ -273,9 +409,10 @@ async function handleFetchTask(task: any) {
       };
       
       ws?.send(JSON.stringify(result));
+      await updateTaskStatus(task.task_id, 'completed');
       
       const { taskCount = 0 } = await chrome.storage.local.get('taskCount');
-      await chrome.storage.local.set({ taskCount: taskCount + 1, activeTask: null });
+      await chrome.storage.local.set({ taskCount: taskCount + 1, activeTask: null, lastSync: Date.now() });
       
       await addLog(`Task completed: ${taskName} (${response.status})${loginExpired ? ' ⚠️ Login Expired' : ''}`);
       return; // Success, exit function
@@ -295,14 +432,15 @@ async function handleFetchTask(task: any) {
       
       // Final failure
       console.error('[GrowHub Offscreen] Task failed:', e);
+      await updateTaskStatus(task.task_id, 'failed');
       await chrome.storage.local.set({ activeTask: null });
-      await addLog(`Task failed: ${taskName} - ${isTimeout ? 'Request timeout (30s)' : e.message}`);
+      await addLog(`Task failed: ${taskName} - ${isTimeout ? 'Request timeout (60s)' : e.message}`);
       
       ws?.send(JSON.stringify({
         type: 'TASK_RESULT',
         task_id: task.task_id,
         success: false,
-        error: isTimeout ? 'Request timeout after 30s' : (e.message || 'Unknown error'),
+        error: isTimeout ? 'Request timeout after 60s' : (e.message || 'Unknown error'),
         duration_ms: Date.now() - startTime,
         retries: attempt - 1,
       }));
@@ -324,8 +462,69 @@ chrome.runtime.onMessage.addListener((message) => {
     if (ws) ws.close();
     ws = null;
     chrome.storage.local.set({ isConnected: false });
+  } else if (message.type === 'SYNC_COOKIES_TO_BACKEND') {
+    handleSyncCookies(message.platform).catch((e) => {
+      console.error('[Offscreen] Cookie sync fail:', e);
+    });
   }
 });
+
+/**
+ * Sync cookies for a specific platform to the backend
+ */
+async function handleSyncCookies(platform: string) {
+  const { PLATFORM_DOMAINS } = await import("../utils/platforms");
+  const domains = PLATFORM_DOMAINS[platform] || [];
+  if (domains.length === 0) return;
+
+  const allFound: chrome.cookies.Cookie[] = [];
+  for (const domain of domains) {
+    try {
+      const cookies = await chrome.cookies.getAll({ domain });
+      allFound.push(...cookies);
+    } catch (e) {
+      console.warn(`[Offscreen] Failed to get cookies for ${domain}:`, e);
+    }
+  }
+
+  if (allFound.length === 0) return;
+
+  // Deduplication
+  const unique = Array.from(
+    new Map(allFound.map((c) => [`${c.name}|${c.domain}`, c])).values()
+  );
+
+  const { serverUrl, apiToken } = await chrome.storage.local.get(['serverUrl', 'apiToken']);
+  if (!serverUrl || !apiToken) return;
+
+  const endpoint = `${serverUrl.replace(/\/$/, '')}/api/plugin/sync-cookies`;
+  
+  try {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiToken}`
+      },
+      body: JSON.stringify({
+        cookies: {
+          [platform]: unique
+        }
+      })
+    });
+
+    const result = await response.json();
+    if (response.ok) {
+      addLog(`✨ Synced ${platform} cookies to server (${unique.length} items)`);
+    } else {
+      console.error('[Offscreen] Cookie sync error:', result.message || response.statusText);
+      addLog(`❌ Server error during cookie sync: ${result.message || response.statusText}`);
+    }
+  } catch (e: any) {
+    console.error('[Offscreen] Network error syncing cookies:', e);
+    addLog(`❌ Network error during cookie sync: ${e.message}`);
+  }
+}
 
 chrome.storage.onChanged.addListener((changes) => {
   if (changes.serverUrl || changes.apiToken) {

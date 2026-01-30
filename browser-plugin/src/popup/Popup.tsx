@@ -16,6 +16,7 @@ export default function Popup() {
     setConfig,
     clearConfig,
     taskQueue,
+    lastCapture,
   } = usePluginStore();
   const [activeTab, setActiveTab] = useState<Tab>(
     serverUrl ? "status" : "bind",
@@ -31,35 +32,43 @@ export default function Popup() {
   // Current session cookies for real-time display
   const [currentCookies, setCurrentCookies] = useState<any[]>([]);
   const [loadingCookies, setLoadingCookies] = useState(false);
+  const [currentProfile, setCurrentProfile] = useState<any>(null);
+  const [logFilter, setLogFilter] = useState<"all" | "info" | "warn" | "error">(
+    "all",
+  );
 
-  // V4 Optimization: Immediate status sync and polling
+  // V4 Optimization: Trust store.ts for initial load and onChanged sync.
   useEffect(() => {
-    // 1. Initial fresh pull from storage
-    chrome.storage.local
-      .get(["isConnected", "taskCount", "lastSync", "activeTask", "logs"])
-      .then((data) => {
-        usePluginStore.setState({
-          isConnected: !!data.isConnected,
-          taskCount: data.taskCount || 0,
-          lastSync: data.lastSync || null,
-          activeTask: data.activeTask || null,
-          logs: data.logs || [],
-        });
-      });
-
-    // 2. Continuous polling (Fallback for storage listener)
+    // We keep the polling for taskCount/isConnected as a fallback if needed,
+    // but the store already handles this via storage.onChanged.
+    // For now, let's just keep the interval for heartbeat/debug check if desired.
     const interval = setInterval(() => {
-      chrome.storage.local
-        .get(["isConnected", "taskCount", "activeTask"])
-        .then((data) => {
-          if (data.isConnected !== isConnected) {
-            usePluginStore.setState({ isConnected: !!data.isConnected });
-          }
-        });
-    }, 2000);
-
+      // Just a heartbeat or minimal check
+    }, 5000);
     return () => clearInterval(interval);
-  }, [isConnected]);
+  }, []);
+
+  // V6: Listen for cookie changes specifically
+  useEffect(() => {
+    if (
+      activeTab === "accounts" &&
+      activeView === "accounts" &&
+      selectedPlatform
+    ) {
+      const listener = (changes: any, areaName: string) => {
+        if (areaName === "local" && changes.lastCookieChange) {
+          usePluginStore
+            .getState()
+            .addLog(
+              `[Popup] Cookie change detected, refreshing ${selectedPlatform} account...`,
+            );
+          loadCurrentCookies(selectedPlatform);
+        }
+      };
+      chrome.storage.onChanged.addListener(listener);
+      return () => chrome.storage.onChanged.removeListener(listener);
+    }
+  }, [activeTab, activeView, selectedPlatform]);
 
   const handleBind = async () => {
     if (!inputUrl || !inputToken) return;
@@ -108,14 +117,32 @@ export default function Popup() {
 
   const loadCurrentCookies = async (platform: string) => {
     setLoadingCookies(true);
-    const platformConfigs: Record<string, string[]> = {
-      xhs: [".xiaohongshu.com", "xiaohongshu.com"],
-      dy: [".douyin.com", "douyin.com"],
-      ks: [".kuaishou.com", "kuaishou.com"],
-      bili: [".bilibili.com", "bilibili.com"],
-    };
+    setCurrentProfile(null);
 
-    const domains = platformConfigs[platform] || [];
+    const { fetchPlatformProfile, PLATFORM_DOMAINS } =
+      await import("../utils/platforms");
+
+    // 1. Try Cache First (One-click experience)
+    const { platformProfiles = {} } =
+      await chrome.storage.local.get("platformProfiles");
+    if (platformProfiles[platform]) {
+      setCurrentProfile(platformProfiles[platform]);
+    }
+
+    // 2. Fetch Fresh Profile Info
+    try {
+      const profile = await fetchPlatformProfile(platform);
+      setCurrentProfile(profile);
+      // Update cache in background
+      chrome.storage.local.set({
+        platformProfiles: { ...platformProfiles, [platform]: profile },
+      });
+    } catch (e) {
+      console.warn("Profile fetch failed:", e);
+    }
+
+    // 2. Fetch Cookie List
+    const domains = PLATFORM_DOMAINS[platform] || [];
     const allFound: any[] = [];
 
     for (const domain of domains) {
@@ -131,6 +158,84 @@ export default function Popup() {
     setLoadingCookies(false);
   };
 
+  const handleSwitchAccount = async (input: any) => {
+    try {
+      if (!confirm("确定要切换到该账号吗？当前浏览器的登录状态将被覆盖。"))
+        return;
+
+      const { PLATFORM_DOMAINS } = await import("../utils/platforms");
+      const domains = selectedPlatform
+        ? PLATFORM_DOMAINS[selectedPlatform] || []
+        : [];
+
+      let cookiesToSet: any[] = [];
+
+      if (typeof input === "string") {
+        // From database string
+        const cookiePairs = input.split(";").map((s: string) => s.trim());
+        for (const pair of cookiePairs) {
+          const index = pair.indexOf("=");
+          if (index === -1) continue;
+          cookiesToSet.push({
+            name: pair.substring(0, index),
+            value: pair.substring(index + 1),
+          });
+        }
+      } else if (Array.isArray(input)) {
+        // From local storage array
+        cookiesToSet = input;
+      }
+
+      usePluginStore
+        .getState()
+        .addLog(
+          `[Popup] Injecting ${cookiesToSet.length} cookies for ${selectedPlatform}...`,
+        );
+
+      for (const c of cookiesToSet) {
+        // If it's a rich cookie object (has domain/path)
+        if (c.domain) {
+          const url = `https://${c.domain.startsWith(".") ? c.domain.substring(1) : c.domain}${c.path || "/"}`;
+          await chrome.cookies.set({
+            url,
+            name: c.name,
+            value: c.value,
+            domain: c.domain,
+            path: c.path,
+            secure: c.secure,
+            httpOnly: c.httpOnly,
+            sameSite: c.sameSite,
+            expirationDate: c.expirationDate,
+          });
+        } else {
+          // It's a simple name/value pair, apply to all associated domains
+          for (const domain of domains) {
+            try {
+              await chrome.cookies.set({
+                url: `https://${domain.startsWith(".") ? domain.substring(1) : domain}`,
+                name: c.name,
+                value: c.value,
+                domain: domain.startsWith(".") ? domain : undefined,
+                path: "/",
+              });
+            } catch (e) {}
+          }
+        }
+      }
+
+      alert("切换成功！请刷新页面查看。");
+      if (selectedPlatform) {
+        setTimeout(() => loadCurrentCookies(selectedPlatform), 500);
+      }
+
+      // Trigger sync to backend
+      chrome.runtime.sendMessage({ type: "MANUAL_SYNC_COOKIES" });
+    } catch (e: any) {
+      console.error("Account switch failed:", e);
+      addLog(`❌ Switch failed: ${e.message}`);
+    }
+  };
+
   const handleCopyCK = (cookies: any[]) => {
     const ckString = cookies.map((c) => `${c.name}=${c.value}`).join("; ");
     navigator.clipboard.writeText(ckString);
@@ -142,30 +247,6 @@ export default function Popup() {
     if (!name) return;
     usePluginStore.getState().saveAccount(platform, name, currentCookies);
     alert("账号已保存到本地");
-  };
-
-  const handleSwitchAccount = async (cookies: any[]) => {
-    if (!confirm("确定要切换到该账号吗？当前浏览器的登录状态将被覆盖。"))
-      return;
-
-    for (const c of cookies) {
-      const url = `https://${c.domain.startsWith(".") ? c.domain.substring(1) : c.domain}${c.path}`;
-      await chrome.cookies.set({
-        url,
-        name: c.name,
-        value: c.value,
-        domain: c.domain,
-        path: c.path,
-        secure: c.secure,
-        httpOnly: c.httpOnly,
-        sameSite: c.sameSite,
-        expirationDate: c.expirationDate,
-      });
-    }
-
-    alert("切换成功！请刷新页面查看。");
-    // Trigger sync
-    chrome.runtime.sendMessage({ type: "MANUAL_SYNC_COOKIES" });
   };
 
   return (
@@ -277,52 +358,152 @@ export default function Popup() {
               </div>
             </div>
 
-            {/* Active Task */}
+            {/* Task Overview */}
             <div className="bg-card rounded-xl p-4 border border-border">
-              <div className="flex items-center justify-between mb-2">
-                <h3 className="text-sm font-semibold text-white">当前任务</h3>
-                {activeTask && (
-                  <span className="flex h-2 w-2 relative">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-semibold text-white">任务概览</h3>
+                <div className="flex items-center space-x-2">
+                  <span className="text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded-full">
+                    {taskQueue.filter((t) => t.status === "pending").length}{" "}
+                    待执行
                   </span>
-                )}
+                  <span className="text-[10px] bg-green-500/10 text-green-500 px-2 py-0.5 rounded-full">
+                    {taskQueue.filter((t) => t.status === "completed").length}{" "}
+                    已完成
+                  </span>
+                </div>
               </div>
+
+              {/* Progress Bar */}
+              {taskQueue.length > 0 && (
+                <div className="w-full bg-slate-900 rounded-full h-1.5 mb-4 overflow-hidden">
+                  <div
+                    className="bg-primary h-full transition-all duration-500"
+                    style={{
+                      width: `${(taskQueue.filter((t) => t.status === "completed").length / taskQueue.length) * 100}%`,
+                    }}
+                  ></div>
+                </div>
+              )}
+
               <div
                 className={`p-3 rounded-lg border ${activeTask ? "bg-primary/5 border-primary/20" : "bg-slate-900/50 border-border/50"}`}
               >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-2">
+                    {activeTask && (
+                      <span className="flex h-2 w-2 relative">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
+                      </span>
+                    )}
+                    <span className="text-xs text-gray-400">当前执行</span>
+                  </div>
+                </div>
                 {activeTask ? (
-                  <p className="text-sm text-primary font-medium">
+                  <p className="text-sm text-primary font-medium mt-1 truncate">
                     {activeTask}
                   </p>
                 ) : (
-                  <p className="text-sm text-gray-500 italic">
+                  <p className="text-sm text-gray-500 italic mt-1">
                     暂无进行中的任务
                   </p>
                 )}
               </div>
             </div>
 
+            {/* Capture Preview (New for debugging) */}
+            {lastCapture && (
+              <div className="bg-card rounded-xl p-4 border border-primary/30 bg-primary/5">
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-sm font-semibold text-primary">
+                    本地拦截预览
+                  </h3>
+                  <span className="text-[10px] text-gray-500">
+                    {new Date(lastCapture.timestamp).toLocaleTimeString()}
+                  </span>
+                </div>
+                <div className="space-y-1">
+                  <div className="flex justify-between text-[11px]">
+                    <span className="text-gray-400">平台:</span>
+                    <span className="text-white uppercase">
+                      {lastCapture.platform}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-[11px]">
+                    <span className="text-gray-400">类型:</span>
+                    <span className="text-white">
+                      {lastCapture.isSSR ? "SSR 数据" : "API 数据"}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-[11px]">
+                    <span className="text-gray-400">数据大小:</span>
+                    <span className="text-white">
+                      {(lastCapture.dataLength / 1024).toFixed(1)} KB
+                    </span>
+                  </div>
+                  <div className="mt-2 text-[10px] bg-black/40 p-2 rounded font-mono text-gray-300 break-all max-h-[60px] overflow-y-auto">
+                    {lastCapture.bodyPreview}...
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Task Logs */}
             <div className="bg-card rounded-xl border border-border overflow-hidden">
               <div className="p-4 border-b border-border flex items-center justify-between">
-                <h3 className="text-sm font-semibold text-white">任务日志</h3>
+                <div className="flex items-center space-x-2">
+                  <h3 className="text-sm font-semibold text-white">任务日志</h3>
+                  <div className="flex items-center bg-black/20 rounded-lg p-0.5">
+                    {["all", "info", "warn", "error"].map((lvl) => (
+                      <button
+                        key={lvl}
+                        onClick={() => setLogFilter(lvl as any)}
+                        className={`px-2 py-0.5 text-[9px] rounded uppercase ${
+                          logFilter === lvl
+                            ? "bg-primary text-white"
+                            : "text-gray-500 hover:text-gray-300"
+                        }`}
+                      >
+                        {lvl === "all" ? "全部" : lvl}
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 <span className="text-[10px] text-gray-400 uppercase tracking-wider">
-                  最近 10 条
+                  实时流
                 </span>
               </div>
-              <div className="p-2 space-y-1 max-h-[150px] overflow-y-auto font-mono text-[11px]">
-                {logs.length > 0 ? (
-                  logs.slice(0, 10).map((log, i) => (
-                    <div
-                      key={i}
-                      className="text-gray-400 border-l border-border pl-2 py-0.5"
-                    >
-                      {log}
-                    </div>
-                  ))
+              <div className="p-2 space-y-1 max-h-[180px] overflow-y-auto font-mono text-[11px] bg-black/20">
+                {logs.filter(
+                  (l) => logFilter === "all" || l.level === logFilter,
+                ).length > 0 ? (
+                  logs
+                    .filter((l) => logFilter === "all" || l.level === logFilter)
+                    .slice(0, 30) // Show more now that it's scrollable
+                    .map((log, i) => (
+                      <div
+                        key={i}
+                        className={`pl-2 py-0.5 border-l-2 ${
+                          log.level === "error"
+                            ? "text-red-400 border-red-500/50"
+                            : log.level === "warn"
+                              ? "text-amber-400 border-amber-500/50"
+                              : log.level === "success"
+                                ? "text-green-400 border-green-500/50"
+                                : "text-gray-400 border-border"
+                        }`}
+                      >
+                        <span className="opacity-40 mr-1">
+                          [{log.timestamp}]
+                        </span>
+                        {log.message}
+                      </div>
+                    ))
                 ) : (
-                  <p className="text-gray-600 text-center py-4">暂无日志记录</p>
+                  <p className="text-gray-600 text-center py-4 text-xs italic">
+                    暂无满足条件的日志
+                  </p>
                 )}
               </div>
             </div>
@@ -443,17 +624,31 @@ export default function Popup() {
                   </h3>
                   <div className="flex items-center justify-between">
                     <div className="flex items-center space-x-3">
-                      <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center border border-primary/20">
-                        👤
+                      <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center border border-primary/20 overflow-hidden">
+                        {currentProfile?.avatar ? (
+                          <img
+                            src={currentProfile.avatar}
+                            alt="Avatar"
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          "👤"
+                        )}
                       </div>
                       <div>
                         <div className="text-sm font-medium text-white">
-                          实时检测中...
+                          {currentProfile?.isLoggedIn
+                            ? currentProfile.nickname
+                            : loadingCookies
+                              ? "检测中..."
+                              : "未登录 / 登录已过期"}
                         </div>
                         <div className="text-[10px] text-gray-500">
-                          {currentCookies.length > 0
-                            ? `已获取 ${currentCookies.length} 项数据`
-                            : "未检测到有效 Cookie"}
+                          {currentProfile?.isLoggedIn
+                            ? `ID: ${currentProfile.userId}`
+                            : currentCookies.length > 0
+                              ? `已获取 ${currentCookies.length} 项数据 (凭证不完整)`
+                              : "请先在浏览器登录该平台"}
                         </div>
                       </div>
                     </div>
@@ -468,7 +663,7 @@ export default function Popup() {
                       </button>
                       <button
                         onClick={() => handleSaveAccount(selectedPlatform)}
-                        disabled={currentCookies.length === 0}
+                        disabled={!currentProfile?.isLoggedIn}
                         title="保存到本地"
                         className="p-2 hover:bg-white/5 text-gray-400 hover:text-green-400 rounded-lg transition-colors disabled:opacity-30"
                       >
@@ -553,107 +748,151 @@ export default function Popup() {
 
         {activeTab === "tasks" && (
           <div className="space-y-4">
-            {/* Running Tasks */}
-            <div className="bg-card rounded-xl border border-border p-4">
-              <h3 className="text-sm font-semibold text-white flex items-center gap-2 mb-3">
-                <span className="flex h-2 w-2 relative">
-                  {taskQueue.some((t) => t.status === "running") && (
-                    <>
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
-                    </>
-                  )}
-                </span>
-                执行中
-              </h3>
-              {taskQueue.filter((t) => t.status === "running").length > 0 ? (
-                taskQueue
-                  .filter((t) => t.status === "running")
-                  .map((task) => (
-                    <div
-                      key={task.task_id}
-                      className="bg-primary/5 border border-primary/20 rounded-lg p-3"
-                    >
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <span className="text-lg">
-                            {task.platform === "xhs"
-                              ? "📕"
-                              : task.platform === "dy"
-                                ? "🎵"
-                                : "📱"}
-                          </span>
-                          <div>
-                            <div className="text-sm text-white">
-                              {task.task_type}
-                            </div>
-                            <div className="text-xs text-gray-500 truncate max-w-[200px]">
-                              {task.url}
-                            </div>
-                          </div>
-                        </div>
-                        <div className="text-xs text-gray-400">
-                          {task.created_at
-                            ? new Date(task.created_at).toLocaleTimeString()
-                            : "--"}
-                        </div>
-                      </div>
-                    </div>
-                  ))
-              ) : (
-                <p className="text-sm text-gray-500 italic">暂无执行中任务</p>
-              )}
+            {/* Running & Progress Info */}
+            <div className="flex items-center justify-between px-1">
+              <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                任务队列 {taskQueue.length > 0 ? `(${taskQueue.length})` : ""}
+              </h2>
+              <button
+                onClick={() => chrome.storage.local.set({ taskQueue: [] })}
+                className="text-[10px] text-gray-500 hover:text-red-400 transition-colors"
+              >
+                清除历史
+              </button>
             </div>
 
-            {/* Pending Tasks */}
-            <div className="bg-card rounded-xl border border-border p-4">
-              <h3 className="text-sm font-semibold text-white mb-3">
-                ⏳ 待执行 (
-                {taskQueue.filter((t) => t.status === "pending").length})
-              </h3>
-              {taskQueue.filter((t) => t.status === "pending").length > 0 ? (
-                <div className="space-y-2">
-                  {taskQueue
-                    .filter((t) => t.status === "pending")
-                    .slice(0, 5)
+            {/* Running Tasks */}
+            {taskQueue.some((t) => t.status === "running") && (
+              <div className="bg-primary/5 border border-primary/20 rounded-xl p-4 animate-pulse">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center">
+                    <span className="text-xl">⚙️</span>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs font-semibold text-primary uppercase">
+                      正在执行
+                    </div>
+                    {taskQueue
+                      .filter((t) => t.status === "running")
+                      .map((task) => (
+                        <div key={task.task_id} className="mt-1">
+                          <div className="text-sm text-white font-medium truncate">
+                            {task.task_type}
+                          </div>
+                          <div className="text-[10px] text-gray-500 truncate">
+                            {task.url}
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* List with Tabs within Tasks */}
+            <div className="bg-card rounded-xl border border-border overflow-hidden">
+              <div className="flex border-b border-border bg-black/20">
+                <div className="flex-1 py-2 text-center text-[10px] font-bold text-gray-400 border-r border-border">
+                  待处理 (
+                  {taskQueue.filter((t) => t.status === "pending").length})
+                </div>
+                <div className="flex-1 py-2 text-center text-[10px] font-bold text-gray-400">
+                  已完成 (
+                  {
+                    taskQueue.filter(
+                      (t) => t.status === "completed" || t.status === "failed",
+                    ).length
+                  }
+                  )
+                </div>
+              </div>
+
+              <div className="max-h-[300px] overflow-y-auto divide-y divide-border/30">
+                {taskQueue.length > 0 ? (
+                  taskQueue
+                    .sort((a, b) =>
+                      (b.created_at || "").localeCompare(a.created_at || ""),
+                    )
                     .map((task) => (
                       <div
                         key={task.task_id}
-                        className="flex items-center justify-between p-2 bg-black/20 rounded-lg"
+                        className="p-3 flex items-center justify-between hover:bg-white/[0.02] transition-colors"
                       >
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div
+                            className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm ${
+                              task.status === "completed"
+                                ? "bg-green-500/10 text-green-500"
+                                : task.status === "failed"
+                                  ? "bg-red-500/10 text-red-500"
+                                  : task.status === "running"
+                                    ? "bg-primary/10 text-primary"
+                                    : "bg-black/30 text-gray-500"
+                            }`}
+                          >
                             {task.platform === "xhs"
                               ? "📕"
                               : task.platform === "dy"
                                 ? "🎵"
-                                : "📱"}
-                          </span>
-                          <span className="text-xs text-gray-400">
-                            {task.task_type}
-                          </span>
+                                : task.platform === "bili"
+                                  ? "📺"
+                                  : task.platform === "wb"
+                                    ? "👁️"
+                                    : task.platform === "ks"
+                                      ? "📹"
+                                      : "📱"}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="text-sm font-medium text-white truncate">
+                              {task.task_type}
+                            </div>
+                            <div className="flex items-center gap-2 mt-0.5">
+                              <span className="text-[10px] text-gray-500 italic">
+                                {task.created_at
+                                  ? new Date(
+                                      task.created_at,
+                                    ).toLocaleTimeString()
+                                  : "--"}
+                              </span>
+                              <span
+                                className={`text-[9px] px-1.5 py-0.5 rounded uppercase font-bold ${
+                                  task.status === "completed"
+                                    ? "bg-green-500/20 text-green-400"
+                                    : task.status === "failed"
+                                      ? "bg-red-500/20 text-red-400"
+                                      : task.status === "running"
+                                        ? "bg-primary/20 text-primary"
+                                        : "bg-slate-800 text-gray-500"
+                                }`}
+                              >
+                                {task.status}
+                              </span>
+                            </div>
+                          </div>
                         </div>
-                        <span className="text-xs text-gray-500">
-                          {task.created_at
-                            ? new Date(task.created_at).toLocaleTimeString()
-                            : "--"}
-                        </span>
+                        {task.status === "completed" && (
+                          <span className="text-green-500">✓</span>
+                        )}
                       </div>
-                    ))}
-                </div>
-              ) : (
-                <p className="text-sm text-gray-500 italic">暂无待执行任务</p>
-              )}
+                    ))
+                ) : (
+                  <div className="p-8 text-center">
+                    <div className="text-3xl mb-2 opacity-20">📥</div>
+                    <p className="text-sm text-gray-500">暂无任务数据</p>
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Instructions */}
-            <div className="bg-black/20 rounded-xl border border-border/50 p-4">
-              <h4 className="text-xs font-semibold text-gray-400 uppercase mb-2">
-                💡 任务来源
+            <div className="bg-primary/5 rounded-xl border border-primary/10 p-4">
+              <h4 className="text-[10px] font-bold text-primary uppercase mb-1 flex items-center gap-1">
+                <span>💡</span> 任务来源与执行
               </h4>
-              <p className="text-xs text-gray-500 leading-relaxed">
+              <p className="text-[11px] text-gray-400 leading-relaxed">
                 任务由 GrowHub
-                后台自动下发。保持插件连接状态，后台配置的采集任务将自动分配到此执行。
+                后台分发，插件将自动按队列顺序执行。若长时间无任务，请检查
+                WebSocket 连接状态或刷新页面。
               </p>
             </div>
           </div>
@@ -662,7 +901,7 @@ export default function Popup() {
 
       {/* Footer */}
       <footer className="p-3 border-t border-border text-center text-xs text-gray-500">
-        GrowHub v1.0.0
+        GrowHub v{chrome.runtime.getManifest().version}
       </footer>
     </div>
   );

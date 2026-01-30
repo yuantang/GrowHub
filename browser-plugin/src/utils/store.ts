@@ -10,6 +10,12 @@ export interface PluginTask {
   created_at: string | null;
 }
 
+export interface LogEntry {
+  message: string;
+  level: 'info' | 'warn' | 'error' | 'success';
+  timestamp: string;
+}
+
 interface PluginState {
   serverUrl: string;
   apiToken: string;
@@ -18,7 +24,7 @@ interface PluginState {
   lastSync: number | null;
   
   activeTask: string | null;
-  logs: string[];
+  logs: LogEntry[];
   
   // Task Queue Management
   taskQueue: PluginTask[];
@@ -32,10 +38,11 @@ interface PluginState {
   incrementTaskCount: () => void;
   setLastSync: (time: number) => void;
   setActiveTask: (taskName: string | null) => void;
-  addLog: (message: string) => void;
+  addLog: (message: string, level?: LogEntry['level']) => void;
   saveAccount: (platform: string, accountName: string, cookies: any[]) => Promise<void>;
   deleteAccount: (platform: string, accountId: string) => Promise<void>;
   setTaskQueue: (tasks: PluginTask[]) => void;
+  lastCapture: any | null;
 }
 
 export const usePluginStore = create<PluginState>((set) => ({
@@ -48,6 +55,7 @@ export const usePluginStore = create<PluginState>((set) => ({
   logs: [],
   savedAccounts: {},
   taskQueue: [],
+  lastCapture: null,
 
   setConfig: async (url, token) => {
     await chrome.storage.local.set({ serverUrl: url, apiToken: token });
@@ -69,11 +77,11 @@ export const usePluginStore = create<PluginState>((set) => ({
     chrome.storage.local.set({ activeTask: taskName });
     set({ activeTask: taskName });
   },
-  addLog: (message) => {
+  addLog: (message, level = 'info') => {
     const timestamp = new Date().toLocaleTimeString();
-    const logEntry = `[${timestamp}] ${message}`;
+    const entry: LogEntry = { message, level, timestamp };
     set((state) => {
-      const newLogs = [logEntry, ...state.logs].slice(0, 50); // Keep last 50
+      const newLogs = [entry, ...state.logs].slice(0, 100); // Increase limit to 100
       chrome.storage.local.set({ logs: newLogs });
       return { logs: newLogs };
     });
@@ -113,7 +121,7 @@ export const usePluginStore = create<PluginState>((set) => ({
 }));
 
 // Initialize state from storage
-chrome.storage?.local?.get(['serverUrl', 'apiToken', 'taskCount', 'lastSync', 'isConnected', 'activeTask', 'logs', 'savedAccounts', 'taskQueue']).then((data) => {
+chrome.storage?.local?.get(['serverUrl', 'apiToken', 'taskCount', 'lastSync', 'isConnected', 'activeTask', 'logs', 'savedAccounts', 'taskQueue', 'lastCapture']).then((data) => {
   usePluginStore.setState({
     serverUrl: data.serverUrl || '',
     apiToken: data.apiToken || '',
@@ -124,6 +132,7 @@ chrome.storage?.local?.get(['serverUrl', 'apiToken', 'taskCount', 'lastSync', 'i
     logs: data.logs || [],
     savedAccounts: data.savedAccounts || {},
     taskQueue: data.taskQueue || [],
+    lastCapture: data.lastCapture || null,
   });
 });
 
@@ -151,5 +160,8 @@ chrome.storage?.onChanged?.addListener((changes, areaName) => {
   }
   if (changes.taskQueue) {
     usePluginStore.setState({ taskQueue: changes.taskQueue.newValue });
+  }
+  if (changes.lastCapture) {
+    usePluginStore.setState({ lastCapture: changes.lastCapture.newValue });
   }
 });

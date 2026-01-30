@@ -69,13 +69,46 @@ class DouYinCrawler(AbstractCrawler):
             #     pass 
 
         async with async_playwright() as playwright:
+            # Retrieve fingerprint from DB if ACCOUNT_ID is set
+            db_user_agent = None
+            if hasattr(config, "ACCOUNT_ID") and config.ACCOUNT_ID:
+                try:
+                    from database.db_session import get_session
+                    from database.growhub_models import GrowHubAccount
+                    from sqlalchemy import select
+                    
+                    # Create a synchronous wrapper or just use the sync approach if session allows, 
+                    # but here we are in async start() so we can use async session locally.
+                    # HOWEVER, get_session() returns an async context manager.
+                    async with get_session() as session:
+                        result = await session.execute(select(GrowHubAccount).where(GrowHubAccount.id == config.ACCOUNT_ID))
+                        account = result.scalar_one_or_none()
+                        if account and account.fingerprint:
+                             # fingerprint is a JSON dict or string
+                             fp = account.fingerprint
+                             if isinstance(fp, str):
+                                 import json
+                                 fp = json.loads(fp)
+                             
+                             if isinstance(fp, dict) and "userAgent" in fp:
+                                 db_user_agent = fp["userAgent"]
+                                 utils.logger.info(f"[DouYinCrawler] 🧬 Loaded User-Agent from DB Fingerprint: {db_user_agent[:50]}...")
+                except Exception as e:
+                    utils.logger.warning(f"[DouYinCrawler] Failed to load fingerprint from DB: {e}")
+
+            # Use DB UA if available, otherwise config default
+            final_user_agent = db_user_agent or config.DEFAULT_USER_AGENT
+            
+            # Update instance user_agent for consistency
+            self.user_agent = final_user_agent
+
             # 浏览器启动逻辑 (保留原逻辑以维持签名能力)
             if config.ENABLE_CDP_MODE:
                 utils.logger.info("[DouYinCrawler] 使用CDP模式启动浏览器")
                 self.browser_context = await self.launch_browser_with_cdp(
                     playwright,
                     playwright_proxy_format,
-                    user_agent=config.DEFAULT_USER_AGENT,
+                    user_agent=final_user_agent, # Use final UA
                     headless=config.CDP_HEADLESS,
                 )
             else:
@@ -84,7 +117,7 @@ class DouYinCrawler(AbstractCrawler):
                 self.browser_context = await self.launch_browser(
                     chromium,
                     playwright_proxy_format,
-                    user_agent=config.DEFAULT_USER_AGENT,
+                    user_agent=final_user_agent, # Use final UA
                     headless=config.HEADLESS,
                 )
             
@@ -95,7 +128,7 @@ class DouYinCrawler(AbstractCrawler):
             self.dy_client = DouYinClient(
                 timeout=60, # Standard API timeout
                 headers={
-                    "User-Agent": self.user_agent, 
+                    "User-Agent": final_user_agent, 
                     "Referer": "https://www.douyin.com/",
                 }, # Headers will be enriched by update_cookies
                 playwright_page=self.context_page,
@@ -121,6 +154,9 @@ class DouYinCrawler(AbstractCrawler):
                 
                 # 无论是否重新登录，都要同步最新的 Cookie 到 API Client
                 await self.dy_client.update_cookies(browser_context=self.browser_context)
+                utils.logger.info(f"[DouYinCrawler] 🕵️‍♂️ Final User-Agent used for API: {self.dy_client.headers.get('User-Agent')}")
+                utils.logger.info(f"[DouYinCrawler] 🍪 Final Cookie used for API: {self.dy_client.headers.get('Cookie')}")
+
 
             # Login Only Mode
             if config.CRAWLER_TYPE == "login":
@@ -193,21 +229,38 @@ class DouYinCrawler(AbstractCrawler):
         """
         Launch browser (Standard)
         """
-        browser = await chromium.launch(
-            headless=headless,
-            proxy=playwright_proxy,
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--no-sandbox",
-                "--disable-gpu",
-            ]
-        )
-        browser_context = await browser.new_context(
-            viewport={"width": 1920, "height": 1080},
-            user_agent=user_agent
-        )
-        await browser_context.add_init_script(path="libs/stealth.min.js")
-        return browser_context
+        if config.SAVE_LOGIN_STATE:
+            user_data_dir = os.path.join(os.getcwd(), "browser_data", config.USER_DATA_DIR % "dy")
+            browser_context = await chromium.launch_persistent_context(
+                user_data_dir=user_data_dir,
+                accept_downloads=True,
+                headless=headless,
+                proxy=playwright_proxy,  # type: ignore
+                viewport={"width": 1920, "height": 1080},
+                user_agent=user_agent,
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--no-sandbox",
+                    "--disable-gpu",
+                ]
+            )
+            return browser_context
+        else:
+            browser = await chromium.launch(
+                headless=headless,
+                proxy=playwright_proxy,
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--no-sandbox",
+                    "--disable-gpu",
+                ]
+            )
+            browser_context = await browser.new_context(
+                viewport={"width": 1920, "height": 1080},
+                user_agent=user_agent
+            )
+            await browser_context.add_init_script(path="libs/stealth.min.js")
+            return browser_context
 
     async def launch_browser_with_cdp(
         self,

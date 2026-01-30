@@ -49,6 +49,51 @@ class KuaishouStoreFactory:
         return store_class()
 
 
+
+async def update_kuaishou_note(note_item: Dict):
+    """
+    Standardized update for Kuaishou note (handles both raw and plugin-parsed notes)
+    """
+    from var import project_id_var
+    from tools import utils
+    
+    # If it's a plugin-parsed note, it won't have "photo"
+    if "photo" not in note_item:
+        interact_info = note_item.get("interact_info", {})
+        user_info = note_item.get("user", {})
+        note_id = note_item.get("note_id")
+        
+        save_content_item = {
+            "video_id": note_id,
+            "video_type": note_item.get("type", "video"),
+            "title": note_item.get("title", "")[:500],
+            "desc": note_item.get("desc", "")[:500],
+            "create_time": note_item.get("time"),
+            "user_id": str(user_info.get("user_id")),
+            "nickname": user_info.get("nickname"),
+            "avatar": user_info.get("avatar", ""),
+            "liked_count": str(interact_info.get("like_count", "0")),
+            "viewd_count": str(interact_info.get("view_count", "0")),
+            "last_modify_ts": utils.get_current_timestamp(),
+            "video_url": f"https://www.kuaishou.com/short-video/{note_id}",
+            "source_keyword": source_keyword_var.get(),
+            "project_id": project_id_var.get() or None,
+        }
+        utils.logger.info(f"[store.kuaishou.update_kuaishou_note] Kuaishou ID: {note_id}, title: {save_content_item.get('title')}")
+        await KuaishouStoreFactory.create_store().store_content(content_item=save_content_item)
+        
+        # 同步到 GrowHub 统一表
+        try:
+            from api.services.growhub_store import get_growhub_store_service
+            sync_service = get_growhub_store_service()
+            await sync_service.sync_to_growhub("ks", save_content_item)
+        except Exception as e:
+            utils.logger.error(f"[store.kuaishou.update_kuaishou_note] Sync to GrowHub failed: {e}")
+    else:
+        # Fallback to older raw format
+        await update_kuaishou_video(note_item)
+
+
 async def update_kuaishou_video(video_item: Dict):
     photo_info: Dict = video_item.get("photo", {})
     video_id = photo_info.get("id")

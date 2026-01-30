@@ -66,42 +66,65 @@ async def batch_update_weibo_notes(note_list: List[Dict]):
 
 async def update_weibo_note(note_item: Dict):
     """
-    Update weibo note
-    Args:
-        note_item:
-
-    Returns:
-
+    Update weibo note (handles both raw and plugin-parsed notes)
     """
     if not note_item:
         return
 
-    mblog: Dict = note_item.get("mblog")
-    user_info: Dict = mblog.get("user")
-    note_id = mblog.get("id")
-    content_text = mblog.get("text")
-    clean_text = re.sub(r"<.*?>", "", content_text)
-    save_content_item = {
-        # 微博信息
-        "note_id": note_id,
-        "content": clean_text,
-        "create_time": utils.rfc2822_to_timestamp(mblog.get("created_at")),
-        "create_date_time": str(utils.rfc2822_to_china_datetime(mblog.get("created_at"))),
-        "liked_count": str(mblog.get("attitudes_count", 0)),
-        "comments_count": str(mblog.get("comments_count", 0)),
-        "shared_count": str(mblog.get("reposts_count", 0)),
-        "last_modify_ts": utils.get_current_timestamp(),
-        "note_url": f"https://m.weibo.cn/detail/{note_id}",
-        "ip_location": mblog.get("region_name", "").replace("发布于 ", ""),
+    from var import project_id_var
+    from tools import utils
+    
+    # If it's a plugin-parsed note, it won't have "mblog"
+    if "mblog" not in note_item:
+        user_info = note_item.get("user", {})
+        interact_info = note_item.get("interact_info", {})
+        note_id = note_item.get("note_id")
+        
+        save_content_item = {
+            "note_id": note_id,
+            "content": note_item.get("title") or note_item.get("desc", ""),
+            "create_time": note_item.get("time"),
+            "liked_count": str(interact_info.get("like_count", "0")),
+            "comments_count": str(interact_info.get("comment_count", "0")),
+            "shared_count": str(interact_info.get("share_count", "0")),
+            "last_modify_ts": utils.get_current_timestamp(),
+            "note_url": f"https://m.weibo.cn/detail/{note_id}",
+            "user_id": str(user_info.get("user_id")),
+            "nickname": user_info.get("nickname"),
+            "avatar": user_info.get("avatar", ""),
+            "source_keyword": source_keyword_var.get(),
+            "project_id": project_id_var.get() or None,
+        }
+    else:
+        # Original raw format
+        mblog: Dict = note_item.get("mblog")
+        user_info: Dict = mblog.get("user")
+        note_id = mblog.get("id")
+        content_text = mblog.get("text")
+        import re
+        clean_text = re.sub(r"<.*?>", "", content_text)
+        save_content_item = {
+            # 微博信息
+            "note_id": note_id,
+            "content": clean_text,
+            "create_time": utils.rfc2822_to_timestamp(mblog.get("created_at")),
+            "create_date_time": str(utils.rfc2822_to_china_datetime(mblog.get("created_at"))),
+            "liked_count": str(mblog.get("attitudes_count", 0)),
+            "comments_count": str(mblog.get("comments_count", 0)),
+            "shared_count": str(mblog.get("reposts_count", 0)),
+            "last_modify_ts": utils.get_current_timestamp(),
+            "note_url": f"https://m.weibo.cn/detail/{note_id}",
+            "ip_location": mblog.get("region_name", "").replace("发布于 ", ""),
 
-        # 用户信息
-        "user_id": str(user_info.get("id")),
-        "nickname": user_info.get("screen_name", ""),
-        "gender": user_info.get("gender", ""),
-        "profile_url": user_info.get("profile_url", ""),
-        "avatar": user_info.get("profile_image_url", ""),
-        "source_keyword": source_keyword_var.get(),
-    }
+            # 用户信息
+            "user_id": str(user_info.get("id")),
+            "nickname": user_info.get("screen_name", ""),
+            "gender": user_info.get("gender", ""),
+            "profile_url": user_info.get("profile_url", ""),
+            "avatar": user_info.get("profile_image_url", ""),
+            "source_keyword": source_keyword_var.get(),
+            "project_id": project_id_var.get() or None,
+        }
     utils.logger.info(f"[store.weibo.update_weibo_note] weibo note id:{note_id}, title:{save_content_item.get('content')[:24]} ...")
     await WeibostoreFactory.create_store().store_content(content_item=save_content_item)
     

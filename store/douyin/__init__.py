@@ -219,6 +219,53 @@ async def update_douyin_aweme(aweme_item: Dict, client=None):
     except Exception as e:
         utils.logger.error(f"[store.douyin.update_douyin_aweme] Sync to GrowHub failed: {e}")
 
+async def update_douyin_note(note_item: Dict):
+    """
+    Standardized update for Douyin note (handles both raw and plugin-parsed notes)
+    """
+    from var import project_id_var
+    from tools import utils
+    
+    # If it's a plugin-parsed note, it won't have typical raw fields like "aweme_type"
+    if "aweme_type" not in note_item:
+        interact_info = note_item.get("interact_info", {})
+        user_info = note_item.get("user", {})
+        note_id = note_item.get("note_id")
+        
+        save_content_item = {
+            "aweme_id": note_id,
+            "aweme_type": "0", # Default
+            "type": note_item.get("type", "video"),
+            "title": note_item.get("title", ""),
+            "desc": note_item.get("desc") or note_item.get("title", ""),
+            "create_time": note_item.get("time"),
+            "user_id": user_info.get("user_id"),
+            "nickname": user_info.get("nickname"),
+            "avatar": user_info.get("avatar", ""),
+            "liked_count": str(interact_info.get("like_count", "0")),
+            "collected_count": str(interact_info.get("collect_count", "0")),
+            "comment_count": str(interact_info.get("comment_count", "0")),
+            "share_count": str(interact_info.get("share_count", "0")),
+            "last_modify_ts": utils.get_current_timestamp(),
+            "aweme_url": f"https://www.douyin.com/video/{note_id}",
+            "source_keyword": source_keyword_var.get(),
+            "project_id": project_id_var.get() or None,
+            "user_fans": str(user_info.get("fans_count", "0")),
+        }
+        utils.logger.info(f"[store.douyin.update_douyin_note] Douyin ID: {note_id}, title: {save_content_item.get('title')}")
+        await DouyinStoreFactory.create_store().store_content(content_item=save_content_item)
+        
+        # 同步到 GrowHub 统一表
+        try:
+            from api.services.growhub_store import get_growhub_store_service
+            sync_service = get_growhub_store_service()
+            await sync_service.sync_to_growhub("dy", save_content_item)
+        except Exception as e:
+            utils.logger.error(f"[store.douyin.update_douyin_note] Sync to GrowHub failed: {e}")
+    else:
+        # Fallback to older raw format
+        await update_douyin_aweme(note_item)
+
 
 async def batch_update_dy_aweme_comments(aweme_id: str, comments: List[Dict]):
     if not comments:

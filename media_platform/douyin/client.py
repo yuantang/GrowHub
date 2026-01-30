@@ -112,30 +112,59 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
             "channel": "channel_pc_web",
             "publish_video_strategy_type": 2,
             "update_version_code": 170400,
-            "pc_client_type": 1,
-            "version_code": "190600",
-            "version_name": "19.6.0",
-            "cookie_enabled": "true",
-            "screen_width": 2560,
-            "screen_height": 1440,
-            "browser_language": "zh-CN",
-            "browser_platform": "MacIntel",
-            "browser_name": "Chrome",
-            "browser_version": "135.0.0.0",
-            "browser_online": "true",
-            "engine_name": "Blink",
-            "engine_version": "135.0.0.0",
-            "os_name": "Mac OS",
-            "os_version": "10.15.7",
-            "cpu_core_num": 8,
-            "device_memory": 8,
-            "platform": "PC",
             "downlink": 4.45,
             "effective_type": "4g",
             "round_trip_time": 100,
             "webid": get_web_id(),
             "msToken": local_storage.get("xmst"),
         }
+        
+        # 🕵️‍♂️ Dynamic Fingerprint Injection based on User-Agent
+        ua = headers.get("User-Agent", "")
+        if ua:
+            import re
+            # Extract OS
+            if "Mac OS X" in ua:
+                common_params["os_name"] = "Mac OS"
+                # Extract version like 10_15_7
+                os_ver_match = re.search(r'Mac OS X ([\d_]+)', ua)
+                if os_ver_match:
+                    common_params["os_version"] = os_ver_match.group(1).replace("_", ".")
+                else:
+                    common_params["os_version"] = "10.15.7" # fallback
+                
+                common_params["browser_platform"] = "MacIntel"
+                common_params["platform"] = "PC"
+                
+            elif "Windows" in ua:
+                common_params["os_name"] = "Windows"
+                common_params["os_version"] = "10" 
+                common_params["browser_platform"] = "Win32"
+                common_params["platform"] = "PC"
+            
+            # Extract Chrome Version
+            chrome_ver_match = re.search(r'Chrome/([\d.]+)', ua)
+            if chrome_ver_match:
+                ver = chrome_ver_match.group(1)
+                common_params["browser_version"] = ver
+                common_params["engine_version"] = ver
+            else:
+                 # Fallback if parsing fails but we have a UA string
+                common_params["browser_version"] = "135.0.0.0"
+                common_params["engine_version"] = "135.0.0.0"
+        
+        # Override with defaults if parsing completely failed or no UA
+        if "os_name" not in common_params:
+             common_params.update({
+                "browser_version": "135.0.0.0",
+                "browser_name": "Chrome", 
+                "engine_version": "135.0.0.0",
+                "os_name": "Mac OS",
+                "os_version": "10.15.7",
+                "device_memory": 8,
+                "platform": "PC",
+             })
+
         params.update(common_params)
         query_string = urllib.parse.urlencode(params)
 

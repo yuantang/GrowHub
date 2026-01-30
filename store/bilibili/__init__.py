@@ -87,6 +87,50 @@ async def update_bilibili_video(video_item: Dict):
     except Exception as e:
         utils.logger.error(f"[store.bilibili.update_bilibili_video] Sync to GrowHub failed: {e}")
 
+async def update_bilibili_note(note_item: Dict):
+    """
+    Standardized update for Bilibili note (handles both raw and plugin-parsed notes)
+    """
+    from var import project_id_var
+    from tools import utils
+    
+    # If it's a plugin-parsed note, it won't have "View"
+    if "View" not in note_item:
+        interact_info = note_item.get("interact_info", {})
+        user_info = note_item.get("user", {})
+        note_id = note_item.get("note_id")
+        
+        save_content_item = {
+            "video_id": note_id,
+            "video_type": note_item.get("type", "video"),
+            "title": note_item.get("title", "")[:500],
+            "desc": note_item.get("desc", "")[:500],
+            "create_time": note_item.get("time"),
+            "user_id": str(user_info.get("user_id")),
+            "nickname": user_info.get("nickname"),
+            "avatar": user_info.get("avatar", ""),
+            "liked_count": str(interact_info.get("like_count", "0")),
+            "video_play_count": str(interact_info.get("view_count", "0")),
+            "video_comment": str(interact_info.get("comment_count", "0")),
+            "last_modify_ts": utils.get_current_timestamp(),
+            "video_url": f"https://www.bilibili.com/video/{note_id}" if note_id.startswith("BV") else f"https://www.bilibili.com/video/av{note_id}",
+            "source_keyword": source_keyword_var.get(),
+            "project_id": project_id_var.get() or None,
+        }
+        utils.logger.info(f"[store.bilibili.update_bilibili_note] Bilibili ID: {note_id}, title: {save_content_item.get('title')}")
+        await BiliStoreFactory.create_store().store_content(content_item=save_content_item)
+        
+        # 同步到 GrowHub 统一表
+        try:
+            from api.services.growhub_store import get_growhub_store_service
+            sync_service = get_growhub_store_service()
+            await sync_service.sync_to_growhub("bili", save_content_item)
+        except Exception as e:
+            utils.logger.error(f"[store.bilibili.update_bilibili_note] Sync to GrowHub failed: {e}")
+    else:
+        # Fallback to older raw format
+        await update_bilibili_video(note_item)
+
 
 async def update_up_info(video_item: Dict):
     video_item_card_list: Dict = video_item.get("Card")

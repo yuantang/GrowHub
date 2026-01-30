@@ -53,7 +53,7 @@ from .routers.growhub_plugin import router as growhub_plugin_router
 from .routers.plugin_websocket import router as plugin_ws_router
 from .routers.debug_plugin import router as debug_plugin_router
 from .routers.plugin_tasks import router as plugin_tasks_router
-from .routers.growhub_analytics import router as growhub_analytics_router
+# from .routers.growhub_analytics import router as growhub_analytics_router
 
 app = FastAPI(
     title="GrowHub API",
@@ -129,7 +129,7 @@ app.include_router(growhub_plugin_router)  # Plugin API (no prefix, already has 
 app.include_router(plugin_ws_router)  # Plugin WebSocket (no prefix, already has /ws/plugin)
 app.include_router(debug_plugin_router) # Debug Plugin Inspection
 app.include_router(plugin_tasks_router, prefix="/api") # Plugin Task Queue Management
-app.include_router(growhub_analytics_router, prefix="/api") # Analytics Dashboard
+# app.include_router(growhub_analytics_router, prefix="/api") # Analytics Dashboard
 
 # Phase 2: 监控项目模块
 # (Moved to top imports)

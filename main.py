@@ -168,6 +168,36 @@ async def main() -> None:
     if config.SAVE_DATA_OPTION in ["sqlite", "db", "mysql"]:
         await db.init_db(config.SAVE_DATA_OPTION)
 
+    # GrowHub Patch: Fetch cookies from Account Pool if account_id is provided
+    if config.ACCOUNT_ID and not config.COOKIES:
+        print(f"[Main] Account ID {config.ACCOUNT_ID} provided. Fetching cookies from DB...")
+        try:
+            from database.db_session import get_session
+            from database.growhub_models import GrowHubAccount
+            from sqlalchemy import select
+            
+            async with get_session() as session:
+                result = await session.execute(
+                    select(GrowHubAccount).where(GrowHubAccount.id == config.ACCOUNT_ID)
+                )
+                account = result.scalar_one_or_none()
+                if account and account.cookies:
+                    config.COOKIES = account.cookies
+                    config.LOGIN_TYPE = "cookie"
+                    
+                    # Inject Fingerprint (User-Agent) if available
+                    if account.fingerprint and isinstance(account.fingerprint, dict):
+                        ua = account.fingerprint.get("userAgent")
+                        if ua:
+                            config.DEFAULT_USER_AGENT = ua
+                            print(f"[Main] Using Synced User-Agent: {ua[:50]}...")
+                            
+                    print(f"[Main] Successfully loaded cookies for account: {account.account_name}")
+                else:
+                    print(f"[Main] Warning: Account {config.ACCOUNT_ID} not found or has no cookies.")
+        except Exception as e:
+            print(f"[Main] Error fetching account cookies: {e}")
+
     crawler = CrawlerFactory.create_crawler(platform=config.PLATFORM)
     await crawler.start()
 

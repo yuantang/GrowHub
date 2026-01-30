@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from database.db_session import get_session
 from database.growhub_models import GrowHubContent, GrowHubKeyword, GrowHubProject
-from api.services.auth import get_current_user
+from api.auth.deps import get_current_user
 from database.growhub_models import GrowHubUser
 
 router = APIRouter(prefix="/growhub/analytics", tags=["Analytics"])

@@ -379,6 +379,9 @@ class GrowHubAccount(Base):
     proxy_config = Column(JSON, nullable=True)
     last_project_id = Column(Integer, nullable=True)  # 最后一次使用该账号的项目 ID，用于 Sticky Sessions
     
+    # 指纹信息
+    fingerprint = Column(JSON, nullable=True)  # 浏览器指纹 {userAgent, platform, language...}
+    
     # 备注
     notes = Column(Text, nullable=True)
     

@@ -73,6 +73,9 @@ class AccountInfo(BaseModel):
     created_at: datetime = datetime.now()
     updated_at: datetime = datetime.now()
     
+    # 指纹信息
+    fingerprint: Optional[Dict[str, Any]] = None
+    
     # 备注
     notes: Optional[str] = None
 
@@ -159,6 +162,7 @@ class AccountPoolService:
             proxy_config=model.proxy_config,
             last_project_id=getattr(model, 'last_project_id', None),
             user_id=getattr(model, 'user_id', None),
+            fingerprint=getattr(model, 'fingerprint', None),
             created_at=model.created_at or datetime.now(),
             updated_at=model.updated_at or datetime.now(),
             notes=model.notes
@@ -217,6 +221,7 @@ class AccountPoolService:
             proxy_config=info.proxy_config,
             last_project_id=info.last_project_id,
             user_id=info.user_id,
+            fingerprint=info.fingerprint,
             notes=info.notes,
             created_at=info.created_at,
             updated_at=datetime.now()

@@ -13,7 +13,7 @@ import uuid
 from database.db_session import get_session
 from database.growhub_models import PluginTask, PluginTaskStatus, GrowHubUser
 from sqlalchemy import select, update, desc
-from api.deps import get_current_user
+from api.auth.deps import get_current_user
 
 router = APIRouter(prefix="/growhub/plugin-tasks", tags=["GrowHub - Plugin Tasks"])
 

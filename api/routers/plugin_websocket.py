@@ -4,7 +4,7 @@ GrowHub Browser Plugin WebSocket
 Handles real-time communication between server and browser plugins.
 """
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
-from typing import Dict, Any, Optional, Set
+from typing import Dict, Any, Optional, Set, List
 import asyncio
 import json
 from datetime import datetime
@@ -90,6 +90,25 @@ class PluginConnectionManager:
             utils.logger.error(f"[Plugin WS] Failed to send task to {user_id}: {e}")
             return False
     
+    async def send_batch_tasks(self, user_id: str, tasks: List[Dict[str, Any]]) -> bool:
+        """批量发送任务给插件"""
+        if user_id not in self.connections:
+            return False
+        
+        try:
+            await self.connections[user_id].send_json({
+                "type": "BATCH_FETCH",
+                "tasks": tasks
+            })
+            
+            if user_id in self.connection_info:
+                self.connection_info[user_id]["task_count"] += len(tasks)
+            
+            return True
+        except Exception as e:
+            utils.logger.error(f"[Plugin WS] Failed to send batch to {user_id}: {e}")
+            return False
+
     async def send_ping(self, user_id: str):
         """发送心跳"""
         if user_id in self.connections:
@@ -274,6 +293,7 @@ async def dispatch_fetch_to_plugin(
     }
     
     # Send task to plugin
+    utils.logger.info(f"[Plugin WS] Dispatching task {task_id} ({platform}) to user {user_id}")
     sent = await plugin_manager.send_task(user_id, task)
     if not sent:
         return None
@@ -286,9 +306,10 @@ async def dispatch_fetch_to_plugin(
     # Wait for result
     try:
         result = await asyncio.wait_for(future, timeout=timeout)
+        utils.logger.info(f"[Plugin WS] Received result for task {task_id}")
         return result
     except asyncio.TimeoutError:
-        utils.logger.warning(f"[Plugin] Task {task_id} timed out")
+        utils.logger.warning(f"[Plugin WS] Task {task_id} timed out after {timeout}s")
         return None
     finally:
         # Cleanup the future

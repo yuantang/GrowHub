@@ -9,32 +9,35 @@ SECRET_KEY = "CHANGE_ME_IN_PRODUCTION_SECRET_KEY"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+import bcrypt
+
+# SECRET_KEY and other JWT config...
+# ALGORITHM = "HS256"
+# ...
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    # bcrypt has a 72 byte limit. Truncate to 71 bytes to be safe (null terminator).
-    # Passlib handles bytes input correctly for bcrypt
-    password_bytes = plain_password.encode('utf-8')
-    if len(password_bytes) > 71:
-        password_bytes = password_bytes[:71]
-    
-    # Check for passlib/bcrypt compatibility issue (bcrypt >= 4.0.0 breaks passlib 1.7.4)
-    # We catch the specific error and try to handle it or just rely on bytes
+    """
+    Verify a password against its hash using direct bcrypt library to avoid
+    passlib's 72-byte bug with bcrypt 4.0+
+    """
     try:
-        return pwd_context.verify(password_bytes, hashed_password)
-    except Exception:
-        # Fallback for some library versions: pass as string (may be risky if encoding expands)
-        # But properly, we should just rely on bytes.
-        # If verify failed due to version mismatch, we might need to patch passlib, but let's try just bytes first.
-        # Reraise if it's not the specific known error.
-        raise
+        # bcrypt.checkpw expects bytes
+        password_bytes = plain_password.encode('utf-8')
+        hash_bytes = hashed_password.encode('utf-8')
+        return bcrypt.checkpw(password_bytes, hash_bytes)
+    except Exception as e:
+        print(f"Password verification error: {e}")
+        return False
 
 def get_password_hash(password: str) -> str:
-    # bcrypt has a 72 byte limit. Truncate to 71 bytes.
+    """
+    Hash a password using direct bcrypt library
+    """
     password_bytes = password.encode('utf-8')
-    if len(password_bytes) > 71:
-        password_bytes = password_bytes[:71]
-    return pwd_context.hash(password_bytes)
+    # salt = bcrypt.gensalt()
+    # bcrypt.hashpw returns bytes
+    hashed = bcrypt.hashpw(password_bytes, bcrypt.gensalt())
+    return hashed.decode('utf-8')
 
 def create_access_token(subject: Union[str, Any], expires_delta: Optional[timedelta] = None) -> str:
     if expires_delta:

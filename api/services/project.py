@@ -479,6 +479,7 @@ class ProjectService:
                         self.append_log(project_id, "⚠️ 没有在线的浏览器插件，回退到服务端采集")
                     
                     if plugin_user_id:
+                        utils.logger.info(f"[Project-{project_id}] EXECUTE_VIA_PLUGIN | User={plugin_user_id}")
                         # Execute via plugin
                         for platform in platforms:
                             normalized_plat = {
@@ -497,6 +498,7 @@ class ProjectService:
                                 )
                                 
                                 if notes:
+                                    utils.logger.info(f"[Project-{project_id}] PLUGIN_RESULT_RECEIVED | Plat={platform} | Count={len(notes)}")
                                     self.append_log(project_id, f"[插件] 获取到 {len(notes)} 条笔记")
                                     saved = await plugin_service.save_notes_to_db(
                                         platform=normalized_plat,
@@ -506,7 +508,10 @@ class ProjectService:
                                     total_crawled_items += saved
                                     self.append_log(project_id, f"[插件] 已入库 {saved} 条")
                                 else:
-                                    self.append_log(project_id, f"[插件] 搜索无结果或超时")
+                                    if notes is None:
+                                        self.append_log(project_id, f"[插件] 搜索任务超时 (120s)")
+                                    else:
+                                        self.append_log(project_id, f"[插件] 搜索无结果")
                         
                         # Update project stats in a new session (fix session scope bug)
                         async with get_session() as update_session:

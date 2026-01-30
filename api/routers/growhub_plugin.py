@@ -31,6 +31,7 @@ class CookieItem(BaseModel):
 class SyncCookiesRequest(BaseModel):
     """Request body for cookie sync from browser plugin"""
     cookies: Dict[str, List[CookieItem]]  # platform -> cookies
+    fingerprint: Optional[Dict[str, Any]] = None  # userAgent, language, etc.
 
 
 class SyncCookiesResponse(BaseModel):
@@ -78,6 +79,19 @@ async def sync_cookies(
     
     pool = get_account_pool()
     
+    # 指纹信息
+    fingerprint_raw = data.fingerprint if hasattr(data, 'fingerprint') else None
+    
+    # Debug Logging
+    import json
+    import logging
+    logger = logging.getLogger("api.plugin")
+    logger.info(f"🔌 [Plugin Sync] Received sync request. Fingerprint present: {bool(fingerprint_raw)}")
+    if fingerprint_raw:
+         logger.info(f"   -> Fingerprint UA: {fingerprint_raw.get('userAgent', 'N/A')}")
+    else:
+         logger.warning("   -> ⚠️ No fingerprint data in request payload!")
+
     for platform_code_raw, cookies in data.cookies.items():
         if not cookies:
             continue
@@ -107,7 +121,6 @@ async def sync_cookies(
         
         # Try to match by "Plugin" name pattern or create new
         # Since we don't have a stable ID from cookie yet, we use a single "Plugin" account per platform per user
-        # Future improvement: Distinguish multiple accounts on same platform
         plugin_account_name = f"Plugin-{platform_code.upper()}-{current_user.username}"
         
         for acc in user_accounts:
@@ -117,14 +130,18 @@ async def sync_cookies(
         
         if existing_account:
             # Update existing
-            await pool.update_account(existing_account.id, {
+            update_data = {
                 "cookies": cookie_str,
                 "status": AccountStatus.ACTIVE,
                 "health_score": 100,
                 "last_check": datetime.now(),
                 "updated_at": datetime.now(),
                 "notes": f"Auto-synced via Plugin at {datetime.now().strftime('%H:%M:%S')}"
-            })
+            }
+            if fingerprint_raw:
+                update_data["fingerprint"] = fingerprint_raw
+            
+            await pool.update_account(existing_account.id, update_data)
             account_ids[platform_code_raw] = existing_account.id
         else:
             # Create new
@@ -138,6 +155,7 @@ async def sync_cookies(
                 health_score=100,
                 user_id=current_user.id,
                 group="plugin_synced",
+                fingerprint=fingerprint_raw,
                 notes=f"Created via Plugin at {datetime.now().strftime('%Y-%m-%d %H:%M')}"
             )
             created = await pool.add_account(new_account)

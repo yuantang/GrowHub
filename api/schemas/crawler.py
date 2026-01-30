@@ -108,7 +108,7 @@ class CrawlerStartRequest(BaseModel):
 
 class CrawlerStatusResponse(BaseModel):
     """Crawler status response"""
-    status: Literal["idle", "running", "stopping", "error"]
+    status: Literal["idle", "running", "stopping", "error", "completed", "failed"]
     platform: Optional[str] = None
     crawler_type: Optional[str] = None
     started_at: Optional[str] = None

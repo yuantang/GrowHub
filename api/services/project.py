@@ -972,26 +972,14 @@ class ProjectService:
             if not project:
                 return {"items": [], "total": 0, "error": "Project not found"}
             
-            # 2. 构建查询 - 优先使用 project_id 过滤，否则回退到关键词匹配
-            # 先检查是否有 project_id 关联的内容
-            project_id_check = await session.execute(
-                select(func.count(GrowHubContent.id)).where(GrowHubContent.project_id == project_id)
-            )
-            has_project_id_content = (project_id_check.scalar() or 0) > 0
+            # 2. 构建查询 - 强制使用 project_id 隔离
+            # 用户要求: 每个任务下的内容列表是隔离的，自己是各自任务下数据
+            # 因此不再回退到关键词匹配，严格筛选 project_id
             
-            if has_project_id_content:
-                # 使用 project_id 精确过滤
-                query = select(GrowHubContent).where(GrowHubContent.project_id == project_id)
-                count_query = select(func.count(GrowHubContent.id)).where(GrowHubContent.project_id == project_id)
-            else:
-                # 回退到关键词匹配（向后兼容）
-                if not project.keywords:
-                    return {"items": [], "total": 0, "page": page, "page_size": page_size}
-                
-                keywords = project.keywords
-                conditions = [GrowHubContent.source_keyword.like(f"%{k}%") for k in keywords]
-                query = select(GrowHubContent).where(or_(*conditions))
-                count_query = select(func.count(GrowHubContent.id)).where(or_(*conditions))
+            query = select(GrowHubContent).where(GrowHubContent.project_id == project_id)
+            count_query = select(func.count(GrowHubContent.id)).where(GrowHubContent.project_id == project_id)
+            
+            # (已移除: 关键词回退逻辑)
             
             # 3. 应用过滤
             if filters:

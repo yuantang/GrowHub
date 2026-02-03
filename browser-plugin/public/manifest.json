@@ -25,6 +25,11 @@
       "matches": ["*://*.douyin.com/*"],
       "js": ["content/douyin.js"],
       "run_at": "document_start"
+    },
+    {
+      "matches": ["*://*.xiaohongshu.com/*"],
+      "js": ["content/xhs.js"],
+      "run_at": "document_start"
     }
   ],
   "permissions": [

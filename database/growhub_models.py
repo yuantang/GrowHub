@@ -149,6 +149,9 @@ class GrowHubContent(Base):
     
     # 关联项目（用于精确过滤）
     project_id = Column(Integer, ForeignKey('growhub_projects.id'), nullable=True, index=True)
+    
+    # 所有权 (新增)
+    user_id = Column(Integer, ForeignKey('growhub_users.id'), nullable=True, index=True)
 
 
 class GrowHubDistributionRule(Base):
@@ -484,6 +487,9 @@ class GrowHubCreator(Base):
     source_project_id = Column(Integer, ForeignKey('growhub_projects.id'), nullable=True)
     source_keyword = Column(String(255))
     
+    # 所有权 (新增)
+    user_id = Column(Integer, ForeignKey('growhub_users.id'), nullable=True, index=True)
+    
     # 关联的最新内容ID (用于快速预览)
     latest_content_id = Column(Integer, ForeignKey('growhub_contents.id'), nullable=True)
     
@@ -529,6 +535,9 @@ class GrowHubHotspot(Base):
     # 来源追踪
     source_project_id = Column(Integer, ForeignKey('growhub_projects.id'), nullable=True)
     source_keyword = Column(String(255))
+    
+    # 所有权 (新增)
+    user_id = Column(Integer, ForeignKey('growhub_users.id'), nullable=True, index=True)
     
     # 时间戳
     publish_time = Column(DateTime)          # 内容发布时间

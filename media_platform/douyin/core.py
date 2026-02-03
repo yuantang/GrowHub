@@ -122,6 +122,21 @@ class DouYinCrawler(AbstractCrawler):
                 )
             
             self.context_page = await self.browser_context.new_page()
+
+            # Pre-inject cookies if available to avoid login flow and risk control
+            if config.COOKIES:
+                utils.logger.info("[DouYinCrawler] Pre-injecting cookies for authenticated session...")
+                cookie_dict = utils.convert_str_cookie_to_dict(config.COOKIES)
+                await self.browser_context.add_cookies([
+                    {
+                        'name': key, 
+                        'value': value, 
+                        'domain': ".douyin.com", 
+                        'path': "/"
+                    } 
+                    for key, value in cookie_dict.items()
+                ])
+            
             await self.context_page.goto(self.index_url)
 
             # 初始化 Client

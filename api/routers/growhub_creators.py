@@ -8,7 +8,10 @@ from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 
+from api.auth import deps
 from api.services.creator_service import get_creator_service
+from database.growhub_models import GrowHubUser
+from fastapi import APIRouter, HTTPException, Query, Depends
 
 router = APIRouter(prefix="/growhub/creators", tags=["GrowHub - Creators"])
 
@@ -74,7 +77,8 @@ async def list_creators(
     sort_by: str = Query("fans_count", description="排序字段: fans_count/likes_count/content_count/created_at"),
     sort_order: str = Query("desc", description="排序方向: asc/desc"),
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100)
+    page_size: int = Query(20, ge=1, le=100),
+    current_user: GrowHubUser = Depends(deps.get_current_user)
 ):
     """获取达人博主列表"""
     creator_service = get_creator_service()
@@ -89,7 +93,8 @@ async def list_creators(
         sort_by=sort_by,
         sort_order=sort_order,
         page=page,
-        page_size=page_size
+        page_size=page_size,
+        user_id=current_user.id if current_user.role != 'admin' else None
     )
     
     return CreatorListResponse(
@@ -100,11 +105,15 @@ async def list_creators(
 
 @router.get("/stats", response_model=CreatorStatsResponse)
 async def get_creator_stats(
-    source_project_id: Optional[int] = Query(None, description="来源项目ID")
+    source_project_id: Optional[int] = Query(None, description="来源项目ID"),
+    current_user: GrowHubUser = Depends(deps.get_current_user)
 ):
     """获取博主统计数据"""
     creator_service = get_creator_service()
-    stats = await creator_service.get_stats(source_project_id=source_project_id)
+    stats = await creator_service.get_stats(
+        source_project_id=source_project_id,
+        user_id=current_user.id if current_user.role != 'admin' else None
+    )
     return CreatorStatsResponse(**stats)
 
 

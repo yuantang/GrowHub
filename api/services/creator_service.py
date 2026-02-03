@@ -23,7 +23,8 @@ class CreatorService:
         data: Dict[str, Any],
         source_project_id: Optional[int] = None,
         source_keyword: Optional[str] = None,
-        content_id: Optional[int] = None
+        content_id: Optional[int] = None,
+        user_id: Optional[int] = None
     ) -> GrowHubCreator:
         """
         插入或更新博主信息
@@ -31,12 +32,16 @@ class CreatorService:
         - 如不存在，则新建记录
         """
         async with get_session() as session:
+            # DEBUG: Log input parameters
+            utils.logger.info(f"[CreatorService] Upserting creator: {platform}/{author_id}, user_id={user_id}")
+            
             # 查找是否已存在
             result = await session.execute(
                 select(GrowHubCreator).where(
                     and_(
                         GrowHubCreator.platform == platform,
-                        GrowHubCreator.author_id == author_id
+                        GrowHubCreator.author_id == author_id,
+                        GrowHubCreator.user_id == user_id
                     )
                 )
             )
@@ -106,6 +111,7 @@ class CreatorService:
                     source_project_id=source_project_id,
                     source_keyword=source_keyword,
                     latest_content_id=content_id,
+                    user_id=user_id,
                     first_seen_at=now,
                     last_updated_at=now
                 )
@@ -115,17 +121,19 @@ class CreatorService:
                 utils.logger.info(f"[CreatorService] 新增博主: {platform}/{author_id}, 粉丝: {creator.fans_count}")
                 return creator
 
-    async def get_creator(self, platform: str, author_id: str) -> Optional[GrowHubCreator]:
+    async def get_creator(self, platform: str, author_id: str, user_id: Optional[int] = None) -> Optional[GrowHubCreator]:
         """根据平台和作者ID获取博主"""
         async with get_session() as session:
-            result = await session.execute(
-                select(GrowHubCreator).where(
-                    and_(
-                        GrowHubCreator.platform == platform,
-                        GrowHubCreator.author_id == author_id
-                    )
+            stmt = select(GrowHubCreator).where(
+                and_(
+                    GrowHubCreator.platform == platform,
+                    GrowHubCreator.author_id == author_id
                 )
             )
+            if user_id:
+                stmt = stmt.where(GrowHubCreator.user_id == user_id)
+            
+            result = await session.execute(stmt)
             return result.scalar()
 
     async def list_creators(
@@ -139,7 +147,8 @@ class CreatorService:
         sort_by: str = 'fans_count',
         sort_order: str = 'desc',
         page: int = 1,
-        page_size: int = 20
+        page_size: int = 20,
+        user_id: Optional[int] = None
     ) -> Dict[str, Any]:
         """获取博主列表"""
         async with get_session() as session:
@@ -170,6 +179,10 @@ class CreatorService:
             if source_keyword:
                 query = query.where(GrowHubCreator.source_keyword.ilike(f"%{source_keyword}%"))
                 count_query = count_query.where(GrowHubCreator.source_keyword.ilike(f"%{source_keyword}%"))
+            
+            if user_id:
+                query = query.where(GrowHubCreator.user_id == user_id)
+                count_query = count_query.where(GrowHubCreator.user_id == user_id)
             
             # 获取总数
             total_result = await session.execute(count_query)
@@ -216,13 +229,15 @@ class CreatorService:
             await session.commit()
             return True
 
-    async def get_stats(self, source_project_id: Optional[int] = None) -> Dict[str, Any]:
+    async def get_stats(self, source_project_id: Optional[int] = None, user_id: Optional[int] = None) -> Dict[str, Any]:
         """获取博主统计数据"""
         async with get_session() as session:
             # Simple Total Query without subquery
             count_query = select(func.count(GrowHubCreator.id))
             if source_project_id:
                 count_query = count_query.where(GrowHubCreator.source_project_id == source_project_id)
+            if user_id:
+                count_query = count_query.where(GrowHubCreator.user_id == user_id)
                 
             total_result = await session.execute(count_query)
             total = total_result.scalar() or 0
@@ -234,6 +249,8 @@ class CreatorService:
             ).group_by(GrowHubCreator.status)
             if source_project_id:
                 status_query = status_query.where(GrowHubCreator.source_project_id == source_project_id)
+            if user_id:
+                status_query = status_query.where(GrowHubCreator.user_id == user_id)
             
             status_result = await session.execute(status_query)
             status_counts = {row[0]: row[1] for row in status_result}
@@ -245,6 +262,8 @@ class CreatorService:
             ).group_by(GrowHubCreator.platform)
             if source_project_id:
                 platform_query = platform_query.where(GrowHubCreator.source_project_id == source_project_id)
+            if user_id:
+                platform_query = platform_query.where(GrowHubCreator.user_id == user_id)
             
             platform_result = await session.execute(platform_query)
             platform_counts = {row[0]: row[1] for row in platform_result}

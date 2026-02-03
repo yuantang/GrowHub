@@ -43,6 +43,11 @@ from tools import utils
 from tools.cdp_browser import CDPBrowserManager
 from var import crawler_type_var, source_keyword_var, project_id_var
 
+# Database imports for Fingerprint
+from database.db_session import get_session
+from database.growhub_models import GrowHubAccount
+from sqlalchemy import select
+
 from .client import XiaoHongShuClient
 from .exception import DataFetchError
 from .field import SearchSortType
@@ -174,6 +179,35 @@ class XiaoHongShuCrawler(AbstractCrawler):
             playwright_proxy_format, httpx_proxy_format = utils.format_proxy_info(ip_proxy_info)
 
         async with async_playwright() as playwright:
+            # Retrieve fingerprint from DB if ACCOUNT_ID is set
+            db_user_agent = None
+            if hasattr(config, "ACCOUNT_ID") and config.ACCOUNT_ID:
+                try:
+                    # Create a synchronous wrapper or just use the sync approach if session allows, 
+                    # but here we are in async start() so we can use async session locally.
+                    async with get_session() as session:
+                        result = await session.execute(select(GrowHubAccount).where(GrowHubAccount.id == config.ACCOUNT_ID))
+                        account = result.scalar_one_or_none()
+                        if account and account.fingerprint:
+                             # fingerprint is a JSON dict or string
+                             fp = account.fingerprint
+                             if isinstance(fp, str):
+                                 import json
+                                 fp = json.loads(fp)
+                             
+                             if isinstance(fp, dict) and "userAgent" in fp:
+                                 db_user_agent = fp["userAgent"]
+                                 utils.logger.info(f"[XiaoHongShuCrawler] 🧬 Loaded User-Agent from DB Fingerprint: {db_user_agent[:50]}...")
+                except Exception as e:
+                    utils.logger.warning(f"[XiaoHongShuCrawler] Failed to load fingerprint from DB: {e}")
+
+            # Use DB UA if available, otherwise keep existing self.user_agent (which is random) or config default
+            # Note: self.user_agent was init via utils.get_user_agent()
+            if db_user_agent:
+                self.user_agent = db_user_agent
+            
+            # Update config DEFAULT for consistency if needed, but mainly use self.user_agent
+            
             # Choose launch mode based on configuration
             if config.ENABLE_CDP_MODE:
                 utils.logger.info("[XiaoHongShuCrawler] Launching browser using CDP mode")
@@ -201,7 +235,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
 
             # Create a client to interact with the Xiaohongshu website.
             utils.logger.info(f"[XiaoHongShuCrawler] Config Cookies length: {len(config.COOKIES)}")
-            self.xhs_client = await self.create_xhs_client(httpx_proxy_format)
+            self.xhs_client = await self.create_xhs_client(httpx_proxy_format, user_agent=self.user_agent)
             if not await self.xhs_client.pong():
                 utils.logger.info("[XiaoHongShuCrawler] Initial pong failed, attempting cookie login...")
                 login_obj = XiaoHongShuLogin(
@@ -704,10 +738,14 @@ class XiaoHongShuCrawler(AbstractCrawler):
             utils.logger.info(f"[XiaoHongShuCrawler.get_comments] Sleeping for {crawl_interval} seconds after fetching comments for note {note_id}")
             return res
 
-    async def create_xhs_client(self, httpx_proxy: Optional[str]) -> XiaoHongShuClient:
+    async def create_xhs_client(self, httpx_proxy: Optional[str], user_agent: Optional[str] = None) -> XiaoHongShuClient:
         """Create Xiaohongshu client"""
         utils.logger.info("[XiaoHongShuCrawler.create_xhs_client] Begin create Xiaohongshu API client ...")
         cookie_str, cookie_dict = utils.convert_cookies(await self.browser_context.cookies())
+        
+        # Use provided UA, or self.user_agent, or fallback to hardcoded
+        final_ua = user_agent or self.user_agent or "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36"
+        
         xhs_client_obj = XiaoHongShuClient(
             proxy=httpx_proxy,
             headers={
@@ -725,7 +763,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
                 "sec-fetch-dest": "empty",
                 "sec-fetch-mode": "cors",
                 "sec-fetch-site": "same-site",
-                "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
+                "user-agent": final_ua,
                 "Cookie": cookie_str,
             },
             playwright_page=self.context_page,

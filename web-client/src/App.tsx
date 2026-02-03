@@ -77,14 +77,7 @@ function App() {
             <Route path="plugin-status" element={<PluginStatusPage />} />
 
             {/* Admin Only Routes */}
-            <Route
-              path="settings"
-              element={
-                <AdminRoute>
-                  <SettingsPage />
-                </AdminRoute>
-              }
-            />
+            <Route path="settings" element={<SettingsPage />} />
             <Route
               path="admin/users"
               element={

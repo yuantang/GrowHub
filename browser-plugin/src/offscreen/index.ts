@@ -305,6 +305,58 @@ async function handleFetchTask(task: any) {
       // STRATEGY: Navigate & Capture (Passive Interception)
       // For Douyin Search, we drive the browser to the search page and wait for the network spy to catch the data.
       if (task.platform === 'dy' && (task.request.url.includes('/web/search/item/') || task.request.url.includes('/general/search/single/'))) {
+         // ... (Douyin Logic remains same, but I will collapse it here for brevity if tool allows, but I must provide full block if I want to match. Actually, I am ADDING XHS logic, so I can insert it before or after).
+      }
+      
+      // XHS: Navigate & Capture
+      if (task.platform === 'xhs' && task.request.url.includes('/search/notes')) {
+          addLog(`📕 Navigating to XHS Search Page...`);
+          try {
+             const urlObj = new URL(task.request.url);
+             const keyword = urlObj.searchParams.get('keyword');
+             
+             if (!keyword) throw new Error('Could not extract keyword for XHS navigation');
+
+             const targetUrl = `https://www.xiaohongshu.com/search_result?keyword=${encodeURIComponent(keyword)}&source=web_search_result_notes&type=51`;
+             
+             const captureResult = await chrome.runtime.sendMessage({
+                 type: 'NAVIGATE_AND_CAPTURE',
+                 platform: 'xhs',
+                 url: targetUrl,
+                 waitPattern: 'api/sns/web/v1/search/notes'
+             });
+             
+             if (captureResult && captureResult.success && captureResult.data) {
+                  const body = captureResult.data.body;
+                  await addLog(`✅ Intercepted XHS search data!`);
+
+                  const result = {
+                    type: 'TASK_RESULT',
+                    task_id: task.task_id,
+                    success: true,
+                    response: {
+                      status: 200,
+                      headers: {},
+                      body: body
+                    },
+                    duration_ms: Date.now() - startTime,
+                    login_expired: false,
+                    source: 'intercept'
+                  };
+                  
+                  ws?.send(JSON.stringify(result));
+                  await updateTaskStatus(task.task_id, 'completed');
+                  const { taskCount = 0 } = await chrome.storage.local.get('taskCount');
+                  await chrome.storage.local.set({ taskCount: taskCount + 1, activeTask: null, lastSync: Date.now() });
+                  return;
+             }
+          } catch (err: any) {
+             addLog(`XHS capture failed: ${err.message}`, 'error');
+             // Proceed to fallback (logic below) or return failure
+          }
+      }
+
+      if (task.platform === 'dy' && (task.request.url.includes('/web/search/item/') || task.request.url.includes('/general/search/single/'))) {
          addLog(`🧭 Navigating to Search Page...`);
          
          try {
@@ -466,6 +518,19 @@ chrome.runtime.onMessage.addListener((message) => {
     handleSyncCookies(message.platform).catch((e) => {
       console.error('[Offscreen] Cookie sync fail:', e);
     });
+  } else if (message.type === 'TEST_TASK') {
+     addLog(`🧪 Received TEST TASK for ${message.platform}`, 'info');
+     const mockTask = {
+        task_id: 'test-' + Date.now(),
+        platform: message.platform,
+        task_type: 'search',
+        request: {
+            url: message.url,
+            method: 'GET',
+            headers: {}
+        }
+     };
+     handleFetchTask(mockTask).catch(err => addLog(`Test failed: ${err.message}`, 'error'));
   }
 });
 

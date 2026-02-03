@@ -3,18 +3,56 @@
 GrowHub Browser Plugin API Router
 Handles communication between the browser plugin and GrowHub server.
 """
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Header, Request
 from pydantic import BaseModel
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 import json
 
 from database.db_session import get_session
-from database.growhub_models import GrowHubUser, GrowHubAccount
+from database.growhub_models import GrowHubUser, GrowHubAccount, GrowHubSystemConfig
 from sqlalchemy import select, update
-from api.auth.deps import get_current_user
+from api.auth.deps import get_current_user, reusable_oauth2
+
 
 router = APIRouter(prefix="/api/plugin", tags=["GrowHub - Plugin"])
+
+
+async def get_report_auth_user(
+    authorization: Optional[str] = Header(None),
+    api_key: Optional[str] = None
+) -> Optional[GrowHubUser]:
+    """
+    数据上报专用鉴权：支持 JWT Token 或 简单 API Key。
+    """
+    # 1. 尝试 JWT 鉴权 (从 Authorization Header)
+    if authorization and authorization.startswith("Bearer "):
+        try:
+            token = authorization.split(" ")[1]
+            from api.auth.deps import get_db, get_current_user
+            async with get_session() as db:
+                user = await get_current_user(db=db, token=token)
+                return user
+        except:
+             pass
+
+    # 2. 尝试 固定 API Key 鉴权 (支持 Header 或 Query)
+    # 此处检查数据库中 growhub_settings.plugin_api_key
+    target_key = api_key
+    async with get_session() as session:
+        result = await session.execute(
+            select(GrowHubSystemConfig).where(GrowHubSystemConfig.config_key == "plugin_config")
+        )
+        config = result.scalar_one_or_none()
+        if config:
+            stored_key = config.config_value.get("report_key")
+            if stored_key and (target_key == stored_key):
+                # 简单 Key 模式下，返回管理员作为执行主体，或返回 None 表示“系统上报”
+                # 这里我们查找第一个管理员作为 fallback 归属
+                admin_result = await session.execute(select(GrowHubUser).filter(GrowHubUser.role == 'admin'))
+                return admin_result.scalars().first()
+    
+    return None
 
 
 class CookieItem(BaseModel):
@@ -41,9 +79,48 @@ class SyncCookiesResponse(BaseModel):
     account_ids: Dict[str, str]
 
 
+class MetaItem(BaseModel):
+    key: str
+    name: str
+    alias: Optional[str] = None
+    description: Optional[str] = None
+
+
+class ReportDataRequest(BaseModel):
+    """
+    Data reporting request from browser plugin.
+    Follows protocol: https://smzs.xisence.com/help/guide/data-reporting
+    """
+    extra: Dict[str, Any] = {}
+    meta: List[MetaItem] = []
+    list: List[Dict[str, Any]]
+    remark: Optional[str] = None
+    version: Optional[str] = None
+
+
+class ReportDataResponse(BaseModel):
+    status: str
+    message: str
+    count: int
+
+
 def cookies_to_string(cookies: List[CookieItem]) -> str:
     """Convert cookie list to cookie string format"""
     return "; ".join([f"{c.name}={c.value}" for c in cookies])
+
+
+def flatten_dict(d: Dict[str, Any], parent_key: str = '', sep: str = '.') -> Dict[str, Any]:
+    """将嵌套字典扁平化，例如 {'user': {'name': 'A'}} -> {'user.name': 'A'}"""
+    items = []
+    for k, v in d.items():
+        new_key = f"{parent_key}{sep}{k}" if parent_key else k
+        if isinstance(v, dict):
+            items.extend(flatten_dict(v, new_key, sep=sep).items())
+        else:
+            items.append((new_key, v))
+            # 同时保留原始键名以便兼容已有逻辑
+            items.append((k, v))
+    return dict(items)
 
 
 def get_platform_name(platform_code: str) -> str:
@@ -136,7 +213,8 @@ async def sync_cookies(
                 "health_score": 100,
                 "last_check": datetime.now(),
                 "updated_at": datetime.now(),
-                "notes": f"Auto-synced via Plugin at {datetime.now().strftime('%H:%M:%S')}"
+                "notes": f"Auto-synced via Plugin at {datetime.now().strftime('%H:%M:%S')}",
+                "cooldown_until": None,  # Reset cooldown on fresh sync
             }
             if fingerprint_raw:
                 update_data["fingerprint"] = fingerprint_raw
@@ -299,4 +377,132 @@ async def test_plugin_search(
         "page": page,
         "count": len(notes),
         "notes": notes[:10]  # Return first 10 for preview
+    }
+
+
+@router.post("/report-data", response_model=ReportDataResponse)
+async def report_data(
+    data: ReportDataRequest,
+    api_key: Optional[str] = None,
+    auth_user: Optional[GrowHubUser] = Depends(get_report_auth_user)
+):
+    """
+    接收来自插件上报的数据并存入系统汇总表 (GrowHubContent)。
+    支持分流至博主池、热点池等。
+    鉴权模式：
+    1. Authorization: Bearer <JWT_TOKEN>
+    2. ?api_key=<FIXED_KEY> (或设置在 extra 中)
+    """
+    from ..services.growhub_store import get_growhub_store_service
+    from tools import utils
+    
+    store_service = get_growhub_store_service()
+    
+    # 校验权限
+    if not auth_user:
+        # 尝试从数据包 extra 中再找一次 key
+        # (有些插件配置不支持 Query Param)
+        provided_key = api_key or data.extra.get("api_key")
+        if provided_key:
+             # 手动调用一次 key 检查
+             auth_user = await get_report_auth_user(api_key=provided_key)
+        
+        if not auth_user:
+            raise HTTPException(status_code=401, detail="Invalid API Key or Token")
+
+    # 1. 提取公共上下文参数
+    platform_override = data.extra.get("platform")
+    project_id = data.extra.get("project_id")
+    purpose = data.extra.get("purpose", "general")
+    
+    # 过滤器映射
+    min_fans = data.extra.get("min_fans")
+    max_fans = data.extra.get("max_fans")
+    require_contact = data.extra.get("require_contact")
+    
+    utils.logger.info(f"💾 [Plugin Report] Received report from {auth_user.username}. Items: {len(data.list)}, Platform: {platform_override}")
+    
+    count = 0
+    for item in data.list:
+        try:
+            # 2. 扁平化数据 (处理嵌套字段如 user.nickname)
+            flat_item = flatten_dict(item)
+            
+            # 补充必要元数据
+            if project_id:
+                flat_item["project_id"] = project_id
+            
+            # 如果 item 中没有 platform，尝试使用全局或自动探测
+            platform = flat_item.get("platform") or platform_override
+            if not platform:
+                # 简单启发式探测
+                if "note_id" in flat_item: platform = "xhs"
+                elif "aweme_id" in flat_item: platform = "dy"
+                elif "video_id" in flat_item: platform = "bili"
+                elif "photo_id" in flat_item: platform = "ks"
+                else: platform = "unknown"
+            
+            # 3. 调用统一存储逻辑 (此处会处理去重、分流、舆情检测)
+            await store_service.sync_to_growhub(
+                platform=platform,
+                raw_data=flat_item,
+                min_fans=min_fans,
+                max_fans=max_fans,
+                require_contact=require_contact,
+                purpose=purpose,
+                user_id=auth_user.id
+            )
+            count += 1
+            
+        except Exception as e:
+            utils.logger.error(f"[Plugin Report] Error processing item {count}: {e}")
+            continue
+            
+    return ReportDataResponse(
+        status="ok",
+        message=f"Successfully synced {count} items to GrowHub Database",
+        count=count
+    )
+
+
+@router.get("/get-setup-info")
+async def get_plugin_setup_info(
+    request: Request,
+    current_user: GrowHubUser = Depends(get_current_user)
+):
+    """
+    提供给前端页面的“一键配置”信息。
+    包含：
+    1. 当前登录用户的临时 JWT Header
+    2. 上报 API 地址
+    3. 系统预留的固定 Key (如果启用了)
+    """
+    # 获取 Base URL
+    base_url = str(request.base_url).rstrip('/')
+    
+    # 获取系统配置的固定 Key
+    report_key = "NOT_SET"
+    async with get_session() as session:
+        result = await session.execute(
+            select(GrowHubSystemConfig).where(GrowHubSystemConfig.config_key == "plugin_config")
+        )
+        config = result.scalar_one_or_none()
+        if config:
+            report_key = config.config_value.get("report_key", "NOT_SET")
+            
+    # 获取当前用户的 Token (从请求中提取，或者这里重新生成一个也行)
+    # 最简单的做法是让前端传过来，或者这里返还格式化的 Header
+    auth_header = request.headers.get("Authorization", "Bearer <YOUR_TOKEN_HERE>")
+
+    return {
+        "setup_guide": "请将以下 JSON 内容参考填入社媒助手插件的配置中",
+        "url": f"{base_url}/api/plugin/report-data",
+        "method": "POST",
+        "headers": {
+            "Authorization": auth_header,
+            "Content-Type": "application/json"
+        },
+        "fixed_key_url": f"{base_url}/api/plugin/report-data?api_key={report_key}",
+        "fixed_key": report_key,
+        "advice": "生产环境建议使用 Authorization 模式，本地快速测试可使用 fixed_key。"
     }

@@ -362,6 +362,13 @@ export const fetchProjectPreflight = (id: number) =>
 export const fetchProjectLogs = (id: number) =>
     api.get<{ logs: string[] }>(`/growhub/projects/${id}/logs`).then(res => res.data.logs);
 
+// ============ Plugin API ============
+export const fetchPluginSetupInfo = () =>
+    api.get('/plugin/get-setup-info').then(res => res.data);
+
+export const fetchPluginConfig = () =>
+    api.get('/growhub/settings/plugin_config').then(res => res.data);
+
 // ============ Project Detail API ============
 export interface ProjectContentFilters {
     platform?: string;

@@ -359,13 +359,26 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
         # Get raw cookies from browser
         browser_cookies = await browser_context.cookies()
         
-        # Deduplicate cookies by name (keep the last/latest one)
+        # Deduplicate and filter essential cookies
         unique_cookies = {}
+        # List of critical cookies required for login and requests
+        essential_keys = [
+            'web_session', 'a1', 'webId', 'gid', 'xsecappid', 'acw_tc', 'abRequestId', 
+            'sec_user_id', 'unread', 'web_sect', 'websect', 'unheard_num'
+        ]
+        
         for cookie in browser_cookies:
-            # Filter out potentially large or tracking cookies if needed
-            # For now, just ensuring each key appears only once is usually enough
-            unique_cookies[cookie['name']] = cookie['value']
-            
+            # Only keep essential cookies or non-tracking ones
+            # STRICT MODE: Only allow whitelisted keys to avoid 400 Request Header Too Large
+            name = cookie['name']
+            if name in essential_keys:
+                 unique_cookies[name] = cookie['value']
+
+        # Ensure at least web_session and a1 are present if they exist in source
+        for cookie in browser_cookies:
+            if cookie['name'] in ['web_session', 'a1'] and cookie['name'] not in unique_cookies:
+                 unique_cookies[cookie['name']] = cookie['value']
+
         # Reconstruct clean cookie dict and string
         self.cookie_dict = unique_cookies
         self.headers["Cookie"] = "; ".join([f"{k}={v}" for k, v in unique_cookies.items()])

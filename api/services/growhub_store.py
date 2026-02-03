@@ -30,7 +30,8 @@ class GrowHubStoreService:
         max_fans: int = None,
         require_contact: bool = None,
         sentiment_keywords: List[str] = None,
-        purpose: str = None  # creator/hotspot/sentiment/general
+        purpose: str = None,  # creator/hotspot/sentiment/general
+        user_id: Optional[int] = None
     ):
         """
         将各平台原始数据同步到 GrowHubContent
@@ -63,6 +64,31 @@ class GrowHubStoreService:
             "kuaishou": "ks"
         }
         platform = platform_map.get(platform, platform)
+        
+        # 0.1 数据标准化 (Backfill critical fields if missing but present in other forms)
+        # 解决 API/Plugin 数据结构不一致问题
+        if "author_id" not in raw_data or not raw_data["author_id"]:
+             raw_data["author_id"] = str(
+                raw_data.get("sec_uid") or 
+                raw_data.get("user_id") or 
+                raw_data.get("uid") or 
+                raw_data.get("author.uid") or 
+                raw_data.get("author_user_id") or 
+                ""
+            )
+        
+        if "author_name" not in raw_data or not raw_data["author_name"]:
+             raw_data["author_name"] = raw_data.get("nickname") or raw_data.get("author.nickname") or raw_data.get("user_name")
+             
+        if "author_avatar" not in raw_data or not raw_data["author_avatar"]:
+             raw_data["author_avatar"] = raw_data.get("avatar") or raw_data.get("user_avatar") or raw_data.get("author.avatar")
+
+        if "cover_url" not in raw_data or not raw_data["cover_url"]:
+             raw_data["cover_url"] = raw_data.get("video_cover") or raw_data.get("note_cover")
+             
+        # Normalize ID for content
+        if platform == 'dy' and 'aweme_id' in raw_data and 'note_id' not in raw_data:
+            raw_data['note_id'] = raw_data['aweme_id'] # _get_platform_content_id might use note_id/aweme_id
 
         try:
             # 1. 字段映射
@@ -142,11 +168,11 @@ class GrowHubStoreService:
             # =============== 入库操作 ===============
 
             async with get_session() as session:
-                # 检查是否已存在
                 stmt = select(GrowHubContent).where(
                     and_(
                         GrowHubContent.platform == platform,
-                        GrowHubContent.platform_content_id == content_id
+                        GrowHubContent.platform_content_id == content_id,
+                        GrowHubContent.user_id == user_id
                     )
                 )
                 result = await session.execute(stmt)
@@ -189,8 +215,10 @@ class GrowHubStoreService:
                 # 提取作者账号（抖音号/快手号等）
                 author_unique_id = raw_data.get("user_unique_id") or raw_data.get("unique_id") or ""
 
-                # 提取作者 ID
-                author_id = str(raw_data.get("sec_uid") or raw_data.get("user_id") or "")
+                # 提取作者 ID (已在入口处规范化)
+                author_id = raw_data.get("author_id", "")
+                
+                utils.logger.info(f"[GrowHubStore] Sync Content: ID={content_id}, Platform={platform}, AuthorID={author_id}")
 
                 # 记录日志
                 if is_alert:
@@ -227,6 +255,7 @@ class GrowHubStoreService:
                     "alert_level": alert_level,
                     "source_keyword": raw_data.get("source_keyword"),
                     "project_id": raw_data.get("project_id"),  # 关联的项目 ID
+                    "user_id": user_id,
                     "publish_time": publish_time,
                     "crawl_time": datetime.now(timezone.utc).replace(tzinfo=None),
                     "updated_at": datetime.now(timezone.utc).replace(tzinfo=None)
@@ -255,7 +284,8 @@ class GrowHubStoreService:
                     raw_data=raw_data,
                     platform=platform,
                     source_project_id=raw_data.get("project_id"),
-                    source_keyword=raw_data.get("source_keyword")
+                    source_keyword=raw_data.get("source_keyword"),
+                    user_id=user_id
                 )
                 # print(f"[GrowHubStore] Synced {platform} content {content_id}")
 
@@ -404,7 +434,8 @@ class GrowHubStoreService:
         raw_data: Dict[str, Any],
         platform: str,
         source_project_id: Optional[int] = None,
-        source_keyword: Optional[str] = None
+        source_keyword: Optional[str] = None,
+        user_id: Optional[int] = None
     ):
         """
         根据任务目的进行数据分流
@@ -414,36 +445,42 @@ class GrowHubStoreService:
         - general: 仅写入全量数据池 (不额外分流)
         """
         try:
-            if purpose == 'creator':
-                # 达人博主分流：提取博主信息并 UPSERT
+            # 1. 始终尝试同步达人博主信息 (只要有有效 author_id)
+            # 这样无论是通过 search, detail 还是 creator 任务抓取的数据，都会沉淀到博主池
+            author_id = str(raw_data.get("sec_uid") or raw_data.get("user_id") or content.author_id or "")
+            if author_id:
                 from api.services.creator_service import get_creator_service
                 creator_service = get_creator_service()
                 
-                author_id = str(raw_data.get("sec_uid") or raw_data.get("user_id") or content.author_id or "")
-                if author_id:
-                    author_data = {
-                        'author_name': content.author_name,
-                        'author_avatar': content.author_avatar,
-                        'author_url': raw_data.get("user_url") or raw_data.get("author_url"),
-                        'unique_id': content.author_unique_id or raw_data.get("unique_id") or raw_data.get("short_id"),
-                        'signature': raw_data.get("signature") or raw_data.get("user_signature"),
-                        'fans_count': content.author_fans_count or 0,
-                        'follows_count': content.author_follows_count or 0,
-                        'likes_count': content.author_likes_count or 0,
-                        'works_count': raw_data.get("works_count") or raw_data.get("aweme_count") or 0,
-                        'contact_info': content.author_contact,
-                        'ip_location': content.ip_location
-                    }
-                    await creator_service.upsert_creator(
-                        platform=platform,
-                        author_id=author_id,
-                        data=author_data,
-                        source_project_id=source_project_id,
-                        source_keyword=source_keyword,
-                        content_id=content.id
-                    )
-                    
-            elif purpose == 'hotspot':
+                author_data = {
+                    'author_name': content.author_name,
+                    'author_avatar': content.author_avatar,
+                    'author_url': raw_data.get("user_url") or raw_data.get("author_url"),
+                    'unique_id': content.author_unique_id or raw_data.get("unique_id") or raw_data.get("short_id"),
+                    'signature': raw_data.get("signature") or raw_data.get("user_signature"),
+                    'fans_count': content.author_fans_count or 0,
+                    'follows_count': content.author_follows_count or 0,
+                    'likes_count': content.author_likes_count or 0,
+                    'works_count': raw_data.get("works_count") or raw_data.get("aweme_count") or 0,
+                    'contact_info': content.author_contact,
+                    'ip_location': content.ip_location
+                }
+                
+                # 如果任务目的显式为 creator，则关联 source_project_id
+                # 否则（如 general/hotspot），仅作为发现来源，可视情况关联或仅更新基础信息
+                # 这里为了简单，统一关联 source_project_id (如果存在)
+                await creator_service.upsert_creator(
+                    platform=platform,
+                    author_id=author_id,
+                    data=author_data,
+                    source_project_id=source_project_id,
+                    source_keyword=source_keyword,
+                    content_id=content.id,
+                    user_id=user_id
+                )
+
+            # 2. 根据目的进行其他特定分流
+            if purpose == 'hotspot':
                 # 热点内容分流：计算热度并入池
                 from api.services.hotspot_service import get_hotspot_service
                 hotspot_service = get_hotspot_service()
@@ -451,15 +488,11 @@ class GrowHubStoreService:
                 await hotspot_service.upsert_hotspot(
                     content=content,
                     source_project_id=source_project_id,
-                    source_keyword=source_keyword
+                    source_keyword=source_keyword,
+                    user_id=user_id
                 )
-                
-            elif purpose == 'sentiment':
-                # 舆情监控：主流程已处理 is_alert 标记，此处可做额外处理
-                # 例如：触发通知、更新统计等（暂不实现）
-                pass
-                
-            # general: 不做额外分流，仅保留在 growhub_contents 全量池
+            
+            # sentiment: 舆情标记已在主流程处理
             
         except Exception as e:
             utils.logger.warning(f"[GrowHubStore] 数据分流失败 ({purpose}): {e}")

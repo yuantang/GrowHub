@@ -24,6 +24,7 @@ export default defineConfig({
         offscreen: resolve(__dirname, 'offscreen.html'),
         background: resolve(__dirname, 'src/background/index.ts'),
         'content/douyin': resolve(__dirname, 'src/content/douyin.ts'),
+        'content/xhs': resolve(__dirname, 'src/content/xhs.ts'),
       },
       output: {
         entryFileNames: (chunkInfo) => {
@@ -35,6 +36,9 @@ export default defineConfig({
           }
           if (chunkInfo.name === 'content/douyin') {
             return 'content/douyin.js';
+          }
+          if (chunkInfo.name === 'content/xhs') {
+            return 'content/xhs.js';
           }
           return 'assets/[name]-[hash].js';
         },

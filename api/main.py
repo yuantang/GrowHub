@@ -214,6 +214,42 @@ async def startup_event():
                 await session.commit()
             except Exception as e:
                 print(f"Migration failed (checkpoints.project_id): {e}")
+
+        # Migration: Add user_id to growhub_contents
+        try:
+            await session.execute(text("SELECT user_id FROM growhub_contents LIMIT 1"))
+        except Exception:
+            print("Migrating: Adding user_id to growhub_contents")
+            try:
+                await session.execute(text("ALTER TABLE growhub_contents ADD COLUMN user_id INTEGER"))
+                await session.execute(text("CREATE INDEX ix_growhub_contents_user_id ON growhub_contents (user_id)"))
+                await session.commit()
+            except Exception as e:
+                print(f"Migration failed (growhub_contents.user_id): {e}")
+
+        # Migration: Add user_id to growhub_creators
+        try:
+            await session.execute(text("SELECT user_id FROM growhub_creators LIMIT 1"))
+        except Exception:
+            print("Migrating: Adding user_id to growhub_creators")
+            try:
+                await session.execute(text("ALTER TABLE growhub_creators ADD COLUMN user_id INTEGER"))
+                await session.execute(text("CREATE INDEX ix_growhub_creators_user_id ON growhub_creators (user_id)"))
+                await session.commit()
+            except Exception as e:
+                print(f"Migration failed (growhub_creators.user_id): {e}")
+
+        # Migration: Add user_id to growhub_hotspots
+        try:
+            await session.execute(text("SELECT user_id FROM growhub_hotspots LIMIT 1"))
+        except Exception:
+            print("Migrating: Adding user_id to growhub_hotspots")
+            try:
+                await session.execute(text("ALTER TABLE growhub_hotspots ADD COLUMN user_id INTEGER"))
+                await session.execute(text("CREATE INDEX ix_growhub_hotspots_user_id ON growhub_hotspots (user_id)"))
+                await session.commit()
+            except Exception as e:
+                print(f"Migration failed (growhub_hotspots.user_id): {e}")
                 
     # Initialize Services
     from api.services.account_pool import get_account_pool

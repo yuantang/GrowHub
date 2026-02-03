@@ -292,9 +292,32 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
         return cookie_dict.get("LOGIN_STATUS") == "1"
 
     async def update_cookies(self, browser_context: BrowserContext):
-        cookie_str, cookie_dict = utils.convert_cookies(await browser_context.cookies())
+        raw_cookies = await browser_context.cookies()
+        
+        # STRICT MODE: Only allow whitelisted keys to avoid Anti-Bot triggers and 400 Errors
+        essential_keys = [
+            "sessionid", "passport_csrf_token", "monitor_web_id", "odin_tt", 
+            "__ac_nonce", "account_id", "msToken", "a_bogus", "tt_scid", 
+            "ttwid", "s_v_web_id", "bd_ticket_guard_client_data", "passport_auth_mix_state",
+            "LOGIN_STATUS", "uid_tt", "uid_tt_ss", "sid_tt", "sid_guard"
+        ]
+        
+        filtered_cookies = {}
+        for cookie in raw_cookies:
+            if cookie['name'] in essential_keys:
+                filtered_cookies[cookie['name']] = cookie['value']
+        
+        # If sessionid is missing but present in raw, ensure it's added (redundant check but safe)
+        if "sessionid" not in filtered_cookies:
+             for c in raw_cookies:
+                 if c['name'] == "sessionid":
+                     filtered_cookies["sessionid"] = c['value']
+                     break
+
+        cookie_str = "; ".join([f"{k}={v}" for k, v in filtered_cookies.items()])
         self.headers["Cookie"] = cookie_str
-        self.cookie_dict = cookie_dict
+        self.cookie_dict = filtered_cookies
+        utils.logger.info(f"[DouYinClient.update_cookies] Optimized cookies: {len(raw_cookies)} -> {len(filtered_cookies)}")
 
     async def search_info_by_keyword(
         self,

@@ -3,7 +3,8 @@
 import asyncio
 from datetime import datetime
 from typing import List, TYPE_CHECKING
-
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+import random
 import config
 from tools import utils
 from media_platform.douyin.field import PublishTimeType, SearchSortType, SearchChannelType
@@ -139,7 +140,9 @@ class SearchHandler:
             has_more = True
             empty_retry_count = 0 
             
-            while total_processed_count < config.CRAWLER_MAX_NOTES_COUNT and page <= start_page + 100:
+            max_pages = 20
+            
+            while total_processed_count < config.CRAWLER_MAX_NOTES_COUNT and page < start_page + max_pages:
                 utils.logger.info(f"📄 [SearchHandler] 请求第 {page} 页 (合格进度: {total_processed_count}/{config.CRAWLER_MAX_NOTES_COUNT})")
                 
                 try:
@@ -172,6 +175,11 @@ class SearchHandler:
                     extra = posts_res.get("extra", {})
                     dy_search_id = extra.get("search_id") or extra.get("logid") or dy_search_id
                     has_more = posts_res.get("has_more") == 1 or posts_res.get("has_more") is True
+                    
+                    # 【优化】如果第一页 (VIDEO频道) 没数据或说没更多，强制尝试第二页 (GENERAL频道)
+                    if page == 1 and not has_more:
+                         utils.logger.info("⚠️ 第1页 (Video频道) 结束，强制尝试进入 第2页 (General频道)...")
+                         has_more = True
                     checkpoint.metadata["dy_search_id"] = dy_search_id
 
                     data_list = posts_res.get("data", [])
@@ -189,26 +197,43 @@ class SearchHandler:
                             utils.logger.info(f"  #{i+1} ID:{r_id} | 赞:{r_stats['likes']} | 评:{r_stats['comments']} | 时间:{r_time} | 文案:{r_desc}")
 
                     # Handle Verification Case
-                    search_nil_info = posts_res.get("search_nil_info", {})
                     if search_nil_info.get("search_nil_type") == "verify_check":
                         utils.logger.warning("🚨 [SearchHandler] 触发抖音安全验证 (verify_check)!")
-                        if not config.HEADLESS:
-                            search_url = f"https://www.douyin.com/search/{keyword}?type=general"
-                            utils.logger.info(f"🌐 正在跳转至验证页面以触发滑块: {search_url}")
-                            try:
-                                await self.dy_client.playwright_page.goto(search_url)
-                                utils.logger.info("⏳ 请在浏览器窗口完成验证，程序将等待 60 秒...")
+                        
+                        # 尝试自动/手动过验证 (Auto-solve or manual)
+                        search_url = f"https://www.douyin.com/search/{keyword}?type=general"
+                        utils.logger.info(f"🌐 正在跳转至验证页面尝试解锁: {search_url}")
+                        
+                        try:
+                            # 1. Navigate to verification page
+                            page = self.dy_client.playwright_page
+                            await page.goto(search_url)
+                            await asyncio.sleep(3)
+                            
+                            # 2. Attempt to solve slider
+                            solved = await self.solve_captcha(page)
+                            
+                            if solved:
+                                utils.logger.info("✅ 验证成功! 更新Cookie并重试...")
+                                await self.dy_client.update_cookies(page.context)
+                                await asyncio.sleep(2)
+                                continue  # Retry current page
+                            
+                            # 3. If auto-solve failed, wait for manual intervention (if not extremely long timeout)
+                            if not config.HEADLESS:
+                                utils.logger.info("⏳ 自动验证失败，请在浏览器窗口手动完成验证 (等待 60 秒)...")
                                 await asyncio.sleep(60)
-                                await self.dy_client.update_cookies(self.dy_client.playwright_page.context)
-                                utils.logger.info("✅ 验证完成，正在重试当前页...")
+                                await self.dy_client.update_cookies(page.context)
+                                utils.logger.info("✅ 手动等待结束，正在重试...")
                                 continue
-                            except Exception as e:
-                                utils.logger.error(f"❌ 跳转验证页面失败: {e}")
+                            else:
+                                utils.logger.error("❌ 自动验证失败且处于无头模式，跳过此关键词")
+                                # Mark as cooldown only if we really failed
+                                await self.dy_client.update_account_status("cooldown")
                                 break
-                        else:
-                            utils.logger.error("❌ 无头模式下无法手动验证，跳过此关键词")
-                            # Pro Feature: Update account status to cooldown in DB
-                            await self.dy_client.update_account_status("cooldown")
+                                
+                        except Exception as e:
+                            utils.logger.error(f"❌ 验证流程异常: {e}")
                             break
 
 
@@ -322,7 +347,8 @@ class SearchHandler:
                         utils.logger.info(f"🏁 搜索池已干涸，无法获取更多结果")
                         break
                         
-                    await asyncio.sleep(config.CRAWLER_TIME_SLEEP)
+                    # Random sleep between pages
+                    await utils.random_sleep(base_seconds=config.CRAWLER_TIME_SLEEP)
 
                 except DataFetchError as e:
                     utils.logger.error(f"[SearchHandler] fetch error: {e}")
@@ -338,4 +364,96 @@ class SearchHandler:
             if total_processed_count >= config.CRAWLER_MAX_NOTES_COUNT:
                 break
         
+            # Keyword finished
+            checkpoint.mark_completed()
+            await self.checkpoint_manager.save(checkpoint)
+            
+            if total_processed_count >= config.CRAWLER_MAX_NOTES_COUNT:
+                break
+        
         utils.logger.info(f"🏁 [SearchHandler] 任务全部完成，共计抓取符合条件的数据: {total_processed_count} 条")
+
+    async def solve_captcha(self, page) -> bool:
+        """
+        Attempt to identify and solve slider captcha using CV
+        """
+        back_selector = "#captcha-verify-image"
+        gap_selector = 'xpath=//*[@id="captcha_container"]/div/div[2]/img[2]'
+        
+        try:
+            # Check if slider exists
+            try:
+                await page.wait_for_selector(back_selector, state="visible", timeout=5000)
+            except PlaywrightTimeoutError:
+                utils.logger.warning("⚠️ 未检测到滑块元素，可能是已被自动跳过或其他验证类型")
+                # Reload to double check or return False
+                return False
+
+            utils.logger.info("🧩 检测到滑块，开始图像识别与滑动...")
+            
+            # Retry mechanism
+            for attempt in range(3):
+                # 1. Get images
+                slider_back = await page.wait_for_selector(back_selector, timeout=3000)
+                slide_back_url = await slider_back.get_attribute("src")
+                
+                slider_gap = await page.wait_for_selector(gap_selector, timeout=3000)
+                slide_gap_url = await slider_gap.get_attribute("src")
+                
+                if not slide_back_url or not slide_gap_url:
+                    utils.logger.warning("⚠️ 无法获取验证码图片URL")
+                    return False
+
+                # 2. Discern distance
+                slide_app = utils.Slide(gap=slide_gap_url, bg=slide_back_url)
+                distance = slide_app.discern()
+                utils.logger.info(f"📏 [Attempt {attempt+1}] 识别滑动距离: {distance}")
+                
+                # 3. Generate tracks
+                tracks = utils.get_tracks(distance, level="easy")
+                
+                # 4. Perform mouse action
+                element = await page.query_selector(gap_selector)
+                box = await element.bounding_box()
+                if not box: return False
+                
+                # Center + jitter
+                start_x = box["x"] + box["width"] / 2
+                start_y = box["y"] + box["height"] / 2
+                
+                await page.mouse.move(start_x, start_y)
+                await element.hover()
+                await page.mouse.down()
+                
+                current_x = start_x
+                for track in tracks:
+                    await page.mouse.move(current_x + track, start_y + random.uniform(-2, 2), steps=random.randint(1, 3))
+                    current_x += track
+                
+                await asyncio.sleep(0.5)
+                await page.mouse.up()
+                await asyncio.sleep(2)
+                
+                # 5. Check result
+                try:
+                    # If "operate too slow" or "refresh" appears
+                    content = await page.content()
+                    if "操作过慢" in content or "提示重新操作" in content:
+                        utils.logger.info("⚠️ 操作过慢，刷新验证码...")
+                        refresh_btn = await page.query_selector(".secsdk_captcha_refresh")
+                        if refresh_btn: await refresh_btn.click()
+                        await asyncio.sleep(2)
+                        continue
+                        
+                    # Wait for slider to disappear
+                    await page.wait_for_selector(back_selector, state="hidden", timeout=3000)
+                    utils.logger.info("✅ 滑块验证通过 (元素消失)")
+                    return True
+                except:
+                    utils.logger.info("❌ 单词滑动未成功，重试中...")
+                    
+            return False
+            
+        except Exception as e:
+            utils.logger.error(f"❌ 自动滑块流程出错: {e}")
+            return False

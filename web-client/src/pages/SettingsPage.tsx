@@ -16,10 +16,15 @@ import {
   Sparkles,
   AlertCircle,
   CheckCircle2,
+  Terminal,
+  Key,
+  Copy,
+  ExternalLink,
 } from "lucide-react";
 import { Modal } from "@/components/ui/Modal";
 import { toast } from "sonner";
 import { useSWRConfig } from "swr";
+import api, { fetchPluginConfig, fetchPluginSetupInfo } from "@/api";
 
 const LLM_PROVIDERS = [
   {
@@ -98,6 +103,12 @@ const SettingsPage: React.FC = () => {
     ollama_url: "http://localhost:11434",
     model: "google/gemini-2.0-flash-exp:free",
   });
+  // Plugin Settings State
+  const [pluginConfig, setPluginConfig] = useState<any>({
+    report_key: "",
+  });
+  const [setupInfo, setSetupInfo] = useState<any>(null);
+  const [setupError, setSetupError] = useState<string | null>(null);
 
   const [loadingSettings, setLoadingSettings] = useState(true);
   const [savingSettings, setSavingSettings] = useState(false);
@@ -110,47 +121,86 @@ const SettingsPage: React.FC = () => {
   }, []);
 
   const fetchSettings = async () => {
-    try {
-      // Fetch Proxy Config
-      const proxyRes = await fetch("/api/growhub/settings/proxy_config");
-      if (proxyRes.ok) {
-        const data = await proxyRes.json();
-        if (data.config_value && Object.keys(data.config_value).length > 0) {
-          setProxySettings(data.config_value);
-        }
-      }
+    setLoadingSettings(true);
 
-      // Fetch LLM Config
-      const llmRes = await fetch("/api/growhub/settings/llm_config");
-      if (llmRes.ok) {
-        const data = await llmRes.json();
-        if (data.config_value && Object.keys(data.config_value).length > 0) {
-          setLlmSettings(data.config_value);
-        }
+    // Fetch Proxy Config
+    try {
+      const proxyRes = await api.get("/growhub/settings/proxy_config");
+      if (proxyRes.data?.config_value) {
+        setProxySettings(proxyRes.data.config_value);
       }
-    } catch (error) {
-      console.error("Failed to load settings:", error);
+    } catch (e) {
+      console.warn("Proxy settings access denied");
+    }
+
+    // Fetch LLM Config
+    try {
+      const llmRes = await api.get("/growhub/settings/llm_config");
+      if (llmRes.data?.config_value) {
+        setLlmSettings(llmRes.data.config_value);
+      }
+    } catch (e) {
+      console.warn("LLM settings access denied");
+    }
+
+    // Fetch Plugin Config
+    try {
+      const pluginData = await fetchPluginConfig();
+      if (pluginData?.config_value) {
+        setPluginConfig(pluginData.config_value);
+      }
+    } catch (e) {
+      console.warn("Plugin config access denied");
+    }
+
+    // Fetch Setup Info (Always try to fetch this for all users)
+    await fetchSetupInfo();
+
+    setLoadingSettings(false);
+  };
+
+  const fetchSetupInfo = async () => {
+    try {
+      setSetupError(null);
+      const data = await fetchPluginSetupInfo();
+      setSetupInfo(data);
+    } catch (e: any) {
+      console.error("Failed to fetch setup info", e);
+      setSetupError(e.response?.data?.message || e.message || "获取失败");
+    }
+  };
+
+  const handleSavePluginConfig = async () => {
+    setSavingSettings(true);
+    try {
+      await api.post("/growhub/settings", {
+        config_key: "plugin_config",
+        config_value: pluginConfig,
+      });
+
+      toast.success("插件配置已保存");
+      fetchSetupInfo();
+    } catch (error: any) {
+      toast.error(
+        `保存失败: ${error.response?.data?.message || error.message}`,
+      );
     } finally {
-      setLoadingSettings(false);
+      setSavingSettings(false);
     }
   };
 
   const handleSaveLlm = async () => {
     setSavingLlm(true);
     try {
-      const response = await fetch("/api/growhub/settings", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          config_key: "llm_config",
-          config_value: llmSettings,
-        }),
+      await api.post("/growhub/settings", {
+        config_key: "llm_config",
+        config_value: llmSettings,
       });
-
-      if (!response.ok) throw new Error("保存失败");
       toast.success("AI 配置已保存");
     } catch (error: any) {
-      toast.error(`保存失败: ${error.message}`);
+      toast.error(
+        `保存失败: ${error.response?.data?.message || error.message}`,
+      );
     } finally {
       setSavingLlm(false);
     }
@@ -159,19 +209,19 @@ const SettingsPage: React.FC = () => {
   const testLlmConnection = async () => {
     setTestingLlm(true);
     try {
-      const response = await fetch("/api/growhub/settings/llm/test", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(llmSettings),
-      });
-      const data = await response.json();
-      if (data.success) {
-        toast.success(data.message);
+      const response = await api.post(
+        "/growhub/settings/llm/test",
+        llmSettings,
+      );
+      if (response.data.success) {
+        toast.success(response.data.message);
       } else {
-        toast.error(data.message || "连接失败");
+        toast.error(response.data.message || "连接失败");
       }
     } catch (error: any) {
-      toast.error(`测试失败: ${error.message}`);
+      toast.error(
+        `测试失败: ${error.response?.data?.message || error.message}`,
+      );
     } finally {
       setTestingLlm(false);
     }
@@ -179,25 +229,16 @@ const SettingsPage: React.FC = () => {
 
   const handleSaveProxy = async () => {
     setSavingSettings(true);
-    console.log("Saving proxy settings:", proxySettings);
     try {
-      const response = await fetch("/api/growhub/settings", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          config_key: "proxy_config",
-          config_value: proxySettings,
-        }),
+      await api.post("/growhub/settings", {
+        config_key: "proxy_config",
+        config_value: proxySettings,
       });
-
-      if (!response.ok) {
-        const errData = await response.json().catch(() => ({}));
-        throw new Error(errData.message || "Failed to save settings");
-      }
       toast.success("代理配置已保存");
     } catch (error: any) {
-      console.error("Save error:", error);
-      toast.error(`保存失败: ${error.message}`);
+      toast.error(
+        `保存失败: ${error.response?.data?.message || error.message}`,
+      );
     } finally {
       setSavingSettings(false);
     }
@@ -205,28 +246,20 @@ const SettingsPage: React.FC = () => {
 
   const testProxyConnection = async () => {
     setTestingProxy(true);
-    console.log("Testing proxy connection with:", proxySettings);
     try {
-      const response = await fetch("/api/growhub/settings/proxy/test", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(proxySettings),
-      });
-
-      if (!response.ok) {
-        const errData = await response.json().catch(() => ({}));
-        throw new Error(errData.message || "Server error during test");
-      }
-
-      const data = await response.json();
-      if (data.success) {
-        toast.success(data.message);
+      const response = await api.post(
+        "/growhub/settings/proxy/test",
+        proxySettings,
+      );
+      if (response.data.success) {
+        toast.success(response.data.message);
       } else {
-        toast.error(data.message || "测试失败，请检查配置");
+        toast.error(response.data.message || "测试失败，请检查配置");
       }
     } catch (error: any) {
-      console.error("Test error:", error);
-      toast.error(`测试连接失败: ${error.message}`);
+      toast.error(
+        `测试连接失败: ${error.response?.data?.message || error.message}`,
+      );
     } finally {
       setTestingProxy(false);
     }
@@ -237,15 +270,9 @@ const SettingsPage: React.FC = () => {
 
     setClearing(true);
     try {
-      const response = await fetch(
-        `/api/growhub/system/data/clear?data_type=${actionToConfirm}`,
-        {
-          method: "DELETE",
-        },
+      await api.delete(
+        `/growhub/system/data/clear?data_type=${actionToConfirm}`,
       );
-
-      if (!response.ok) throw new Error("Failed to clear data");
-
       toast.success("数据已清空");
       // Refresh content related caches
       mutate(
@@ -677,6 +704,137 @@ const SettingsPage: React.FC = () => {
                   )}
                   保存 AI 配置
                 </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* 插件对接配置 */}
+          <Card className="shadow-sm border-blue-100 dark:border-blue-900/20 overflow-hidden">
+            <CardHeader className="pb-4 border-b border-border/40">
+              <div className="flex items-center space-x-2">
+                <Terminal className="w-5 h-5 text-blue-500" />
+                <CardTitle className="text-lg">社媒助手插件对接</CardTitle>
+              </div>
+              <CardDescription>
+                获取插件配置信息，或配置免登录上报 Key。
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6 pt-6">
+              <div className="space-y-4">
+                <div className="bg-blue-50/50 dark:bg-blue-950/10 p-5 rounded-xl border border-blue-100 dark:border-blue-900/20 space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-blue-700 dark:text-blue-400 uppercase tracking-wider flex items-center justify-between">
+                      <span>上报接口地址 (URL)</span>
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(setupInfo?.url || "");
+                          toast.success("已复制到剪贴板");
+                        }}
+                        className="flex items-center gap-1 hover:text-blue-600"
+                      >
+                        <Copy className="w-3 h-3" /> 复制
+                      </button>
+                    </label>
+                    <div className="p-2 bg-background border rounded text-xs break-all font-mono">
+                      {setupInfo?.url ? (
+                        setupInfo.url
+                      ) : (
+                        <span
+                          className={
+                            setupError
+                              ? "text-red-500"
+                              : "text-muted-foreground"
+                          }
+                        >
+                          {setupError || "加载中..."}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-blue-700 dark:text-blue-400 uppercase tracking-wider flex items-center justify-between">
+                      <span>当前身份令牌 (Authorization)</span>
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(
+                            setupInfo?.headers?.Authorization || "",
+                          );
+                          toast.success("已复制 Token");
+                        }}
+                        className="flex items-center gap-1 hover:text-blue-600"
+                      >
+                        <Copy className="w-3 h-3" /> 复制
+                      </button>
+                    </label>
+                    <div className="p-2 bg-background border rounded text-xs h-12 overflow-hidden text-ellipsis font-mono">
+                      {setupInfo?.headers?.Authorization ? (
+                        setupInfo.headers.Authorization
+                      ) : (
+                        <span
+                          className={
+                            setupError
+                              ? "text-red-500"
+                              : "text-muted-foreground"
+                          }
+                        >
+                          {setupError || "加载中..."}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2">
+                    <Key className="w-4 h-4 text-orange-500" />
+                    <h4 className="text-sm font-semibold">
+                      固定上报 Key (免登录模式)
+                    </h4>
+                  </div>
+                  <div className="bg-orange-50/30 dark:bg-orange-950/5 p-4 rounded-lg border border-orange-100/50 space-y-3">
+                    <p className="text-xs text-muted-foreground">
+                      如果您不想使用会过期的 Token，可以设置一个固定的 Key
+                      填入插件。
+                    </p>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        className="flex-1 px-3 py-2 bg-background border border-border rounded-lg text-sm font-mono"
+                        placeholder="例如: my-secret-key-123"
+                        value={pluginConfig.report_key}
+                        onChange={(e) =>
+                          setPluginConfig({
+                            ...pluginConfig,
+                            report_key: e.target.value,
+                          })
+                        }
+                      />
+                      <Button size="sm" onClick={handleSavePluginConfig}>
+                        保存并更新
+                      </Button>
+                    </div>
+                    {setupInfo?.fixed_key !== "NOT_SET" && (
+                      <div className="pt-2 text-[10px] text-orange-600 font-mono break-all bg-white/50 p-2 rounded">
+                        带 Key 链接: {setupInfo?.fixed_key_url}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between text-xs text-muted-foreground pt-2">
+                <span className="flex items-center gap-1">
+                  <AlertCircle className="w-3 h-3" />{" "}
+                  提示：配置后建议在插件中点击“测试”进行校验。
+                </span>
+                <a
+                  href="https://smzs.xisence.com/help/guide/data-reporting"
+                  target="_blank"
+                  className="text-blue-500 hover:underline flex items-center gap-1"
+                >
+                  查看官方文档 <ExternalLink className="w-3 h-3" />
+                </a>
               </div>
             </CardContent>
           </Card>

@@ -43,7 +43,8 @@ class HotspotService:
         self,
         content: GrowHubContent,
         source_project_id: Optional[int] = None,
-        source_keyword: Optional[str] = None
+        source_keyword: Optional[str] = None,
+        user_id: Optional[int] = None
     ) -> Optional[GrowHubHotspot]:
         """
         插入或更新热点内容
@@ -56,7 +57,12 @@ class HotspotService:
         async with get_session() as session:
             # 查找是否已存在
             result = await session.execute(
-                select(GrowHubHotspot).where(GrowHubHotspot.content_id == content.id)
+                select(GrowHubHotspot).where(
+                    and_(
+                        GrowHubHotspot.content_id == content.id,
+                        GrowHubHotspot.user_id == user_id
+                    )
+                )
             )
             existing = result.scalar()
             
@@ -101,6 +107,7 @@ class HotspotService:
                     rank_date=today,
                     source_project_id=source_project_id or content.project_id,
                     source_keyword=source_keyword or content.source_keyword,
+                    user_id=user_id,
                     publish_time=content.publish_time,
                     entered_at=now
                 )
@@ -122,7 +129,8 @@ class HotspotService:
         sort_by: str = 'heat_score',
         sort_order: str = 'desc',
         page: int = 1,
-        page_size: int = 20
+        page_size: int = 20,
+        user_id: Optional[int] = None
     ) -> Dict[str, Any]:
         """获取热点列表"""
         async with get_session() as session:
@@ -144,6 +152,10 @@ class HotspotService:
             if source_keyword:
                 query = query.where(GrowHubHotspot.source_keyword.ilike(f"%{source_keyword}%"))
                 count_query = count_query.where(GrowHubHotspot.source_keyword.ilike(f"%{source_keyword}%"))
+            
+            if user_id:
+                query = query.where(GrowHubHotspot.user_id == user_id)
+                count_query = count_query.where(GrowHubHotspot.user_id == user_id)
             
             if rank_date:
                 query = query.where(func.date(GrowHubHotspot.rank_date) == rank_date)
@@ -207,7 +219,8 @@ class HotspotService:
         self,
         rank_date: Optional[date] = None,
         platform: Optional[str] = None,
-        limit: int = 50
+        limit: int = 50,
+        user_id: Optional[int] = None
     ) -> List[Dict[str, Any]]:
         """获取日榜排行"""
         if rank_date is None:
@@ -223,6 +236,9 @@ class HotspotService:
             
             if platform:
                 query = query.where(GrowHubHotspot.platform == platform)
+            
+            if user_id:
+                query = query.where(GrowHubHotspot.user_id == user_id)
             
             query = query.order_by(desc(GrowHubHotspot.heat_score)).limit(limit)
             
@@ -243,12 +259,14 @@ class HotspotService:
                 
             return items
 
-    async def get_stats(self, source_project_id: Optional[int] = None) -> Dict[str, Any]:
+    async def get_stats(self, source_project_id: Optional[int] = None, user_id: Optional[int] = None) -> Dict[str, Any]:
         """获取热点统计数据"""
         async with get_session() as session:
             base_filter = []
             if source_project_id:
                 base_filter.append(GrowHubHotspot.source_project_id == source_project_id)
+            if user_id:
+                base_filter.append(GrowHubHotspot.user_id == user_id)
             
             # 总数
             total_query = select(func.count(GrowHubHotspot.id))

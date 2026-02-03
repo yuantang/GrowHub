@@ -43,19 +43,46 @@ export async function fetchPlatformProfile(platform: string): Promise<UserProfil
 }
 
 async function fetchXhsProfile(): Promise<UserProfile> {
-  const res = await fetch('https://edith.xiaohongshu.com/api/sns/web/v1/user/selfinfo', {
-    credentials: 'include'
-  });
-  const data = await res.json();
-  if (data.success && data.data) {
-    return {
-      userId: data.data.user_id || data.data.id,
-      nickname: data.data.nickname,
-      avatar: data.data.avatar || data.data.imageb || data.data.images,
-      isLoggedIn: true
-    };
+  try {
+    const res = await fetch('https://edith.xiaohongshu.com/api/sns/web/v1/user/selfinfo', {
+      credentials: 'include',
+      headers: {
+        'Accept': 'application/json',
+        'Referer': 'https://www.xiaohongshu.com/',
+        'Origin': 'https://www.xiaohongshu.com'
+      }
+    });
+    const data = await res.json();
+    if (data.success && data.data) {
+      return {
+        userId: data.data.user_id || data.data.id,
+        nickname: data.data.nickname,
+        avatar: data.data.avatar || data.data.imageb || data.data.images,
+        isLoggedIn: true
+      };
+    }
+  } catch (e) {
+    console.warn("XHS API check failed, trying cookies...");
   }
+
+  // Fallback: Cookie-based detection (Use URL to catch all valid domain cookies)
+  const cookies = await chrome.cookies.getAll({ url: 'https://www.xiaohongshu.com' });
+  const sessionCookie = cookies.find(c => c.name === 'web_session');
+  
+  if (sessionCookie) {
+     // Try to find a user ID in cookies, though XHS makes it hard.
+     // 'webId' is a tracker, not user ID. 
+     // We settle for a generic "Logged In" state so the user can sync.
+     return {
+       userId: 'xhs_user', // Placeholder, backend handles distinct IDs
+       nickname: '已登录 (XHS)',
+       avatar: '',
+       isLoggedIn: true
+     };
+  }
+  
   return { userId: '', nickname: '', avatar: '', isLoggedIn: false };
+
 }
 
 async function fetchDouyinProfile(): Promise<UserProfile> {

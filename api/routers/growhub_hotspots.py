@@ -8,7 +8,10 @@ from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 from datetime import datetime, date
 
+from api.auth import deps
 from api.services.hotspot_service import get_hotspot_service
+from database.growhub_models import GrowHubUser
+from fastapi import APIRouter, HTTPException, Query, Depends
 
 router = APIRouter(prefix="/growhub/hotspots", tags=["GrowHub - Hotspots"])
 
@@ -70,7 +73,8 @@ async def list_hotspots(
     sort_by: str = Query("heat_score", description="排序字段: heat_score/like_count/comment_count/entered_at"),
     sort_order: str = Query("desc", description="排序方向: asc/desc"),
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100)
+    page_size: int = Query(20, ge=1, le=100),
+    current_user: GrowHubUser = Depends(deps.get_current_user)
 ):
     """获取热点内容列表"""
     hotspot_service = get_hotspot_service()
@@ -86,7 +90,8 @@ async def list_hotspots(
         sort_by=sort_by,
         sort_order=sort_order,
         page=page,
-        page_size=page_size
+        page_size=page_size,
+        user_id=current_user.id if current_user.role != 'admin' else None
     )
     
     return HotspotListResponse(
@@ -99,7 +104,8 @@ async def list_hotspots(
 async def get_daily_ranking(
     rank_date: Optional[date] = Query(None, description="排行日期，默认今日"),
     platform: Optional[str] = Query(None, description="平台筛选"),
-    limit: int = Query(50, ge=1, le=100, description="返回数量")
+    limit: int = Query(50, ge=1, le=100, description="返回数量"),
+    current_user: GrowHubUser = Depends(deps.get_current_user)
 ):
     """获取日榜排行"""
     hotspot_service = get_hotspot_service()
@@ -107,7 +113,8 @@ async def get_daily_ranking(
     ranking = await hotspot_service.get_daily_ranking(
         rank_date=rank_date,
         platform=platform,
-        limit=limit
+        limit=limit,
+        user_id=current_user.id if current_user.role != 'admin' else None
     )
     
     return [HotspotResponse(**item) for item in ranking]
@@ -115,11 +122,15 @@ async def get_daily_ranking(
 
 @router.get("/stats", response_model=HotspotStatsResponse)
 async def get_hotspot_stats(
-    source_project_id: Optional[int] = Query(None, description="来源项目ID")
+    source_project_id: Optional[int] = Query(None, description="来源项目ID"),
+    current_user: GrowHubUser = Depends(deps.get_current_user)
 ):
     """获取热点统计数据"""
     hotspot_service = get_hotspot_service()
-    stats = await hotspot_service.get_stats(source_project_id=source_project_id)
+    stats = await hotspot_service.get_stats(
+        source_project_id=source_project_id,
+        user_id=current_user.id if current_user.role != 'admin' else None
+    )
     return HotspotStatsResponse(**stats)
 
 

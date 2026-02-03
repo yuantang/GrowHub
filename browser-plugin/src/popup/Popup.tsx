@@ -25,6 +25,15 @@ export default function Popup() {
   const [inputToken, setInputToken] = useState(apiToken);
   const [saving, setSaving] = useState(false);
 
+  // Sync inputs with store when data loads from storage
+  useEffect(() => {
+    if (serverUrl) setInputUrl(serverUrl);
+  }, [serverUrl]);
+
+  useEffect(() => {
+    if (apiToken) setInputToken(apiToken);
+  }, [apiToken]);
+
   // V5 Navigation: Internal view state within "accounts" tab
   const [activeView, setActiveView] = useState<View>("home");
   const [selectedPlatform, setSelectedPlatform] = useState<string | null>(null);
@@ -589,9 +598,30 @@ export default function Popup() {
                         <span className="text-xl">{p.icon}</span>
                         <span className="font-medium text-white">{p.name}</span>
                       </div>
-                      <span className="text-gray-500 group-hover:text-primary transition-colors">
-                        →
-                      </span>
+                      <div className="flex items-center space-x-2">
+                        {p.id === "xhs" && (
+                          <div
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const keyword = prompt("输入测试关键词:", "冥想");
+                              if (keyword) {
+                                chrome.runtime.sendMessage({
+                                  type: "TEST_TASK",
+                                  platform: "xhs",
+                                  url: `https://edith.xiaohongshu.com/api/sns/web/v1/search/notes?keyword=${encodeURIComponent(keyword)}`,
+                                });
+                                alert("测试指令已发送，请观察浏览器是否跳转");
+                              }
+                            }}
+                            className="px-2 py-1 bg-white/10 hover:bg-white/20 rounded text-[10px] text-gray-300"
+                          >
+                            测试
+                          </div>
+                        )}
+                        <span className="text-gray-500 group-hover:text-primary transition-colors">
+                          →
+                        </span>
+                      </div>
                     </button>
                   ))}
                 </div>
@@ -663,8 +693,8 @@ export default function Popup() {
                       </button>
                       <button
                         onClick={() => handleSaveAccount(selectedPlatform)}
-                        disabled={!currentProfile?.isLoggedIn}
-                        title="保存到本地"
+                        disabled={currentCookies.length === 0}
+                        title="保存到本地 (只要有Cookie即可)"
                         className="p-2 hover:bg-white/5 text-gray-400 hover:text-green-400 rounded-lg transition-colors disabled:opacity-30"
                       >
                         💾

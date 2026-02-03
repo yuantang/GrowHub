@@ -44,10 +44,10 @@ const Layout: React.FC = () => {
     { to: "/account-pool", icon: Shield, label: "账号池" },
     { to: "/notifications", icon: Bell, label: "通知配置" },
     { to: "/plugin-status", icon: Plug, label: "插件状态" },
+    { to: "/settings", icon: Settings, label: "系统设置" },
   ];
 
   if (user?.role === "admin") {
-    navItems.push({ to: "/settings", icon: Settings, label: "系统设置" });
     navItems.push({ to: "/admin/users", icon: UserCog, label: "用户管理" });
   }
 

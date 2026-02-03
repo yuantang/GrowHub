@@ -2,7 +2,7 @@
 # GrowHub - 内容分类与分发规则 API
 # Phase 1: 内容抓取与舆情监控增强
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any, Union
@@ -11,7 +11,8 @@ import csv
 import io
 
 from database.db_session import get_session
-from database.growhub_models import GrowHubContent, GrowHubDistributionRule, GrowHubNotification
+from database.growhub_models import GrowHubContent, GrowHubDistributionRule, GrowHubNotification, GrowHubUser
+from api.auth import deps
 from sqlalchemy import select, update, delete, func, desc, and_
 from sqlalchemy.orm import selectinload
 
@@ -147,7 +148,8 @@ def apply_content_filters(
     min_comments: Optional[int] = None,
     min_shares: Optional[int] = None,
     min_fans: Optional[int] = None,
-    max_fans: Optional[int] = None
+    max_fans: Optional[int] = None,
+    user_id: Optional[int] = None
 ):
     """Refactored helper to apply common filters to GrowHubContent query"""
     if platform:
@@ -198,6 +200,9 @@ def apply_content_filters(
         
     if max_fans is not None and max_fans > 0:
         query = query.where(GrowHubContent.author_fans_count <= max_fans)
+    
+    if user_id:
+        query = query.where(GrowHubContent.user_id == user_id)
         
     return query
 
@@ -219,7 +224,8 @@ async def export_contents(
     min_fans: Optional[int] = Query(None, ge=0, description="最小粉丝数"),
     max_fans: Optional[int] = Query(None, ge=0, description="最大粉丝数"),
     sort_by: str = Query("crawl_time", description="排序字段"),
-    sort_order: str = Query("desc", description="排序方向")
+    sort_order: str = Query("desc", description="排序方向"),
+    current_user: GrowHubUser = Depends(deps.get_current_user)
 ):
     """导出筛选内容为CSV"""
     async with get_session() as session:
@@ -229,7 +235,8 @@ async def export_contents(
         query = apply_content_filters(
             query, platform, category, sentiment, is_alert, is_handled,
             search, source_keyword, start_date, end_date,
-            min_likes, min_comments, min_shares, min_fans, max_fans
+            min_likes, min_comments, min_shares, min_fans, max_fans,
+            user_id=current_user.id if current_user.role != 'admin' else None
         )
         
         # Sorting
@@ -300,7 +307,8 @@ async def list_contents(
     min_fans: Optional[int] = Query(None, ge=0, description="博主最小粉丝数"),
     max_fans: Optional[int] = Query(None, ge=0, description="博主最大粉丝数"),
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100)
+    page_size: int = Query(20, ge=1, le=100),
+    current_user: GrowHubUser = Depends(deps.get_current_user)
 ):
     """获取内容列表（数据池）"""
     async with get_session() as session:
@@ -311,7 +319,8 @@ async def list_contents(
             inner_stmt = apply_content_filters(
                 inner_stmt, platform, category, sentiment, is_alert, is_handled,
                 search, source_keyword, start_date, end_date,
-                min_likes, min_comments, min_shares, min_fans, max_fans
+                min_likes, min_comments, min_shares, min_fans, max_fans,
+                user_id=current_user.id if current_user.role != 'admin' else None
             )
             
             subq = inner_stmt.subquery()
@@ -333,16 +342,17 @@ async def list_contents(
             query = select(GrowHubContent)
             count_query = select(func.count(GrowHubContent.id))
             
-            # Apply filters
             query = apply_content_filters(
                 query, platform, category, sentiment, is_alert, is_handled,
                 search, source_keyword, start_date, end_date,
-                min_likes, min_comments, min_shares, min_fans, max_fans
+                min_likes, min_comments, min_shares, min_fans, max_fans,
+                user_id=current_user.id if current_user.role != 'admin' else None
             )
             count_query = apply_content_filters(
                 count_query, platform, category, sentiment, is_alert, is_handled,
                 search, source_keyword, start_date, end_date,
-                min_likes, min_comments, min_shares, min_fans, max_fans
+                min_likes, min_comments, min_shares, min_fans, max_fans,
+                user_id=current_user.id if current_user.role != 'admin' else None
             )
         
         # Get total
@@ -407,12 +417,17 @@ async def get_alerts(
     is_handled: Optional[bool] = Query(None),
     alert_level: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100)
+    page_size: int = Query(20, ge=1, le=100),
+    current_user: GrowHubUser = Depends(deps.get_current_user)
 ):
     """获取预警内容列表"""
     async with get_session() as session:
         query = select(GrowHubContent).where(GrowHubContent.is_alert == True)
         count_query = select(func.count(GrowHubContent.id)).where(GrowHubContent.is_alert == True)
+        
+        if current_user.role != 'admin':
+            query = query.where(GrowHubContent.user_id == current_user.id)
+            count_query = count_query.where(GrowHubContent.user_id == current_user.id)
         
         if is_handled is not None:
             query = query.where(GrowHubContent.is_handled == is_handled)
@@ -494,7 +509,8 @@ async def get_content_stats(
     min_comments: Optional[int] = Query(None),
     min_shares: Optional[int] = Query(None),
     min_fans: Optional[int] = Query(None),
-    max_fans: Optional[int] = Query(None)
+    max_fans: Optional[int] = Query(None),
+    current_user: GrowHubUser = Depends(deps.get_current_user)
 ):
     """获取内容统计概览（数据池仪表盘）"""
     filter_args = {
@@ -502,7 +518,8 @@ async def get_content_stats(
         "is_alert": is_alert, "is_handled": is_handled, "search": search,
         "source_keyword": source_keyword, "start_date": start_date, "end_date": end_date,
         "min_likes": min_likes, "min_comments": min_comments, "min_shares": min_shares,
-        "min_fans": min_fans, "max_fans": max_fans
+        "min_fans": min_fans, "max_fans": max_fans,
+        "user_id": current_user.id if current_user.role != 'admin' else None
     }
 
     async with get_session() as session:
@@ -617,7 +634,8 @@ async def get_content_stats(
 async def get_hotspot_content(
     platform: Optional[str] = Query(None, description="平台筛选"),
     hours: int = Query(24, ge=1, le=168, description="时间范围（小时）"),
-    limit: int = Query(10, ge=1, le=50, description="返回数量")
+    limit: int = Query(10, ge=1, le=50, description="返回数量"),
+    current_user: GrowHubUser = Depends(deps.get_current_user)
 ):
     """获取热点内容排行"""
     from datetime import timedelta
@@ -629,6 +647,9 @@ async def get_hotspot_content(
         query = select(GrowHubContent).where(
             GrowHubContent.crawl_time >= time_threshold
         )
+        
+        if current_user.role != 'admin':
+            query = query.where(GrowHubContent.user_id == current_user.id)
         
         if platform:
             query = query.where(GrowHubContent.platform == platform)
@@ -684,7 +705,8 @@ async def get_content_trend(
     min_shares: Optional[int] = Query(None),
     min_fans: Optional[int] = Query(None),
     max_fans: Optional[int] = Query(None),
-    days: int = Query(7, ge=1)
+    days: int = Query(7, ge=1),
+    current_user: GrowHubUser = Depends(deps.get_current_user)
 ):
     """获取内容趋势数据（按天统计，基于发布时间）"""
     from datetime import timedelta
@@ -706,7 +728,8 @@ async def get_content_trend(
         "is_alert": is_alert, "is_handled": is_handled, "search": search,
         "source_keyword": source_keyword, "start_date": start_date, "end_date": end_date,
         "min_likes": min_likes, "min_comments": min_comments, "min_shares": min_shares,
-        "min_fans": min_fans, "max_fans": max_fans
+        "min_fans": min_fans, "max_fans": max_fans,
+        "user_id": current_user.id if current_user.role != 'admin' else None
     }
 
     async with get_session() as session:
@@ -807,7 +830,8 @@ async def get_top_analysis(
     min_comments: Optional[int] = Query(None),
     min_shares: Optional[int] = Query(None),
     min_fans: Optional[int] = Query(None),
-    max_fans: Optional[int] = Query(None)
+    max_fans: Optional[int] = Query(None),
+    current_user: GrowHubUser = Depends(deps.get_current_user)
 ):
     """获取 Top 10 内容分析（按点赞降序）"""
     
@@ -816,7 +840,8 @@ async def get_top_analysis(
         "is_alert": is_alert, "is_handled": is_handled, "search": search,
         "source_keyword": source_keyword, "start_date": start_date, "end_date": end_date,
         "min_likes": min_likes, "min_comments": min_comments, "min_shares": min_shares,
-        "min_fans": min_fans, "max_fans": max_fans
+        "min_fans": min_fans, "max_fans": max_fans,
+        "user_id": current_user.id if current_user.role != 'admin' else None
     }
     
     async with get_session() as session:

@@ -2,6 +2,8 @@ import axios from 'axios';
 
 const api = axios.create({
     baseURL: '/api',
+    // 避免后端被爬虫任务占满时页面无限转圈
+    timeout: 120000,
 });
 
 // Types based on backend schemas and routers
@@ -162,6 +164,26 @@ export const pauseCheckpoint = (taskId: string) =>
 export const cleanupCheckpoints = (olderThanDays = 7) =>
     api.post('/checkpoints/cleanup', null, { params: { older_than_days: olderThanDays } });
 
+// ========== System ==========
+export interface FileEntry {
+  name: string;
+  path: string;
+  type: "dir" | "file";
+  size?: number;
+}
+
+export const fetchLocalFileSystem = async (path?: string): Promise<FileEntry[]> => {
+  const params = new URLSearchParams();
+  if (path) params.append("path", path);
+  const response = await api.get(`/growhub/system/fs/list?${params.toString()}`);
+  return response.data;
+};
+
+export const parseLocalExcel = async (path: string): Promise<any[]> => {
+  const response = await api.post('/growhub/system/fs/parse_excel', { path });
+  return response.data;
+};
+
 // ============ Accounts API ============
 export interface Account {
     id: string;
@@ -251,6 +273,21 @@ export const fetchGrowHubAccountStats = () =>
 export const fetchGrowHubAccount = (accountId: string) =>
     api.get<GrowHubAccount>(`/growhub/accounts/${accountId}`).then(res => res.data);
 
+export interface AccountPublishProfile {
+  nickname: string;
+  nickname_display: string;
+  source: string;
+  warning?: string;
+}
+
+export const fetchAccountPublishProfile = (accountId: string, platform = "dy") =>
+  api
+    .get<{ success: boolean; data: AccountPublishProfile }>(
+      `/growhub/accounts/${accountId}/publish-profile`,
+      { params: { platform } }
+    )
+    .then((res) => res.data);
+
 export const addGrowHubAccount = (data: Partial<GrowHubAccount>) =>
     api.post('/growhub/accounts/', data).then(res => res.data);
 
@@ -272,6 +309,39 @@ export const getGrowHubQRLoginStatus = (sessionId: string) =>
 export const cancelGrowHubQRLogin = (sessionId: string) =>
     api.post(`/growhub/accounts/qr-login/cancel/${sessionId}`).then(res => res.data);
 
+export interface CookieBridgeStatus {
+    reachable: boolean;
+    base_url: string;
+    client_count?: number;
+    clients: Array<{
+        client_id: string;
+        connected?: boolean;
+        nicknames?: Record<string, string>;
+        platforms?: Record<string, unknown>;
+    }>;
+    error?: string;
+}
+
+export interface CookieBridgeSyncResult {
+    success: boolean;
+    message: string;
+    synced: number;
+    updated: number;
+    skipped: number;
+    errors?: string[];
+    base_url?: string;
+}
+
+export const fetchCookieBridgeStatus = () =>
+    api.get<CookieBridgeStatus>('/growhub/accounts/cookiebridge/status').then(res => res.data);
+
+export const syncCookieBridgeToAccountPool = (only_connected = true) =>
+    api
+        .post<CookieBridgeSyncResult>('/growhub/accounts/cookiebridge/sync', {
+            only_connected,
+        })
+        .then(res => res.data);
+
 // ============ Project API ============
 
 export interface Project {
@@ -281,7 +351,9 @@ export interface Project {
     keywords: string[];
     sentiment_keywords: string[];
     platforms: string[];
-    purpose: string;  // 任务目的: creator/hotspot/sentiment/general
+    capture_mode?: string;  // hot_content | hot_creator | watch_content | watch_creator
+    watch_targets?: { type: string; platform: string; url: string; content_id?: string; label?: string }[];
+    purpose: string;  // 由 capture_mode 推导
     crawler_type: string;
     crawl_limit: number;
     crawl_date_range: number;
@@ -295,7 +367,6 @@ export interface Project {
     alert_on_new_content: boolean;
     alert_on_hotspot: boolean;
     alert_channels: (string | number)[];
-    use_plugin: boolean;
     // Stats
     total_crawled: number;
     total_alerts: number;
@@ -316,6 +387,7 @@ export interface Project {
     min_fans: number;
     max_fans: number;
     require_contact: boolean;
+    creator_account_type?: 'all' | 'competitor' | 'partner';
     // 断点信息
     latest_checkpoint?: {
         task_id: string;
@@ -337,6 +409,18 @@ export const fetchDashboardStats = () =>
 
 export const createProject = (data: any) =>
     api.post<Project>('/growhub/projects', data).then(res => res.data);
+
+export interface ParseWatchUrlsResult {
+    targets: { type: string; platform: string; url: string; content_id?: string; label?: string }[];
+    valid_count: number;
+    invalid_count: number;
+    invalid_lines: string[];
+}
+
+export const parseWatchUrls = (urls_text: string, mode: string = "watch_content") =>
+    api
+        .post<ParseWatchUrlsResult>('/growhub/projects/parse-watch-urls', { urls_text, mode })
+        .then((res) => res.data);
 
 export const fetchProject = (id: number) =>
     api.get<Project>(`/growhub/projects/${id}`).then(res => res.data);
@@ -361,13 +445,6 @@ export const fetchProjectPreflight = (id: number) =>
 
 export const fetchProjectLogs = (id: number) =>
     api.get<{ logs: string[] }>(`/growhub/projects/${id}/logs`).then(res => res.data.logs);
-
-// ============ Plugin API ============
-export const fetchPluginSetupInfo = () =>
-    api.get('/plugin/get-setup-info').then(res => res.data);
-
-export const fetchPluginConfig = () =>
-    api.get('/growhub/settings/plugin_config').then(res => res.data);
 
 // ============ Project Detail API ============
 export interface ProjectContentFilters {
@@ -560,6 +637,49 @@ export const getGrowHubExportUrl = (filters: GrowHubContentFilters) => {
     return `/api/growhub/content/export?${params.toString()}`;
 };
 
+export interface SuggestedComment {
+    style: string;
+    content: string;
+    expected_effect: string;
+}
+
+export interface ContentInsight {
+    id: number;
+    title: string;
+    sentiment: string;
+    sentiment_score: number;
+    category: string;
+    keywords: string[];
+    core_issues: string[];
+    suggested_comments: SuggestedComment[];
+    has_history: boolean;
+    history: Array<{
+        date: string;
+        like_count: number;
+        comment_count: number;
+        share_count: number;
+        view_count: number;
+    }>;
+}
+
+export const fetchContentAIInsight = (contentId: number) =>
+    api.post<ContentInsight>(`/growhub/content/${contentId}/insight`).then(res => res.data);
+
+export const batchUpdateGrowHubContents = (data: {
+    ids: number[];
+    is_handled?: boolean;
+    is_alert?: boolean;
+    category?: string;
+    sentiment?: string;
+}) =>
+    api.post<{ message: string; updated_count: number }>('/growhub/content/batch-update', data).then(res => res.data);
+
+export const batchDeleteGrowHubContents = (ids: number[]) =>
+    api.post<{ message: string; deleted_count: number }>('/growhub/content/batch-delete', { ids }).then(res => res.data);
+
+export const addContentToPool = (contentId: number, poolType: 'hotspot' = 'hotspot') =>
+    api.post<{ message: string; id: number }>(`/growhub/content/${contentId}/add-to-pool`, { pool_type: poolType }).then(res => res.data);
+
 // ============ Purpose Enum ============
 export const ProjectPurpose = {
     CREATOR: "creator",
@@ -670,6 +790,33 @@ export interface Hotspot {
     author_id?: string;
     author_url?: string;
     author_avatar?: string;
+    
+    // AI 评估字段
+    alignment_score?: number;
+    recency_score?: number;
+    duration_label?: string;
+    is_valid?: boolean;
+    validity_status?: string;
+    ai_features?: {
+        user_pain_points?: string[];
+        faq?: string[];
+        hooks?: string[];
+    };
+    ai_evaluation?: string;
+    custom_categories?: string[];
+    is_competitor?: boolean;
+    history_trends?: Array<{
+        record_date: string;
+        like_count: number;
+        comment_count: number;
+        share_count: number;
+        view_count: number;
+    }>;
+    growth_score?: number;
+    growth_days?: number;
+    growth_from_date?: string;
+    growth_to_date?: string;
+    source_project_name?: string;
 }
 
 export interface HotspotListResponse {
@@ -688,14 +835,18 @@ export interface HotspotFilters {
     platform?: string;
     source_project_id?: number;
     source_keyword?: string;
-    rank_date?: string;
+    rank_start_date?: string;
+    rank_end_date?: string;
     start_date?: string;
     end_date?: string;
     min_heat?: number;
+    is_valid?: boolean;
+    is_competitor?: boolean;
     sort_by?: string;
     sort_order?: string;
     page?: number;
     page_size?: number;
+    capture_mode?: string;
 }
 
 export const fetchHotspots = (filters?: HotspotFilters) =>
@@ -704,14 +855,293 @@ export const fetchHotspots = (filters?: HotspotFilters) =>
 export const fetchHotspotRanking = (rank_date?: string, platform?: string, limit = 50) =>
     api.get<Hotspot[]>('/growhub/hotspots/ranking', { params: cleanParams({ rank_date, platform, limit }) }).then(res => res.data);
 
+export const fetchRisingHotspots = (days = 7, platform?: string, limit = 10) =>
+    api.get<Hotspot[]>('/growhub/hotspots/rising', { params: cleanParams({ days, platform, limit }) }).then(res => res.data);
+
 export const fetchHotspotStats = (source_project_id?: number) =>
     api.get<HotspotStats>('/growhub/hotspots/stats', { params: cleanParams({ source_project_id }) }).then(res => res.data);
 
 export const fetchHotspot = (id: number) =>
     api.get<Hotspot>(`/growhub/hotspots/${id}`).then(res => res.data);
 
+export interface HotspotTopComment {
+    content: string;
+    like_count: number;
+    nickname: string;
+    pictures: string[];
+}
+
+export const fetchHotspotTopComments = (hotspotId: number, limit = 10) =>
+    api
+        .get<HotspotTopComment[]>(`/growhub/hotspots/${hotspotId}/top-comments`, {
+            params: { limit },
+        })
+        .then((res) => res.data);
+
 export const deleteHotspot = (id: number) =>
     api.delete(`/growhub/hotspots/${id}`);
+
+// ============ Script Pipeline API ============
+
+export interface ScriptSegment {
+    id: number;
+    task_id: number;
+    order_index: number;
+    time_range?: string;
+    narration?: string;
+    shot_desc?: string;
+    visual_hint?: string;
+    mood?: string;
+    status: string;
+    version_history?: unknown[];
+}
+
+export interface ScriptTask {
+    id: number;
+    hotspot_id?: number;
+    title?: string;
+    source_content?: string;
+    platform?: string;
+    content_type?: string;
+    style?: string;
+    status: string;
+    current_step: number;
+    analysis_result?: Record<string, unknown>;
+    final_script?: string;
+    variants?: { angle: string; title: string; script: string }[];
+    brand_keywords?: string[];
+    target_topic?: string;
+    segments?: ScriptSegment[];
+    created_at?: string;
+    updated_at?: string;
+    // 视频渲染字段
+    video_status?: 'none' | 'preparing' | 'tts' | 'composing' | 'rendering' | 'done' | 'error';
+    video_path?: string;
+    video_error?: string;
+    broll_video_status?: 'none' | 'preparing' | 'tts' | 'composing' | 'rendering' | 'done' | 'error';
+    broll_video_path?: string;
+    broll_video_error?: string;
+    segments?: ScriptSegment[];
+    video_render_started_at?: string;
+    video_render_done_at?: string;
+}
+
+export const createScriptFromRemix = (data: {
+    remix_script: string;
+    voice_script?: string;
+    title?: string;
+    platform?: string;
+    platform_content_id?: string;
+    video_url?: string;
+}) => api.post<ScriptTask>('/growhub/scripts/from-remix', data).then((res) => res.data);
+
+export const fetchScriptTasks = (limit = 30) =>
+    api.get<{ items: ScriptTask[] }>('/growhub/scripts', { params: { limit } }).then((res) => res.data.items);
+
+export const createScriptTask = (data: {
+    hotspot_id?: number;
+    title?: string;
+    source_content?: string;
+    platform?: string;
+    content_type?: string;
+    style?: string;
+    target_topic?: string;
+    brand_keywords?: string[];
+}) => api.post<ScriptTask>('/growhub/scripts', data).then((res) => res.data);
+
+export const fetchScriptTask = (id: number) =>
+    api.get<ScriptTask>(`/growhub/scripts/${id}`).then((res) => res.data);
+
+export const analyzeScriptTask = (id: number) =>
+    api.post<{ success: boolean; analysis: Record<string, unknown>; task: ScriptTask }>(
+        `/growhub/scripts/${id}/analyze`,
+    ).then((res) => res.data);
+
+export const draftScriptTask = (id: number, duration_seconds = 60) =>
+    api.post<ScriptTask>(`/growhub/scripts/${id}/draft`, { duration_seconds }).then((res) => res.data);
+
+export type ScriptDraftStreamHandlers = {
+    onStatus?: (message: string) => void;
+    onChunk?: (text: string) => void;
+    onDone?: (task: ScriptTask) => void;
+    onError?: (message: string) => void;
+};
+
+/** SSE 流式生成脚本初稿 */
+export const draftScriptTaskStream = async (
+    taskId: number,
+    handlers: ScriptDraftStreamHandlers,
+    duration_seconds = 60,
+) => {
+    const token = localStorage.getItem('token');
+    const res = await fetch(`/api/growhub/scripts/${taskId}/draft/stream`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ duration_seconds }),
+    });
+
+    if (!res.ok) {
+        let detail = res.statusText;
+        try {
+            const j = await res.json();
+            detail = typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail);
+        } catch {
+            /* ignore */
+        }
+        handlers.onError?.(detail);
+        return;
+    }
+
+    const reader = res.body?.getReader();
+    if (!reader) {
+        handlers.onError?.('浏览器不支持流式响应');
+        return;
+    }
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const blocks = buffer.split('\n\n');
+        buffer = blocks.pop() || '';
+
+        for (const block of blocks) {
+            if (!block.trim()) continue;
+            let eventType = 'message';
+            let dataLine = '';
+            for (const line of block.split('\n')) {
+                if (line.startsWith('event: ')) eventType = line.slice(7).trim();
+                if (line.startsWith('data: ')) dataLine = line.slice(6);
+            }
+            if (!dataLine) continue;
+            try {
+                const parsed = JSON.parse(dataLine);
+                if (eventType === 'status') handlers.onStatus?.(parsed.message);
+                else if (eventType === 'chunk') handlers.onChunk?.(parsed.text);
+                else if (eventType === 'done') handlers.onDone?.(parsed.task);
+                else if (eventType === 'error') handlers.onError?.(parsed.message);
+            } catch {
+                /* ignore malformed */
+            }
+        }
+    }
+};
+
+export const updateScriptSegment = (
+    taskId: number,
+    segmentId: number,
+    data: Partial<Pick<ScriptSegment, 'narration' | 'shot_desc' | 'visual_hint' | 'mood' | 'time_range' | 'status'>>,
+) => api.patch<ScriptSegment>(`/growhub/scripts/${taskId}/segment/${segmentId}`, data).then((res) => res.data);
+
+export const rewriteScriptSegment = (taskId: number, segmentId: number, rewrite_suggestion: string) =>
+    api
+        .post<ScriptSegment>(`/growhub/scripts/${taskId}/segment/${segmentId}/rewrite`, {
+            rewrite_suggestion,
+        })
+        .then((res) => res.data);
+
+export const batchConfirmScriptSegments = (id: number) =>
+    api.post<ScriptTask>(`/growhub/scripts/${id}/segments/confirm-all`).then((res) => res.data);
+
+export const finalizeScriptTask = (id: number) =>
+    api.post<ScriptTask>(`/growhub/scripts/${id}/finalize`).then((res) => res.data);
+
+export const generateScriptVariants = (id: number, count = 3) =>
+    api
+        .post<{ success: boolean; variants: ScriptTask['variants']; task: ScriptTask }>(
+            `/growhub/scripts/${id}/variants`,
+            null,
+            { params: { count } },
+        )
+        .then((res) => res.data);
+
+// ============ Video Generation API ============
+
+export interface VideoRenderStatus {
+    found: boolean;
+    task_id: number;
+    video_status: string;
+    video_path?: string;
+    video_error?: string;
+    broll_status?: string;
+    broll_video_path?: string;
+    broll_error?: string;
+    video_render_started_at?: string;
+    video_render_done_at?: string;
+}
+
+export type VideoRenderEvent =
+    | { event: 'status'; data: { message: string; step: number; total: number } }
+    | { event: 'progress'; data: { message: string; current: number; total: number } }
+    | { event: 'done'; data: { video_path: string; duration_seconds: number; beats: number } }
+    | { event: 'error'; data: { message: string } };
+
+export interface VideoRenderHandlers {
+    onStatus?: (msg: string, step: number, total: number) => void;
+    onProgress?: (msg: string, current: number, total: number) => void;
+    onDone?: (data: { video_path: string; duration_seconds: number; beats: number }) => void;
+    onError?: (msg: string) => void;
+    voice?: string;
+}
+
+/** 触发视频渲染，SSE 流式返回进度 */
+export const renderScriptVideo = async (taskId: number, handlers: VideoRenderHandlers) => {
+    const url = handlers.voice 
+        ? `/api/growhub/video/${taskId}/render?voice=${encodeURIComponent(handlers.voice)}`
+        : `/api/growhub/video/${taskId}/render`;
+        
+    const res = await fetch(url, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+    });
+    if (!res.ok || !res.body) {
+        handlers.onError?.(`请求失败: ${res.status}`);
+        return;
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split('\n\n');
+        buffer = parts.pop() ?? '';
+        for (const part of parts) {
+            const lines = part.split('\n');
+            let event = '';
+            let data = '';
+            for (const line of lines) {
+                if (line.startsWith('event: ')) event = line.slice(7).trim();
+                if (line.startsWith('data: ')) data = line.slice(6).trim();
+            }
+            if (!event || !data) continue;
+            try {
+                const payload = JSON.parse(data);
+                if (event === 'status') handlers.onStatus?.(payload.message, payload.step, payload.total);
+                else if (event === 'progress') handlers.onProgress?.(payload.message, payload.current, payload.total);
+                else if (event === 'done') handlers.onDone?.(payload);
+                else if (event === 'error') handlers.onError?.(payload.message);
+            } catch {
+                // ignore parse errors
+            }
+        }
+    }
+};
+
+/** 查询视频渲染状态 */
+export const fetchVideoStatus = (taskId: number) =>
+    api.get<VideoRenderStatus>(`/growhub/video/${taskId}/status`).then((res) => res.data);
+
+/** 获取视频下载 URL */
+export const getVideoDownloadUrl = (taskId: number) =>
+    `/api/growhub/video/${taskId}/download`;
 
 // ============ Auth API ============
 
@@ -739,16 +1169,25 @@ api.interceptors.request.use((config) => {
     return config;
 });
 
-// Interceptor to handle 401
+// Interceptor: clear session on auth failures (401 or invalid-token 403)
 api.interceptors.response.use(
     (response) => response,
     (error) => {
-        if (error.response?.status === 401) {
+        const status = error.response?.status;
+        const detail = error.response?.data?.detail;
+        const isAuthFailure =
+            status === 401 ||
+            (status === 403 &&
+                (detail === 'Could not validate credentials' ||
+                    detail === 'Not authenticated'));
+        if (isAuthFailure) {
             localStorage.removeItem('token');
             localStorage.removeItem('user');
-            // Redirect will be handled by Context or Router
-            if (!window.location.pathname.startsWith('/login') && !window.location.pathname.startsWith('/register')) {
-                 window.location.href = '/login';
+            if (
+                !window.location.pathname.startsWith('/login') &&
+                !window.location.pathname.startsWith('/register')
+            ) {
+                window.location.href = '/login';
             }
         }
         return Promise.reject(error);
@@ -776,8 +1215,9 @@ export interface NotificationChannel {
 }
 
 export const fetchNotificationChannels = () =>
-    api.get<NotificationChannel[]>('/growhub/notifications/channels').then(res => Array.isArray(res.data) ? res.data : (res.data as any).items || []);
-
+    api.get<NotificationChannel[]>('/growhub/notifications/channels')
+       .then(res => Array.isArray(res.data) ? res.data : (res.data as any).items || [])
+       .catch(() => []); // Fallback to empty array if endpoint is missing
 export const fetchProjectPlatforms = () =>
     api.get<{ platforms: Platform[] }>('/growhub/projects/platforms/options').then(res => res.data.platforms);
 
@@ -868,5 +1308,483 @@ export const fetchPlatformDistribution = (days = 30, projectId?: number) =>
         params: cleanParams({ days, project_id: projectId })
     }).then(res => res.data);
 
+// ─────────────── Video Remix (ContentRemixAgent 代理) ───────────────
+
+export interface RemixMode {
+    key?: string;
+    value?: string;   // ContentRemixAgent 返回的字段名
+    label: string;
+    description?: string;
+    is_active?: boolean;
+}
+
+export interface RemixSession {
+    session_id: string;
+    title?: string;
+    created_at: string;
+    updated_at?: string;
+}
+
+export interface RemixWorkflowState {
+    step?: number;
+    done_steps?: number[];
+    analysis_text?: string;
+    script_text?: string;
+    edited_script?: string;
+    remix_text?: string;
+    script_task_id?: number;
+    /** 步骤 7 成片已生成，刷新后可恢复预览/下载 */
+    video_ready?: boolean;
+    video_duration_seconds?: number;
+    video_beats?: number;
+    url?: string;
+    hotspot?: Record<string, unknown>;
+}
+
+export interface RemixSessionMeta {
+    session_id: string;
+    cover_url?: string;
+    title?: string;
+    content_url?: string;
+    platform?: string;
+    author_name?: string;
+    remix_summary?: string;
+    workflow_state?: RemixWorkflowState;
+    created_at?: string;
+    updated_at?: string;
+}
+
+export interface RemixMessage {
+    role: "user" | "assistant";
+    content: string;
+    created_at: string;
+}
+
+/** 检查 ContentRemixAgent 服务可用性 */
+export const fetchRemixStatus = () =>
+    api.get<{ available: boolean; base: string }>('/growhub/remix/status').then(r => r.data);
+
+/** 获取支持的二创模式 */
+export const fetchRemixModes = () =>
+    api.get<{ modes: RemixMode[] } | RemixMode[]>('/growhub/remix/modes')
+        .then(r => Array.isArray(r.data) ? r.data : (r.data as { modes: RemixMode[] }).modes ?? []);
+
+/** 历史会话列表 */
+export const fetchRemixSessions = (page = 1, pageSize = 20) =>
+    api.get<{ sessions?: RemixSession[]; items?: RemixSession[]; total: number }>('/growhub/remix/sessions', {
+        params: { page, page_size: pageSize }
+    }).then(r => ({
+        items: r.data.sessions ?? r.data.items ?? [],
+        total: r.data.total ?? 0,
+    }));
+
+/** 删除会话 */
+export const deleteRemixSession = (sessionId: string) =>
+    api.delete(`/growhub/remix/session/${sessionId}`).then(r => r.data);
+
+/** 获取会话消息 */
+export const fetchRemixSessionMessages = (sessionId: string) =>
+    api.get<RemixMessage[]>(`/growhub/remix/session/${sessionId}/messages`).then(r => r.data);
+
+/** 写入/更新会话富元数据（封面、标题、二创摘要等） */
+export const upsertRemixSessionMeta = (data: Partial<RemixSessionMeta> & { session_id: string }) =>
+    api.post<RemixSessionMeta>('/growhub/remix/session-meta', data).then(r => r.data);
+
+/** 批量查询会话富元数据 */
+export const fetchRemixSessionMetas = (sessionIds?: string[]) =>
+    api.get<{ items: RemixSessionMeta[] }>('/growhub/remix/session-metas', {
+        params: sessionIds?.length ? { session_ids: sessionIds.join(',') } : {},
+    }).then(r => r.data.items);
+
+/** 单条会话富元数据（含工作流快照） */
+export const fetchRemixSessionMeta = (sessionId: string) =>
+    api.get<RemixSessionMeta>(`/growhub/remix/session-meta/${sessionId}`).then(r => r.data);
+
+/** 批量删除仅有链接、无封面/标题/二创内容的空记录 */
+export const cleanupEmptyRemixSessions = () =>
+    api.post<{ success: boolean; deleted_count: number; deleted_ids: string[] }>(
+        '/growhub/remix/sessions/cleanup-empty',
+    ).then(r => r.data);
+
 export default api;
+
+
+export interface MonitoredItemHistory {
+  record_date: string;
+  fans_count: number;
+  like_count: number;
+  comment_count: number;
+  share_count: number;
+  collect_count: number;
+}
+
+export interface CreatorWork {
+  id: number;
+  title: string;
+  cover_url?: string;
+  content_url?: string;
+  like_count: number;
+  comment_count: number;
+  share_count: number;
+  collect_count: number;
+  view_count: number;
+  publish_time?: string;
+}
+
+export interface MonitoredItem {
+  id: number;
+  name: string;
+  avatar_or_cover: string;
+  platform: string;
+  url: string;
+  latest_fans: number;
+  latest_likes: number;
+  latest_views: number;
+  latest_comments: number;
+  latest_shares: number;
+  latest_collects: number;
+  publish_time?: string;
+  author_name?: string;
+  history: MonitoredItemHistory[];
+  // Creator-specific
+  author_id?: string;
+  total_works?: number;
+  total_likes?: number;
+  total_collects?: number;
+  signature?: string;
+  works?: CreatorWork[];
+}
+
+export const fetchDataMonitorList = (params: any) =>
+  api.get<{ items: MonitoredItem[]; total: number; available_authors: string[] }>('/growhub/data-monitor/list', {
+    params: cleanParams(params)
+  }).then(res => res.data);
+
+export const exportMonitorData = (params: any) =>
+  api.get('/growhub/data-monitor/export', {
+    params: cleanParams(params),
+    responseType: 'blob'
+  });
+
+export const fetchCreatorWorks = (creatorId: number, params?: { page?: number; page_size?: number; sort_by?: string }) =>
+  api.get<{ total: number; works: CreatorWork[]; creator_name: string }>(`/growhub/data-monitor/creator/${creatorId}/works`, {
+    params: cleanParams(params || {})
+  }).then(res => res.data);
+
+export interface AudioExtractionStatus {
+  id: number;
+  status: 'pending' | 'downloading' | 'extracting' | 'separating' | 'transcribing' | 'success' | 'failed';
+  transcript_text?: string;
+  vocals_url?: string;
+  bgm_url?: string;
+  original_audio_url?: string;
+  error_msg?: string;
+}
+
+export const extractAudio = (
+  itemType: 'hotspot' | 'content',
+  itemId: number,
+  opts?: { bgm_only?: boolean }
+) =>
+  api
+    .post<{ extraction_id: number; status: string; bgm_url?: string }>(
+      '/growhub/audio/extract',
+      {
+        item_type: itemType,
+        item_id: itemId,
+        bgm_only: opts?.bgm_only ?? false,
+      }
+    )
+    .then((res) => res.data);
+
+export const getAudioExtractionStatus = (extractionId: number) =>
+  api.get<AudioExtractionStatus>(`/growhub/audio/status/${extractionId}`).then(res => res.data);
+
+// ============ 图文生成 API ============
+export interface ImageGenTemplate {
+  id: string;
+  name: string;
+  category: string;
+  prompt: string;
+  negative_prompt?: string;
+  cover_url?: string;
+}
+
+export interface ImageGenTemplatesResponse {
+  success: boolean;
+  data: {
+    items: ImageGenTemplate[];
+    total: number;
+    page: number;
+    page_size: number;
+  };
+}
+
+export interface ImageGenTaskStatus {
+  task_id: string;
+  status: 'running' | 'success' | 'failed' | 'cancelled' | 'pending';
+  progress: number; // 0-100
+  current_round: number;
+  total_rounds: number;
+  error_message?: string;
+  error?: string;
+  message?: string;
+  results?: Array<{
+    image_url: string;
+    score?: {
+      aesthetic?: number;
+      creativity?: number;
+      relevance?: number;
+      composition?: number;
+      color?: number;
+      overall?: number;
+    };
+  }>;
+}
+
+export interface PostCopyResponse {
+  title: string;
+  body: string;
+  hashtags: string[];
+  on_image_headline?: string;
+  on_image_text?: string;
+  on_image_lines?: string[];
+  highlight_words?: string[];
+  image_prompt_suggestion: string;
+  image_prompt_zh: string;
+  writing_notes: string;
+  platform: string;
+  style: string;
+}
+
+export const fetchImageGenHealth = () =>
+  api.get<{
+    pictactic_online: boolean;
+    pictactic_url: string;
+    message: string;
+    replicate_ready?: boolean;
+    replicate_provider?: string;
+  }>('/growhub_imagegen/health').then(res => res.data);
+
+export const fetchImageGenTemplates = (page = 1, pageSize = 20, category?: string) =>
+  api.get<ImageGenTemplatesResponse>('/growhub_imagegen/templates', {
+    params: cleanParams({ page, page_size: pageSize, category })
+  }).then(res => res.data);
+
+export const createImageGenTask = (data: {
+  prompt?: string;
+  on_image_text?: string;
+  on_image_highlights?: string[];
+  max_rounds?: number;
+  images_per_round?: number;
+  aspect_ratio?: string;
+  size?: string;
+  enhance_prompt?: boolean;
+  template_images?: string[];
+  replicate_mode?: boolean;
+  provider?: string;
+  poster_hide_chrome?: boolean;
+  poster_nickname?: string;
+  poster_top_date?: string;
+  poster_bottom_time?: string;
+  poster_bottom_day?: string;
+  poster_account_id?: string;
+  on_image_accent_color?: string;
+}) =>
+  api.post<{ success: boolean; data: { task_id: string } }>('/growhub_imagegen/generate', data).then(res => res.data);
+
+export const fetchImageGenTaskStatus = (taskId: string) =>
+  api.get<{ success: boolean; data: ImageGenTaskStatus }>(`/growhub_imagegen/generate/${taskId}`).then(res => res.data);
+
+export const fetchImageGenTaskResult = (taskId: string) =>
+  api.get<{ success: boolean; data: any }>(`/growhub_imagegen/generate/${taskId}/result`).then(res => res.data);
+
+export const cancelImageGenTask = (taskId: string) =>
+  api.post<{ success: boolean; data: any }>(`/growhub_imagegen/generate/${taskId}/cancel`).then(res => res.data);
+
+export const generatePostCopy = (data: {
+  topic: string;
+  platform?: string;
+  style?: string;
+  hotspot_title?: string;
+  hotspot_content?: string;
+  brand_keywords?: string[];
+  extra_instructions?: string;
+}) =>
+  api.post<{ success: boolean; data: PostCopyResponse }>('/growhub_imagegen/copy/generate', data).then(res => res.data);
+
+export interface ParaphraseCopyResponse {
+  title: string;
+  body: string;
+  hashtags: string[];
+  on_image_headline?: string;
+  on_image_text?: string;
+  on_image_lines?: string[];
+  highlight_words?: string[];
+  paraphrase_notes?: string;
+}
+
+export const paraphrasePostCopy = (data: {
+  source_title?: string;
+  source_body?: string;
+  source_hashtags?: string[];
+  platform?: string;
+  brand_keywords?: string[];
+  reference_cover_url?: string;
+  preserve_original_on_image?: boolean;
+}) =>
+  api
+    .post<{ success: boolean; data: ParaphraseCopyResponse }>(
+      '/growhub_imagegen/copy/paraphrase',
+      data
+    )
+    .then((res) => res.data);
+
+export const extractPosterFromCover = (coverUrl: string) =>
+  api
+    .get<{ success: boolean; data: ParaphraseCopyResponse & { source?: string } }>(
+      '/growhub_imagegen/copy/extract_from_cover',
+      { params: { cover_url: coverUrl } }
+    )
+    .then((res) => res.data);
+
+export const pushToPublishQueue = (data: {
+  task_title: string;
+  copy_title: string;
+  copy_body: string;
+  copy_hashtags?: string[];
+  image_urls: string[];
+  account_id?: string;
+  platform?: string;
+  publish_time?: string;
+  video_url?: string;
+}) =>
+  api.post<{ success: boolean; message: string }>('/growhub_imagegen/to_publish', data).then(res => res.data);
+
+
+// ============ 已发布帖子模板库 API ============
+export interface PublishedPost {
+  id: number;
+  title: string;
+  description: string;
+  cover_url: string;
+  /** 原帖视频地址，用于提取 BGM */
+  video_url?: string;
+  audio_extraction_id?: number | null;
+  audio_status?: string | null;
+  /** 已提取的伴奏路径 */
+  bgm_url?: string | null;
+  /** 按第1句/第2句/# 解析后的发布字段 */
+  publish_title?: string;
+  publish_body?: string;
+  hashtags?: string[];
+}
+
+export interface PublishedPostsResponse {
+  success: boolean;
+  data: {
+    items: PublishedPost[];
+    total: number;
+    page: number;
+    page_size: number;
+  };
+}
+
+export const fetchPublishedPosts = (page = 1, pageSize = 20, search?: string) =>
+  api.get<PublishedPostsResponse>('/growhub_imagegen/published_posts', {
+    params: cleanParams({ page, page_size: pageSize, search })
+  }).then(res => res.data);
+
+// ============ 矩阵分发 API ============
+export interface PublishTask {
+  id: number;
+  task_title: string;
+  account_id: string | null;
+  content_body: string | null;
+  assets_dir: string | null;
+  status: string;
+  post_url: string | null;
+  publish_time: string | null;
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface PublishTasksResponse {
+  success: boolean;
+  data: {
+    items: PublishTask[];
+    total: number;
+    page: number;
+    page_size: number;
+  };
+}
+
+export const fetchPublishTasks = (page = 1, pageSize = 10, status = 'all') =>
+  api.get<PublishTasksResponse>('/growhub_publish/tasks', {
+    params: cleanParams({ page, page_size: pageSize, status: status === 'all' ? undefined : status }),
+  }).then(res => res.data);
+
+export const createPublishTask = (data: {
+  task_title: string;
+  account_id?: string;
+  content_body?: string;
+  assets_dir?: string;
+  publish_time?: string;
+}) =>
+  api.post<{ success: boolean; message: string }>('/growhub_publish/tasks', data).then(res => res.data);
+
+export const triggerPublishTask = (taskId: number) =>
+  api.post<{ success: boolean; message: string }>(`/growhub_publish/trigger/${taskId}`).then(res => res.data);
+
+export const deletePublishTask = (taskId: number) =>
+  api.delete<{ success: boolean; message: string }>(`/growhub_publish/tasks/${taskId}`).then(res => res.data);
+
+export interface BgmItem {
+  name: string;
+  url: string;
+}
+
+export const fetchAvailableBgms = () =>
+  api.get<{ success: boolean; data: BgmItem[] }>('/growhub_publish/bgms').then(res => res.data);
+
+export const composeVideo = (data: { image_urls: string[]; bgm_url: string }) =>
+  api.post<{ success: boolean; message: string; video_url: string }>('/growhub_publish/compose_video', data).then(res => res.data);
+
+
+export interface ImageGenPublishHistoryItem {
+  id: number;
+  task_title: string;
+  account_id: string;
+  account_name: string;
+  content_body: string;
+  copy_title?: string;
+  copy_body?: string;
+  copy_hashtags?: string[];
+  status: string;
+  post_url: string;
+  image_urls: string[];
+  platform: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ImageGenPublishHistoryResponse {
+  success: boolean;
+  data: {
+    items: ImageGenPublishHistoryItem[];
+    total: number;
+    page: number;
+    page_size: number;
+  };
+}
+
+export const fetchImageGenPublishHistory = (page = 1, pageSize = 20) =>
+  api.get<ImageGenPublishHistoryResponse>('/growhub_imagegen/publish_history', {
+    params: cleanParams({ page, page_size: pageSize })
+  }).then(res => res.data);
+
+export const fetchImageGenPublishHistoryDetail = (taskId: number) =>
+  api.get<{ success: boolean; data: ImageGenPublishHistoryItem }>(`/growhub_imagegen/publish_history/${taskId}`).then(res => res.data);
+
+
 

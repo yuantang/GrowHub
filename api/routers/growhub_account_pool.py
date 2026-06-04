@@ -47,7 +47,53 @@ class BatchAddRequest(BaseModel):
     accounts: List[Dict[str, str]]  # [{"name": "xxx", "cookies": "xxx"}]
 
 
+class CookieBridgeSyncRequest(BaseModel):
+    """从 CookieBridge 同步到账号池"""
+    client_ids: Optional[List[str]] = None
+    only_connected: bool = True
+
+
 # ==================== API Endpoints ====================
+
+@router.get("/cookiebridge/status")
+async def cookiebridge_status(
+    current_user: GrowHubUser = Depends(deps.get_current_user),
+):
+    """检查 MediaCrawlerPro-CookieBridge 服务与已连接客户端"""
+    from api.services.cookiebridge_sync import get_cookiebridge_sync_service
+
+    return await get_cookiebridge_sync_service().get_status()
+
+
+@router.post("/cookiebridge/sync")
+async def cookiebridge_sync(
+    body: CookieBridgeSyncRequest = CookieBridgeSyncRequest(),
+    current_user: GrowHubUser = Depends(deps.get_current_user),
+):
+    """从 CookieBridge 拉取 Cookie 写入当前用户的账号池"""
+    from api.services.cookiebridge_sync import get_cookiebridge_sync_service
+
+    return await get_cookiebridge_sync_service().sync_to_account_pool(
+        user_id=current_user.id,
+        client_ids=body.client_ids,
+        only_connected=body.only_connected,
+    )
+
+
+@router.get("/{account_id}/publish-profile")
+async def get_account_publish_profile(
+    account_id: str,
+    platform: str = Query("dy", description="平台: dy / xhs 等"),
+    current_user: GrowHubUser = Depends(deps.get_current_user),
+):
+    """获取发帖账号在平台上的真实昵称（海报 @昵称，非内部 Plugin-DY 标识）。"""
+    from api.services.publish_profile import resolve_publish_nickname
+
+    data = await resolve_publish_nickname(
+        account_id, platform=platform, user_id=current_user.id
+    )
+    return {"success": True, "data": data}
+
 
 @router.get("/statistics")
 async def get_statistics(platform: Optional[AccountPlatform] = None, current_user: GrowHubUser = Depends(deps.get_current_user)):

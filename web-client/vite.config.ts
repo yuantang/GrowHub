@@ -10,6 +10,10 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  build: {
+    outDir: '../api/webui',
+    emptyOutDir: true,
+  },
   server: {
     proxy: {
       '/api': {
@@ -21,7 +25,11 @@ export default defineConfig({
         target: 'http://127.0.0.1:8040',
         changeOrigin: true,
         ws: true,
-      }
+      },
+      '/static/audio_extractions': {
+        target: 'http://127.0.0.1:8040',
+        changeOrigin: true,
+      },
     }
   }
 })

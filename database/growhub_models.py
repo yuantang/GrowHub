@@ -2,7 +2,7 @@
 # GrowHub - 关键词与内容分析数据模型
 # Phase 1: 内容抓取与舆情监控增强
 
-from sqlalchemy import Column, Integer, String, Text, BigInteger, Boolean, DateTime, Float, JSON, ForeignKey, Enum as SQLEnum
+from sqlalchemy import Column, Integer, String, Text, BigInteger, Boolean, DateTime, Float, JSON, ForeignKey, Enum as SQLEnum, Date, UniqueConstraint
 from sqlalchemy.sql import func
 from database.models import Base
 import enum
@@ -154,6 +154,30 @@ class GrowHubContent(Base):
     user_id = Column(Integer, ForeignKey('growhub_users.id'), nullable=True, index=True)
 
 
+class GrowHubAudioExtraction(Base):
+    """GrowHub 视频音频分离及文案提取记录"""
+    __tablename__ = 'growhub_audio_extractions'
+    
+    id = Column(Integer, primary_key=True)
+    content_id = Column(Integer, ForeignKey('growhub_contents.id'), nullable=True, index=True)
+    hotspot_id = Column(Integer, ForeignKey('growhub_hotspots.id'), nullable=True, index=True)
+    video_url = Column(Text, nullable=False)
+    
+    # pending, downloading, extracting, separating, transcribing, success, failed
+    status = Column(String(50), default='pending')
+    
+    # 结果路径 (相对于 static/ 的路径)
+    transcript_text = Column(Text, nullable=True)     # 解析出的文案
+    vocals_local_path = Column(Text, nullable=True)   # 纯人声
+    bgm_local_path = Column(Text, nullable=True)      # 背景音
+    original_audio_path = Column(Text, nullable=True) # 完整音频
+    
+    error_msg = Column(Text, nullable=True)
+    
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
 class GrowHubDistributionRule(Base):
     """GrowHub 分发规则表"""
     __tablename__ = 'growhub_distribution_rules'
@@ -272,8 +296,13 @@ class GrowHubProject(Base):
     # 平台配置
     platforms = Column(JSON)  # ["xhs", "douyin", ...]
     
-    # 任务目的 (驱动数据分流)
-    purpose = Column(String(20), default='general')  # creator/hotspot/sentiment/general
+    # 任务目的 (驱动数据分流，由 capture_mode 推导)
+    purpose = Column(String(20), default='hotspot')  # hotspot / creator
+    
+    # 抓取模式：hot_content | hot_creator | watch_content | watch_creator(预留)
+    capture_mode = Column(String(32), default='hot_content')
+    # 定点监控目标 [{type, platform, url, content_id?, label?}]
+    watch_targets = Column(JSON)
     
     # 爬虫配置
     crawler_type = Column(String(50), default='search')  # search/detail/creator
@@ -297,6 +326,14 @@ class GrowHubProject(Base):
     min_fans = Column(Integer, default=0)  # 博主最小粉丝数
     max_fans = Column(Integer, default=0)  # 博主最大粉丝数 (0=不限)
     require_contact = Column(Boolean, default=False)  # 是否要求有联系方式
+    # 热门达人：入库标记 all | competitor | partner
+    creator_account_type = Column(String(32), default='all')
+    
+    # 高级搜索条件
+    publish_time_limit = Column(Integer, default=0)    # 发布时间限制（天数）, 0=不限, 1=一天内, 7=一周内, 180=半年内
+    video_duration_limit = Column(String(50), default="0") # 视频时长限制, "0"=不限, "<1"=1分钟以下, "1-5"=1-5分钟, ">5"=5分钟以上
+    search_scope = Column(String(50), default="all")   # 搜索范围, "all"=不限
+    content_type = Column(String(50), default="0")     # 内容形式, "0"=不限, "video"=视频, "image_text"=图文
     
     # 调度配置
     schedule_type = Column(String(20), default='interval')  # interval / cron
@@ -312,6 +349,7 @@ class GrowHubProject(Base):
     # 运行状态
     last_run_at = Column(DateTime, nullable=True)
     next_run_at = Column(DateTime, nullable=True)
+    last_run_status = Column(String(255), nullable=True)  # 新增：直接展示运行结果或明确报错
     run_count = Column(Integer, default=0)
     
     # 统计数据
@@ -320,7 +358,7 @@ class GrowHubProject(Base):
     today_crawled = Column(Integer, default=0)  # 今日抓取
     today_alerts = Column(Integer, default=0)   # 今日预警
     
-    use_plugin = Column(Boolean, default=False)  # 优先使用浏览器插件采集
+    use_plugin = Column(Boolean, default=False)  # 已废弃：采集统一走 MediaCrawlerPro
     
     # 内部任务ID（关联调度器）
     scheduler_task_id = Column(String(50), nullable=True)
@@ -476,6 +514,8 @@ class GrowHubCreator(Base):
     
     # 业务状态
     status = Column(String(20), default='new')  # new/contacted/cooperating/rejected
+    is_competitor = Column(Boolean, default=False, index=True) # 是否为竞品账号
+    
     
     # 爬虫状态机
     crawl_status = Column(String(20), default='new')  # new/waiting/profiled/failed
@@ -539,9 +579,122 @@ class GrowHubHotspot(Base):
     # 所有权 (新增)
     user_id = Column(Integer, ForeignKey('growhub_users.id'), nullable=True, index=True)
     
+    # AI 评估与 3D 打分 (新增字段)
+    alignment_score = Column(Float, default=0.0)      # 适配度评分 (0-100)
+    recency_score = Column(Float, default=0.0)        # 时效性评分 (0-100)
+    duration_label = Column(String(50))               # 时效标签: 即日可发/短期持续/长期深耕
+    is_valid = Column(Boolean, default=True)          # 有效性状态
+    validity_status = Column(String(200))             # 失效原因/平台限流等状态
+    ai_features = Column(JSON)                        # 特征提取: 热门模板、核心关键词、高频词云
+    ai_evaluation = Column(Text)                      # 推荐理由/调性评估
+    custom_categories = Column(JSON)                  # 垂直品类标签 (冥想/睡眠/解压等)
+    is_competitor = Column(Boolean, default=False, index=True) # 是否为竞品热点
+    
+    
     # 时间戳
     publish_time = Column(DateTime)          # 内容发布时间
     entered_at = Column(DateTime, server_default=func.now())  # 入池时间
+
+
+class GrowHubHotspotHistory(Base):
+    """热点内容历史变化表 - 监控7天点赞变化趋势"""
+    __tablename__ = 'growhub_hotspot_history'
+    
+    id = Column(Integer, primary_key=True)
+    hotspot_id = Column(Integer, ForeignKey('growhub_hotspots.id', ondelete='CASCADE'), nullable=False, index=True)
+    record_date = Column(Date, nullable=False, index=True)
+    like_count = Column(Integer, default=0)
+    comment_count = Column(Integer, default=0)
+    share_count = Column(Integer, default=0)
+    view_count = Column(Integer, default=0)
+    
+    __table_args__ = (
+        UniqueConstraint('hotspot_id', 'record_date', name='uix_hotspot_record_date'),
+    )
+
+
+class GrowHubScriptTask(Base):
+    """脚本创作任务 - 热点分析 → 初稿 → 编辑 → 定稿 → 二创变体"""
+    __tablename__ = 'growhub_script_tasks'
+
+    id = Column(Integer, primary_key=True)
+    hotspot_id = Column(Integer, ForeignKey('growhub_hotspots.id'), nullable=True, index=True)
+    user_id = Column(Integer, ForeignKey('growhub_users.id'), nullable=True, index=True)
+
+    title = Column(String(500))
+    source_content = Column(Text)
+    platform = Column(String(50), default='douyin')
+    content_type = Column(String(50), default='video')  # video / image_text / mixed
+    style = Column(String(50), default='douyin')
+
+    status = Column(String(30), default='created', index=True)
+    # created | analyzing | analyzed | drafting | editing | finalized | variants
+    current_step = Column(Integer, default=1)
+
+    analysis_result = Column(JSON)
+    final_script = Column(Text)
+    variants = Column(JSON)  # [{title, script, angle}]
+
+    brand_keywords = Column(JSON)
+    target_topic = Column(String(255))
+
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    # ── 视频渲染字段 ──────────────────────────────────────────
+    video_status = Column(String(20), default='none', index=True)
+    # none | preparing | tts | composing | rendering | done | error
+    video_path = Column(Text, nullable=True)          # 最终 MP4 文件路径
+    video_error = Column(Text, nullable=True)         # 错误信息
+    video_project_dir = Column(Text, nullable=True)   # HyperFrames 项目目录
+    video_render_started_at = Column(DateTime, nullable=True)
+    video_render_done_at = Column(DateTime, nullable=True)
+
+    # ── B-Roll 智能混剪渲染字段 ──────────────────────────────
+    broll_video_status = Column(String(20), default='none', index=True)
+    broll_video_path = Column(Text, nullable=True)
+    broll_video_error = Column(Text, nullable=True)
+
+
+class GrowHubScriptSegment(Base):
+    """脚本分段 - 可逐段编辑与 AI 局部改写"""
+    __tablename__ = 'growhub_script_segments'
+
+    id = Column(Integer, primary_key=True)
+    task_id = Column(Integer, ForeignKey('growhub_script_tasks.id', ondelete='CASCADE'), nullable=False, index=True)
+    order_index = Column(Integer, default=0)
+
+    time_range = Column(String(50))
+    narration = Column(Text)
+    shot_desc = Column(Text)
+    visual_hint = Column(String(255))
+    mood = Column(String(100))
+
+    status = Column(String(20), default='pending')  # ok | pending | removed
+    version_history = Column(JSON, default=list)
+
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class GrowHubRemixSessionMeta(Base):
+    """对话式二创会话富元数据（封面/标题/链接/二创摘要）"""
+    __tablename__ = 'growhub_remix_session_metas'
+
+    id          = Column(Integer, primary_key=True, autoincrement=True)
+    session_id  = Column(String(64), unique=True, nullable=False, index=True)
+    # 来源内容信息
+    cover_url   = Column(String(500), nullable=True)
+    title       = Column(String(400), nullable=True)
+    content_url = Column(String(500), nullable=True)
+    platform    = Column(String(30),  nullable=True)
+    author_name = Column(String(120), nullable=True)
+    # 二创生成摘要（前 400 字）
+    remix_summary = Column(Text, nullable=True)
+    # 完整工作流快照（step、各步文本、done_steps、script_task_id、hotspot）
+    workflow_state = Column(JSON, nullable=True)
+    created_at  = Column(DateTime, server_default=func.now())
+    updated_at  = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
 
 class GrowHubSystemConfig(Base):
@@ -552,40 +705,3 @@ class GrowHubSystemConfig(Base):
     config_value = Column(JSON, nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
-
-class PluginTaskStatus(enum.Enum):
-    """插件任务状态"""
-    PENDING = "pending"      # 待执行
-    RUNNING = "running"      # 执行中
-    COMPLETED = "completed"  # 已完成
-    FAILED = "failed"        # 失败
-    CANCELLED = "cancelled"  # 已取消
-
-
-class PluginTask(Base):
-    """插件任务表 - 管理通过浏览器插件执行的采集任务"""
-    __tablename__ = 'plugin_tasks'
-    
-    id = Column(Integer, primary_key=True)
-    task_id = Column(String(50), unique=True, index=True)  # UUID for tracking
-    user_id = Column(Integer, ForeignKey('growhub_users.id'), nullable=False)
-    project_id = Column(Integer, ForeignKey('growhub_projects.id'), nullable=True)
-    
-    # 任务配置
-    platform = Column(String(20))  # xhs, dy, bilibili, kuaishou
-    task_type = Column(String(30))  # fetch_url, search_notes, get_detail
-    url = Column(Text)
-    params = Column(JSON)  # 额外参数（关键词、数量等）
-    
-    # 任务状态
-    status = Column(String(20), default="pending", index=True)
-    priority = Column(Integer, default=0)  # 优先级，越高越先执行
-    
-    # 结果
-    result = Column(JSON)
-    error_message = Column(Text)
-    
-    # 时间戳
-    created_at = Column(DateTime, server_default=func.now())
-    dispatched_at = Column(DateTime, nullable=True)
-    completed_at = Column(DateTime, nullable=True)

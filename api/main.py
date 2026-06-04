@@ -32,28 +32,28 @@ from fastapi.responses import FileResponse, JSONResponse
 import traceback
 from tools import utils
 
-from .routers import crawler_router, data_router, websocket_router, checkpoint_router, accounts_router, ai_router
-from .routers.data import proxy_router
-from .routers.growhub_keywords import router as growhub_keywords_router
-from .routers.growhub_content import router as growhub_content_router, rules_router as growhub_rules_router
-from .routers.growhub_notifications import router as growhub_notifications_router
-from .routers.growhub_websocket import router as growhub_websocket_router
+from .routers.proxy import proxy_router
+from .routers.growhub_content import router as growhub_content_router
 from .routers.growhub_ai_creator import router as growhub_ai_creator_router
 from .routers.growhub_scheduler import router as growhub_scheduler_router
-
 from .routers.growhub_account_pool import router as growhub_account_pool_router
 from .routers.growhub_system import router as growhub_system_router
 from .routers.growhub_projects import router as growhub_projects_router
-from .routers.growhub_creators import router as growhub_creators_router
 from .routers.growhub_hotspots import router as growhub_hotspots_router
+from .routers.growhub_creators import router as growhub_creators_router
+from .routers.growhub_scripts import router as growhub_scripts_router
 from .routers.growhub_settings import router as growhub_settings_router
+from .routers.growhub_notifications import router as growhub_notifications_router
+from .routers.growhub_remix import router as growhub_remix_router
+from .routers.growhub_data_monitor import router as growhub_data_monitor_router
+from .routers.growhub_audio import router as growhub_audio_router
+from .routers.growhub_publish import router as growhub_publish_router
+from .routers.growhub_imagegen import router as growhub_imagegen_router
 from .routers.auth import router as auth_router
 from .routers.growhub_users import router as growhub_users_router
-from .routers.growhub_plugin import router as growhub_plugin_router
-from .routers.plugin_websocket import router as plugin_ws_router
-from .routers.debug_plugin import router as debug_plugin_router
-from .routers.plugin_tasks import router as plugin_tasks_router
-# from .routers.growhub_analytics import router as growhub_analytics_router
+from .routers.growhub_video import router as growhub_video_router
+from .routers import webhook
+from .routers import webhook_import
 
 app = FastAPI(
     title="GrowHub API",
@@ -82,14 +82,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Register routers
-app.include_router(crawler_router, prefix="/api")
-app.include_router(data_router, prefix="/api")
-app.include_router(proxy_router, prefix="/api")  # Image proxy
-app.include_router(websocket_router, prefix="/api")
-app.include_router(checkpoint_router, prefix="/api")
-app.include_router(accounts_router, prefix="/api")
-app.include_router(ai_router, prefix="/api")
+# Register routers (core path only)
+app.include_router(proxy_router, prefix="/api")
+app.include_router(webhook.router, prefix="/api")
+app.include_router(webhook_import.router, prefix="/api")
 
 # Exception logging middleware
 @app.middleware("http")
@@ -109,27 +105,45 @@ async def log_exceptions_middleware(request: Request, call_next):
             }
         )
 
-# GrowHub routers
-app.include_router(growhub_keywords_router, prefix="/api")
-app.include_router(growhub_content_router, prefix="/api")
-app.include_router(growhub_rules_router, prefix="/api")
-app.include_router(growhub_notifications_router, prefix="/api")
-app.include_router(growhub_websocket_router, prefix="/api")
-app.include_router(growhub_ai_creator_router, prefix="/api")
-app.include_router(growhub_scheduler_router, prefix="/api")
-app.include_router(growhub_account_pool_router, prefix="/api")
-app.include_router(growhub_system_router, prefix="/api")
+# GrowHub core: 热点抓取 → 内容/热点池 → AI 二创（发布待对接 AutoPublishAgent）
 app.include_router(growhub_projects_router, prefix="/api")
-app.include_router(growhub_creators_router, prefix="/api")
 app.include_router(growhub_hotspots_router, prefix="/api")
+app.include_router(growhub_creators_router, prefix="/api")
+app.include_router(growhub_content_router, prefix="/api")
+app.include_router(growhub_account_pool_router, prefix="/api")
+app.include_router(growhub_ai_creator_router, prefix="/api")
+app.include_router(growhub_scripts_router, prefix="/api")
+app.include_router(growhub_remix_router, prefix="/api")
+app.include_router(growhub_video_router, prefix="/api")
+app.include_router(growhub_scheduler_router, prefix="/api")
+app.include_router(growhub_system_router, prefix="/api")
 app.include_router(growhub_settings_router, prefix="/api")
+app.include_router(growhub_notifications_router, prefix="/api")
+app.include_router(growhub_data_monitor_router, prefix="/api")
+app.include_router(growhub_audio_router, prefix="/api")
+app.include_router(growhub_publish_router, prefix="/api")
+app.include_router(growhub_imagegen_router, prefix="/api")
 app.include_router(auth_router, prefix="/api/auth", tags=["Authentication"])
 app.include_router(growhub_users_router, prefix="/api/admin", tags=["Admin"])
-app.include_router(growhub_plugin_router)  # Plugin API (no prefix, already has /api/plugin)
-app.include_router(plugin_ws_router)  # Plugin WebSocket (no prefix, already has /ws/plugin)
-app.include_router(debug_plugin_router) # Debug Plugin Inspection
-app.include_router(plugin_tasks_router, prefix="/api") # Plugin Task Queue Management
-# app.include_router(growhub_analytics_router, prefix="/api") # Analytics Dashboard
+
+
+# 兼容旧前端路径：关键词联想
+from pydantic import BaseModel
+from typing import Optional as _Optional
+
+
+class _SuggestRequest(BaseModel):
+    keyword: str
+    mode: str
+    model: _Optional[str] = "google/gemini-2.0-flash-exp:free"
+
+
+@app.post("/api/ai/suggest")
+async def suggest_keywords_legacy(req: _SuggestRequest):
+    from api.services.llm import get_keyword_suggestions
+
+    keywords = await get_keyword_suggestions(req.keyword, req.mode, req.model)
+    return {"keywords": keywords}
 
 # Phase 2: 监控项目模块
 # (Moved to top imports)
@@ -157,6 +171,16 @@ async def startup_event():
             except Exception as e:
                 print(f"Migration Failed (crawl_date_range): {e}")
 
+        try:
+            await session.execute(text("SELECT last_run_status FROM growhub_projects LIMIT 1"))
+        except Exception:
+            print("Migrating: Adding last_run_status to growhub_projects")
+            try:
+                await session.execute(text("ALTER TABLE growhub_projects ADD COLUMN last_run_status VARCHAR(255)"))
+                await session.commit()
+            except Exception as e:
+                print(f"Migration Failed (last_run_status): {e}")
+
         # Migration: Add user_id to tables
         tables_to_migrate = ['growhub_keywords', 'growhub_projects', 'growhub_accounts']
         for table in tables_to_migrate:
@@ -180,6 +204,42 @@ async def startup_event():
                 await session.commit()
             except Exception as e:
                 print(f"Migration failed (max_concurrency): {e}")
+
+        try:
+            await session.execute(text("SELECT capture_mode FROM growhub_projects LIMIT 1"))
+        except Exception:
+            print("Migrating: Adding capture_mode to growhub_projects")
+            try:
+                await session.execute(
+                    text(
+                        "ALTER TABLE growhub_projects ADD COLUMN capture_mode VARCHAR(32) DEFAULT 'hot_content'"
+                    )
+                )
+                await session.commit()
+            except Exception as e:
+                print(f"Migration failed (capture_mode): {e}")
+
+        try:
+            await session.execute(text("SELECT watch_targets FROM growhub_projects LIMIT 1"))
+        except Exception:
+            print("Migrating: Adding watch_targets to growhub_projects")
+            try:
+                await session.execute(text("ALTER TABLE growhub_projects ADD COLUMN watch_targets JSON"))
+                await session.commit()
+            except Exception as e:
+                print(f"Migration failed (watch_targets): {e}")
+
+        try:
+            await session.execute(text("SELECT creator_account_type FROM growhub_projects LIMIT 1"))
+        except Exception:
+            print("Migrating: Adding creator_account_type to growhub_projects")
+            try:
+                await session.execute(
+                    text("ALTER TABLE growhub_projects ADD COLUMN creator_account_type VARCHAR(32) DEFAULT 'all'")
+                )
+                await session.commit()
+            except Exception as e:
+                print(f"Migration failed (creator_account_type): {e}")
 
         # Migration: consecutive_fails for growhub_accounts
         try:
@@ -251,18 +311,151 @@ async def startup_event():
             except Exception as e:
                 print(f"Migration failed (growhub_hotspots.user_id): {e}")
                 
-    # Initialize Services
-    from api.services.account_pool import get_account_pool
-    await get_account_pool().initialize()
+        # Migration: Add AI evaluation columns to growhub_hotspots
+        hotspot_cols = [
+            ("alignment_score", "FLOAT DEFAULT 0.0"),
+            ("recency_score", "FLOAT DEFAULT 0.0"),
+            ("duration_label", "VARCHAR(50)"),
+            ("is_valid", "BOOLEAN DEFAULT 1"),
+            ("validity_status", "VARCHAR(200)"),
+            ("ai_features", "TEXT"),  # SQLite JSON is stored as TEXT
+            ("ai_evaluation", "TEXT"),
+            ("custom_categories", "TEXT")
+        ]
+        try:
+            await session.execute(text("SELECT id FROM growhub_hotspot_history LIMIT 1"))
+        except Exception:
+            print("Migrating: creating growhub_hotspot_history table")
+            try:
+                await session.execute(
+                    text(
+                        """
+                        CREATE TABLE IF NOT EXISTS growhub_hotspot_history (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            hotspot_id INTEGER NOT NULL,
+                            record_date DATE NOT NULL,
+                            like_count INTEGER DEFAULT 0,
+                            comment_count INTEGER DEFAULT 0,
+                            share_count INTEGER DEFAULT 0,
+                            view_count INTEGER DEFAULT 0,
+                            UNIQUE (hotspot_id, record_date)
+                        )
+                        """
+                    )
+                )
+                await session.execute(
+                    text(
+                        "CREATE INDEX IF NOT EXISTS ix_hotspot_history_hotspot_id "
+                        "ON growhub_hotspot_history (hotspot_id)"
+                    )
+                )
+                await session.execute(
+                    text(
+                        "CREATE INDEX IF NOT EXISTS ix_hotspot_history_record_date "
+                        "ON growhub_hotspot_history (record_date)"
+                    )
+                )
+                await session.commit()
+            except Exception as e:
+                print(f"Migration failed (growhub_hotspot_history): {e}")
 
-    # Startup sync: Register active projects with scheduler
+        for col_name, col_type in hotspot_cols:
+            try:
+                await session.execute(text(f"SELECT {col_name} FROM growhub_hotspots LIMIT 1"))
+            except Exception:
+                print(f"Migrating: Adding {col_name} to growhub_hotspots")
+                try:
+                    await session.execute(text(f"ALTER TABLE growhub_hotspots ADD COLUMN {col_name} {col_type}"))
+                    await session.commit()
+                except Exception as e:
+                    print(f"Migration failed (growhub_hotspots.{col_name}): {e}")
+
+        # Migration: Create growhub_publish_tasks table for automatic matrix publishing
+        try:
+            await session.execute(text("SELECT id FROM growhub_publish_tasks LIMIT 1"))
+            # 确保已有表结构迁移
+            try:
+                await session.execute(text("SELECT publish_time FROM growhub_publish_tasks LIMIT 1"))
+            except Exception:
+                print("Migrating: Adding publish_time to growhub_publish_tasks")
+                try:
+                    await session.execute(text("ALTER TABLE growhub_publish_tasks ADD COLUMN publish_time TIMESTAMP"))
+                    await session.commit()
+                except Exception as ex:
+                    print(f"Migration failed (growhub_publish_tasks.publish_time): {ex}")
+        except Exception:
+            print("Migrating: creating growhub_publish_tasks table")
+            try:
+                await session.execute(
+                    text(
+                        """
+                        CREATE TABLE IF NOT EXISTS growhub_publish_tasks (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            task_title VARCHAR(255) NOT NULL,
+                            account_id VARCHAR(255),
+                            content_body TEXT,
+                            assets_dir VARCHAR(255),
+                            status VARCHAR(32) DEFAULT 'pending_generation',
+                            post_url VARCHAR(255),
+                            publish_time TIMESTAMP,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )
+                        """
+                    )
+                )
+                await session.commit()
+            except Exception as e:
+                print(f"Migration failed (growhub_publish_tasks): {e}")
+                
+    # 重型初始化放到后台，避免阻塞 Web/API（否则前端 /auth/me 会一直转圈）
+    asyncio.create_task(_deferred_service_startup())
+
+
+async def _deferred_service_startup():
+    from api.services.account_pool import get_account_pool
     from api.services.project import get_project_service
+    from api.services.scheduler import get_scheduler
+    from api.services.hotspot_service import get_hotspot_service
+    from api.services.service_manager import start_dependency_services
+
     try:
+        # 尝试拉起底层依赖服务
+        await start_dependency_services()
+    except Exception as e:
+        print(f"[Startup] Failed to start dependency services: {e}")
+
+    try:
+        await get_account_pool().initialize()
+    except Exception as e:
+        print(f"[Startup] Account pool init failed: {e}")
+
+    try:
+        scheduler = get_scheduler()
+        if not scheduler._started:
+            scheduler.start()
         project_service = get_project_service()
         await project_service.sync_active_projects_to_scheduler()
         print("[Startup] Active projects synced to scheduler")
     except Exception as e:
         print(f"[Startup] Failed to sync projects to scheduler: {e}")
+
+    try:
+        scheduler = get_scheduler()
+        scheduler.scheduler.add_job(
+            get_hotspot_service().decay_hotspots_heat,
+            trigger="interval",
+            hours=4,
+            id="hotspots_decay_task",
+            name="热点数据衰减与归档定时任务",
+            replace_existing=True,
+        )
+        print("[Startup] Hotspots decay periodic task registered")
+        asyncio.create_task(get_hotspot_service().decay_hotspots_heat())
+        asyncio.create_task(get_hotspot_service().backfill_missing_entry_snapshots())
+    except Exception as e:
+        print(f"[Startup] Failed to register hotspots decay task: {e}")
+
 
 
 @app.get("/")
@@ -293,7 +486,7 @@ async def check_environment():
             "uv", "run", "main.py", "--help",
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            cwd="."  # Project root directory
+            cwd="MediaCrawlerPro/MediaCrawlerPro-Python"  # Point to unified pro engine
         )
         stdout, stderr = await asyncio.wait_for(
             process.communicate(),
@@ -374,6 +567,11 @@ async def get_config_options():
     }
 
 
+# Mount audio extractions explicitly before the general /static mount
+audio_dir = os.path.join(os.path.dirname(__file__), "..", "static", "audio_extractions")
+os.makedirs(audio_dir, exist_ok=True)
+app.mount("/static/audio_extractions", StaticFiles(directory=audio_dir), name="audio_extractions")
+
 # Mount static resources - must be placed after all routes
 if os.path.exists(WEBUI_DIR):
     assets_dir = os.path.join(WEBUI_DIR, "assets")
@@ -385,6 +583,17 @@ if os.path.exists(WEBUI_DIR):
         app.mount("/logos", StaticFiles(directory=logos_dir), name="logos")
     # Mount other static files (e.g., vite.svg)
     app.mount("/static", StaticFiles(directory=WEBUI_DIR), name="webui-static")
+
+
+# Wildcard catch-all route for SPA routing
+@app.get("/{catchall:path}")
+async def catch_all(request: Request):
+    path = request.url.path
+    if not (path.startswith("/api") or path.startswith("/growhub") or path.startswith("/assets") or path.startswith("/logos") or path.startswith("/docs") or path.startswith("/openapi.json") or path.startswith("/static")):
+        index_path = os.path.join(WEBUI_DIR, "index.html")
+        if os.path.exists(index_path):
+            return FileResponse(index_path)
+    return JSONResponse(status_code=404, content={"detail": "Not Found"})
 
 
 if __name__ == "__main__":

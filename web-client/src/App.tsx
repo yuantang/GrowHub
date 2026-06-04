@@ -1,26 +1,19 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import Layout from "@/components/layout/Layout";
 import { Toaster } from "sonner";
-import Dashboard from "@/pages/Dashboard";
-import DataView from "@/pages/DataView";
-import AccountsPage from "@/pages/AccountsPage";
-import CheckpointsPage from "@/pages/CheckpointsPage";
-import KeywordsPage from "@/pages/KeywordsPage";
-import ContentMonitorPage from "@/pages/ContentMonitorPage";
-import NotificationPage from "@/pages/NotificationPage";
-import RulesPage from "@/pages/RulesPage";
 import HotspotsPage from "@/pages/HotspotsPage";
-import SmartCreatorPage from "@/pages/SmartCreatorPage";
-import SchedulerPage from "@/pages/SchedulerPage";
+import ScriptWorkbenchPage from "@/pages/ScriptWorkbenchPage";
+import VideoRemixPage from "@/pages/VideoRemixPage";
+import RemixWorkflowPage from "@/pages/RemixWorkflowPage";
 import AccountPoolPage from "@/pages/AccountPoolPage";
 import ProjectsPage from "@/pages/ProjectsPage";
 import ProjectDetailPage from "@/pages/ProjectDetailPage";
+import DataMonitorPage from "@/pages/DataMonitorPage";
 import SettingsPage from "@/pages/SettingsPage";
-import CreatorsPage from "@/pages/CreatorsPage";
-import SentimentPage from "@/pages/SentimentPage";
+import AutoPublishPage from "@/pages/AutoPublishPage";
+import ImageGenPage from "@/pages/ImageGenPage";
+import ImageGenHistoryPage from "@/pages/ImageGenHistoryPage";
 import UserManagementPage from "@/pages/admin/UserManagementPage";
-import PluginStatusPage from "@/pages/PluginStatusPage";
-
 import { AuthProvider } from "@/contexts/AuthContext";
 import LoginPage from "@/pages/LoginPage";
 import RegisterPage from "@/pages/RegisterPage";
@@ -30,10 +23,10 @@ import { useAuth } from "@/contexts/AuthContext";
 const AdminRoute = ({ children }: { children: React.ReactNode }) => {
   const { user, isLoading } = useAuth();
 
-  if (isLoading) return <div>Loading...</div>;
+  if (isLoading) return <div className="p-8">Loading...</div>;
 
   if (!user || user.role !== "admin") {
-    return <Navigate to="/" replace />;
+    return <Navigate to="/projects" replace />;
   }
 
   return <>{children}</>;
@@ -55,28 +48,18 @@ function App() {
               </ProtectedRoute>
             }
           >
-            <Route index element={<Dashboard />} />
-            <Route path="data" element={<DataView />} />
-            <Route path="accounts" element={<AccountsPage />} />
-            <Route path="checkpoints" element={<CheckpointsPage />} />
-            {/* GrowHub Routes */}
+            <Route index element={<Navigate to="/projects" replace />} />
             <Route path="projects" element={<ProjectsPage />} />
             <Route path="projects/:id" element={<ProjectDetailPage />} />
-            <Route path="keywords" element={<KeywordsPage />} />
-            <Route path="monitor" element={<ContentMonitorPage />} />
             <Route path="hotspots" element={<HotspotsPage />} />
-            <Route path="creators" element={<CreatorsPage />} />
-            <Route path="sentiment" element={<SentimentPage />} />
-            <Route path="ai-creator" element={<SmartCreatorPage />} />
-            <Route path="scheduler" element={<SchedulerPage />} />
+            <Route path="data-monitor" element={<DataMonitorPage />} />
+            <Route path="ai-creator" element={<ScriptWorkbenchPage />} />
+            <Route path="video-remix" element={<VideoRemixPage />} />
+            <Route path="remix-workflow" element={<RemixWorkflowPage />} />
+            <Route path="auto-publish" element={<AutoPublishPage />} />
+            <Route path="image-gen" element={<ImageGenPage />} />
+            <Route path="image-gen-history" element={<ImageGenHistoryPage />} />
             <Route path="account-pool" element={<AccountPoolPage />} />
-            <Route path="notifications" element={<NotificationPage />} />
-            <Route path="rules" element={<RulesPage />} />
-            <Route path="notifications" element={<NotificationPage />} />
-            <Route path="rules" element={<RulesPage />} />
-            <Route path="plugin-status" element={<PluginStatusPage />} />
-
-            {/* Admin Only Routes */}
             <Route path="settings" element={<SettingsPage />} />
             <Route
               path="admin/users"
@@ -86,7 +69,7 @@ function App() {
                 </AdminRoute>
               }
             />
-            <Route path="*" element={<Navigate to="/" replace />} />
+            <Route path="*" element={<Navigate to="/projects" replace />} />
           </Route>
         </Routes>
         <Toaster />
